@@ -214,23 +214,6 @@ export const cursorACP: Plugin = async ({ client }) => {
           ]
         });
       }
-    },
-
-    async "chat.message"(input, output) {
-      // Just pass through - let chat.params handle everything
-      await output.write(input);
-    },
-
-    async "tool.execute"(input, output) {
-      // Tool execution is handled by cursor-agent directly
-      // We just pass tool results back to OpenCode
-      await output.write({
-        id: `cursor-${Date.now()}`,
-        object: "tool.result",
-        created: Math.floor(Date.now() / 1000),
-        tool: input.tool,
-        content: JSON.stringify(input.args)
-      });
     }
   };
 };
