@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "bun build ./src/index.ts --outdir ./dist --target node",
     "dev": "tsc --watch",
     "prepublishOnly": "bun run build"
   },
@@ -21,7 +21,8 @@
   },
   "devDependencies": {
     "@opencode-ai/sdk": "latest",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "@types/node": "^22.0.0"
   },
   "peerDependencies": {
     "bun-types": "latest"
