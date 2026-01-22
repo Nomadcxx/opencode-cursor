@@ -92,59 +92,52 @@ export const cursorACP: Plugin = async ({ client }) => {
         const encoder = new TextEncoder();
         const id = `cursor-${Date.now()}`;
         const created = Math.floor(Date.now() / 1000);
+        let buffer = "";
 
         for await (const chunk of child.stdout) {
           const text = new TextDecoder().decode(chunk);
-          stdout += text;
+          buffer += text;
 
-          // Parse JSON-stream output
-          try {
-            const lines = text.split("\n").filter(l => l.trim());
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  const delta = data.choices?.[0]?.delta?.content;
-                  if (delta) {
-                    await output.write({
-                      id,
-                      object: "chat.completion.chunk",
-                      created,
-                      model,
-                      choices: [
-                        {
-                          index: 0,
-                          delta: { content: delta },
-                          finish_reason: null
-                        }
-                      ]
-                    });
-                  }
-                } catch {
-                  // Ignore parse errors for partial chunks
-                }
+          // Process complete lines only
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (!line.trim() || !line.startsWith("data: ")) continue;
+
+            try {
+              const data = JSON.parse(line.slice(6));
+              const delta = data.choices?.[0]?.delta?.content;
+              if (delta) {
+                await output.write({
+                  id,
+                  object: "chat.completion.chunk",
+                  created,
+                  model,
+                  choices: [{
+                    index: 0,
+                    delta: { content: delta },
+                    finish_reason: null
+                  }]
+                });
               }
+            } catch {
+              // Ignore parse errors for malformed chunks
             }
           }
-
-          // Send final chunk
-          await output.write({
-            id,
-            object: "chat.completion.chunk",
-            created,
-            model,
-            choices: [
-              {
-                index: 0,
-                delta: {},
-                finish_reason: "stop"
-              }
-            ]
-          });
         }
 
-        child.stdout.on("error", (err) => {
-          throw new Error(`stdout error: ${err}`);
+        // Send final chunk AFTER loop completes
+        await output.write({
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [{
+            index: 0,
+            delta: {},
+            finish_reason: "stop"
+          }]
         });
       } else {
         // Non-streaming: wait for complete response
