@@ -1,6 +1,8 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { spawn } from "child_process";
 
+const CURSOR_AGENT_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+
 interface ToolCall {
   action: "tool_call" | "final";
   tool_calls?: Array<{ name: string; arguments: any }>;
@@ -100,6 +102,21 @@ export const cursorACP: Plugin = async ({ client }) => {
         throw new Error(`Failed to spawn cursor-agent: ${err.message}`);
       });
 
+      // Timeout handling
+      const timeoutId = setTimeout(() => {
+        child.kill("SIGTERM");
+      }, CURSOR_AGENT_TIMEOUT);
+
+      // Cleanup on process exit
+      const cleanup = () => {
+        clearTimeout(timeoutId);
+        if (!child.killed) {
+          child.kill("SIGTERM");
+        }
+      };
+      process.on("SIGINT", cleanup);
+      process.on("SIGTERM", cleanup);
+
       // Handle streaming responses
       if (stream) {
         const encoder = new TextEncoder();
@@ -161,6 +178,11 @@ export const cursorACP: Plugin = async ({ client }) => {
         child.on("close", resolve);
         child.on("error", reject);
       });
+
+      // Clear timeout and cleanup handlers
+      clearTimeout(timeoutId);
+      process.removeListener("SIGINT", cleanup);
+      process.removeListener("SIGTERM", cleanup);
 
       if (exitCode !== 0) {
         throw new Error(`cursor-agent exited with code ${exitCode}${stderr ? `: ${stderr}` : ""}`);
