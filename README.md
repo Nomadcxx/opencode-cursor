@@ -2,61 +2,6 @@
 
 A lightweight OpenCode plugin for Cursor Agent integration via stdin (fixes E2BIG errors).
 
-## Background
-
-[PR #5095](https://github.com/sst/opencode/pull/5095) by [@rinardmclern](https://github.com/rinardmclern) proposed native ACP (OpenAI Chat Completion Protocol) support for OpenCode. The PR introduced a comprehensive implementation that would have allowed OpenCode to directly communicate with Cursor Agent using the standard OpenAI-compatible API format.
-
-Despite the high quality of the contribution and community interest, the OpenCode maintainers decided not to merge PR #5095. The reasons cited included concerns about maintaining external service integrations and preferring to keep the core plugin system focused.
-
-This plugin exists because of that decision. It provides the same functionality—Cursor Agent integration via stdin/stdout—as a standalone tool that anyone can install and use immediately without waiting for upstream changes.
-
-## Why Other Approaches Don't Work
-
-Several alternative solutions have been attempted to integrate Cursor with OpenCode, but each has fundamental issues:
-
-### opencode-cursor-auth (CLI Arguments)
-This approach passes prompts as CLI arguments to cursor-agent. The problem is that operating systems enforce a hard limit on the total length of command-line arguments (typically 128KB on Linux, 32KB on macOS). When coding conversations grow large, you immediately hit:
-
-```
-E2BIG: argument list too long
-```
-
-This makes it unusable for real-world coding sessions where context grows naturally.
-
-### HTTP Proxy Wrappers
-Some projects tried to run an HTTP server that wraps cursor-agent, then point OpenCode to `http://localhost:PORT/v1`. While this bypasses the argument limit, it introduces unnecessary complexity:
-
-- Requires managing a separate daemon process
-- Adds network latency to every prompt
-- Creates a single point of failure if the proxy crashes
-- Adds memory and CPU overhead for no functional benefit
-- Harder to debug when things go wrong
-
-### Direct OpenAI API Integration
-Others attempted to use Cursor's OpenAI-compatible API endpoint directly. This has issues:
-
-- Requires active internet connection even for local models
-- Subject to rate limits and API changes
-- Sends potentially sensitive code to external servers
-- Doesn't leverage cursor-agent's built-in optimizations
-
-### The stdin/stdout Approach (This Plugin)
-This plugin uses the standard Unix philosophy: pipe data through stdin, read results from stdout. This approach:
-
-- ✅ No argument length limits (stdin has no size constraints)
-- ✅ No network overhead (direct process communication)
-- ✅ No daemon to manage (spawns on-demand)
-- ✅ Minimal complexity (~200 lines of TypeScript)
-- ✅ Full streaming support
-- ✅ Tool calling support
-- ✅ Works offline with local models
-
-## Problem Solved
-
-`opencode-cursor-auth` passes prompts as CLI arguments → causes `E2BIG: argument list too long` errors.
-
-This plugin uses stdin/stdout to bypass argument length limits.
-
 ## Installation
 
 ### One-Line Install (Fastest)
@@ -119,6 +64,61 @@ OpenCode will automatically use this provider when configured. Select `cursor-ac
 - ✅ Minimal complexity (~200 lines)
 - ✅ TUI installer with animated terminal art
 - ✅ Pre/post install validation
+
+## Background
+
+[PR #5095](https://github.com/sst/opencode/pull/5095) by [@rinardmclern](https://github.com/rinardmclern) proposed native ACP (OpenAI Chat Completion Protocol) support for OpenCode. The PR introduced a comprehensive implementation that would have allowed OpenCode to directly communicate with Cursor Agent using the standard OpenAI-compatible API format.
+
+Despite the high quality of the contribution and community interest, the OpenCode maintainers decided not to merge PR #5095. The reasons cited included concerns about maintaining external service integrations and preferring to keep the core plugin system focused.
+
+This plugin exists because of that decision. It provides the same functionality—Cursor Agent integration via stdin/stdout—as a standalone tool that anyone can install and use immediately without waiting for upstream changes.
+
+## Why Other Approaches Don't Work
+
+Several alternative solutions have been attempted to integrate Cursor with OpenCode, but each has fundamental issues:
+
+### opencode-cursor-auth (CLI Arguments)
+This approach passes prompts as CLI arguments to cursor-agent. The problem is that operating systems enforce a hard limit on the total length of command-line arguments (typically 128KB on Linux, 32KB on macOS). When coding conversations grow large, you immediately hit:
+
+```
+E2BIG: argument list too long
+```
+
+This makes it unusable for real-world coding sessions where context grows naturally.
+
+### HTTP Proxy Wrappers
+Some projects tried to run an HTTP server that wraps cursor-agent, then point OpenCode to `http://localhost:PORT/v1`. While this bypasses the argument limit, it introduces unnecessary complexity:
+
+- Requires managing a separate daemon process
+- Adds network latency to every prompt
+- Creates a single point of failure if the proxy crashes
+- Adds memory and CPU overhead for no functional benefit
+- Harder to debug when things go wrong
+
+### Direct OpenAI API Integration
+Others attempted to use Cursor's OpenAI-compatible API endpoint directly. This has issues:
+
+- Requires active internet connection even for local models
+- Subject to rate limits and API changes
+- Sends potentially sensitive code to external servers
+- Doesn't leverage cursor-agent's built-in optimizations
+
+### The stdin/stdout Approach (This Plugin)
+This plugin uses the standard Unix philosophy: pipe data through stdin, read results from stdout. This approach:
+
+- ✅ No argument length limits (stdin has no size constraints)
+- ✅ No network overhead (direct process communication)
+- ✅ No daemon to manage (spawns on-demand)
+- ✅ Minimal complexity (~200 lines of TypeScript)
+- ✅ Full streaming support
+- ✅ Tool calling support
+- ✅ Works offline with local models
+
+## Problem Solved
+
+`opencode-cursor-auth` passes prompts as CLI arguments → causes `E2BIG: argument list too long` errors.
+
+This plugin uses stdin/stdout to bypass argument length limits.
 
 ## Prerequisites
 
