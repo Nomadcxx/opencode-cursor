@@ -48,13 +48,11 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "ctrl+c":
-		if m.step != stepInstalling && m.step != stepUninstalling {
-			if m.cancel != nil {
-				m.cancel()
-			}
-			return m, tea.Quit
+	case "esc":
+		if m.cancel != nil {
+			m.cancel()
 		}
-		return m, nil
+		return m, tea.Quit
 
 	case "q":
 		if m.step == stepComplete || m.step == stepWelcome {
