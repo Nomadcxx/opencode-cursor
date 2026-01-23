@@ -19,19 +19,20 @@ import { RetryEngine } from "./retry.js";
 import { ToolMapper } from "./tools.js";
 import { MetricsTracker } from "./metrics.js";
 import { CursorNativeWrapper } from "./cursor.js";
+import type { CursorNativeWrapperImpl } from "./cursor.js";
 import { createLogger } from "./logger.js";
 import { spawn } from "child_process";
 import * as readline from "node:readline";
 
 const log = createLogger("CursorAcpAgent");
 
-export class CursorAcpHybridAgent implements Agent {
+class CursorAcpHybridAgentImpl implements Agent {
   private client: AgentSideConnection;
   private sessions: SessionManager;
   private retry: RetryEngine;
   private tools: ToolMapper;
   private metrics: MetricsTracker;
-  private cursor: CursorNativeWrapper;
+  private cursor: CursorNativeWrapperImpl;
 
   constructor(client: AgentSideConnection) {
     this.client = client;
@@ -39,7 +40,7 @@ export class CursorAcpHybridAgent implements Agent {
     this.retry = new RetryEngine({ maxRetries: 3, baseDelayMs: 1000, maxDelayMs: 30000 });
     this.tools = new ToolMapper();
     this.metrics = new MetricsTracker();
-    this.cursor = new CursorNativeWrapper();
+    this.cursor = CursorNativeWrapper();
 
     log.info("Agent initialized");
   }
@@ -259,3 +260,12 @@ export class CursorAcpHybridAgent implements Agent {
     return parts.join("\n\n");
   }
 }
+
+// Export as a callable function that works with or without 'new'
+// This allows opencode to call it without 'new' keyword
+export function CursorAcpHybridAgent(client: AgentSideConnection): CursorAcpHybridAgentImpl {
+  return new CursorAcpHybridAgentImpl(client);
+}
+
+// Also export the class for type compatibility
+export { CursorAcpHybridAgentImpl };

@@ -4,7 +4,7 @@ import { createLogger } from "./logger.js";
 
 const log = createLogger("CursorNative");
 
-export class CursorNativeWrapper {
+class CursorNativeWrapperImpl {
   private agentPath: string;
 
   constructor() {
@@ -126,3 +126,12 @@ export class CursorNativeWrapper {
     }
   }
 }
+
+// Export as a callable function that works with or without 'new'
+// This allows opencode to call it without 'new' keyword
+export function CursorNativeWrapper(): CursorNativeWrapperImpl {
+  return new CursorNativeWrapperImpl();
+}
+
+// Also export the class for type compatibility
+export { CursorNativeWrapperImpl };
