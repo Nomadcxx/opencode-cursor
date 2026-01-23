@@ -65,6 +65,41 @@ OpenCode will automatically use this provider when configured. Select `cursor-ac
 - ✅ TUI installer with animated terminal art
 - ✅ Pre/post install validation
 
+## ACP Protocol
+
+This plugin implements **Agent Client Protocol (ACP)** for universal compatibility. It works with:
+
+- ✅ OpenCode
+- ✅ Zed
+- ✅ JetBrains
+- ✅ neovim (via avante.nvim plugin)
+- ✅ marimo notebook
+
+### ACP Features
+
+- Full session management with persistence
+- Mode switching (default, plan)
+- Enhanced tool call metadata (durations, diffs, locations)
+- Proper cancellation semantics
+- Auth method negotiation
+
+### Session Persistence
+
+Sessions are automatically persisted to `~/.opencode/sessions/` and restored on plugin restart. This means:
+
+- Survive crashes
+- Resume interrupted conversations
+- Track session history
+
+### Retry Logic
+
+Recoverable errors (timeout, network, rate limit) are automatically retried with exponential backoff:
+- Attempt 1: 1s delay
+- Attempt 2: 2s delay
+- Attempt 3: 4s delay
+
+Fatal errors (auth, invalid config) fail immediately with clear messages.
+
 ## Background
 
 [PR #5095](https://github.com/sst/opencode/pull/5095) by [@rinardmclern](https://github.com/rinardmclern) proposed native ACP (OpenAI Chat Completion Protocol) support for OpenCode. The PR introduced a comprehensive implementation that would have allowed OpenCode to directly communicate with Cursor Agent using the standard OpenAI-compatible API format.

@@ -7,7 +7,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "bun build ./src/index.ts --outdir ./dist --target node",
-    "dev": "tsc --watch",
+    "dev": "bun build ./src/index.ts --outdir ./dist --target node --watch",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit",
+    "test:integration": "bun test tests/integration",
     "prepublishOnly": "bun run build"
   },
   "exports": {
