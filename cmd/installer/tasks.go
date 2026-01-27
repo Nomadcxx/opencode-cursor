@@ -225,23 +225,88 @@ func updateConfig(m *model) error {
 	return nil
 }
 
-func validateConfig(m *model) error {
-	if err := validateJSON(m.configPath); err != nil {
-		return fmt.Errorf("config validation failed: %w", err)
+func removeOldCursorAcpProvider(m *model) error {
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
 	}
 
-	// Verify cursor-acp provider exists in config
-	data, _ := os.ReadFile(m.configPath)
 	var config map[string]interface{}
 	json.Unmarshal(data, &config)
 
 	providers, ok := config["provider"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("provider section missing from config")
+		return nil
 	}
 
-	if _, exists := providers["cursor-acp"]; !exists {
-		return fmt.Errorf("cursor-acp provider not found in config")
+	oldProvider, exists := providers["cursor-acp"]
+	if !exists {
+		return nil
+	}
+
+	if oldNpm, ok := oldProvider.(map[string]interface{})["npm"].(string); ok && oldNpm == "@ai-sdk/openai-compatible" {
+		delete(providers, "cursor-acp")
+
+		output, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+
+		if err := os.WriteFile(m.configPath, output, 0644); err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+
+		fmt.Println("Removed old cursor-acp provider (was using @ai-sdk/openai-compatible)")
+	}
+
+	return nil
+}
+
+	func removeOldCursorAcpProvider(m *model) error {
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config map[string]interface{}
+	json.Unmarshal(data, &config)
+
+	providers, ok := config["provider"].(map[string]interface{})
+	if !ok {
+		return nil // No provider section is OK
+	}
+
+	// Check if old cursor-acp exists
+	oldProvider, exists := providers["cursor-acp"]
+	if !exists {
+		return nil // No old provider to remove
+	}
+
+	// Check if it's using the old wrong npm package
+	if oldNpm, ok := oldProvider.(map[string]interface{})["npm"].(string); ok && oldNpm == "@ai-sdk/openai-compatible" {
+		// Remove the old provider
+		delete(providers, "cursor-acp")
+
+		// Write back
+		output, err := json.MarshalIndent(config, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to serialize config: %w", err)
+		}
+
+		if err := os.WriteFile(m.configPath, output, 0644); err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+
+		fmt.Println("Removed old cursor-acp provider (was using @ai-sdk/openai-compatible)")
+	}
+
+	return nil
+}
+
+// Verify cursor-acp provider exists in config
+func validateConfig(m *model) error {
+	if err := validateJSON(m.configPath); err != nil {
+		return fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return nil
