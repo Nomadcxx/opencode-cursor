@@ -18,15 +18,16 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "ai": "^6.0.55"
+  },
   "devDependencies": {
-    "@opencode-ai/sdk": "latest",
     "@types/node": "^22.0.0",
-    "ai": "^6.0.55",
     "typescript": "^5.8.0"
   },
   "peerDependencies": {
     "@opencode-ai/sdk": "^1.0.0",
-    "bun-types": "latest"
+    "bun-types": "^1.1.0"
   },
   "license": "ISC"
 }
