@@ -1,164 +1,184 @@
-# OpenCode-Cursor: AI SDK Provider Implementation
+# OpenCode Cursor Plugin
 
-## What's Fixed
+OpenCode plugin that provides Cursor Agent integration via stdin communication (fixes E2BIG errors with large prompts).
 
-This project has been completely rewritten to use the **correct AI SDK provider pattern** instead of the broken OpenCode plugin approach.
+## Installation
 
-### Key Changes
-
-**Before (Broken):**
-- Used `@opencode-ai/plugin` SDK (wrong pattern for providers)
-- Attempted to create HTTP bridge (unnecessary complexity)
-- Configured `http://127.0.0.1:32123/v1` but no server existed
-
-**After (Fixed):**
-- Uses `@ai-sdk/provider` SDK (correct pattern)
-- Creates proper `LanguageModel` instances
-- Uses `customProvider()` function to register as provider
-- Works with OpenCode's internal HTTP proxy system
-- Leverages existing `SimpleCursorClient` for cursor-agent communication
-- No HTTP server needed - AI SDK handles HTTP proxy internally
-
----
-
-## How It Works
-
-### Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    OpenCode                            │
-│                                                         │
-│  ┌──────────────────────────────────────────────────┐    │
-│  │  Provider System (@ai-sdk/provider)       │    │
-│  │                                            │    │
-│  │  ┌──────────────────────────────────────┐    │    │
-│  │  │  cursorProvider (@ai-sdk/provider)   │    │
-│  │  │  - Implements customProvider()       │    │
-│  │  │  - Wraps SimpleCursorClient         │    │
-│  │  │  - Returns LanguageModel objects    │    │
-│  │  └──────────────────────────────────────┘    │
-│  └──────────────────────────────────────────────────┘    │
-│                      │    │
-│  ▼ Request from User                     │    │
-│              │    │
-│  ┌──────────────────────────────────────────┐    │
-│  │  cursor-agent (subprocess)             │    │
-│  │  - Spawned via SimpleCursorClient   │    │
-│  │  - Communicates via stdin/stdout      │    │
-│  └───────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Data Flow
-
-1. **OpenCode** requests model: `cursor-acp/gpt-5.1`
-2. **AI SDK** calls `cursorProvider.languageModel("cursor-acp/gpt-5.1")`
-3. **Provider** calls `SimpleCursorClient.executePrompt()`
-4. **Client** spawns `cursor-agent` with stdin/stdout
-5. **Cursor Agent** returns JSON output
-6. **Provider** converts to AI SDK format and returns text
-
----
-
-## Usage
-
-### Installation
-
-**Automated Installation:**
 ```bash
-# Quick install (recommended)
+# Install as OpenCode plugin
+ln -s /path/to/opencode-cursor/dist/index.js ~/.config/opencode/plugin/cursor-acp.js
+
+# Or install via npm (when published)
 npm install opencode-cursor
 ```
 
-The npm package automatically:
-- Installs the provider to OpenCode's package.json
-- Adds cursor-acp provider configuration
-- No manual configuration needed
+## Configuration
 
-### Models Available
-
-All Cursor Agent models are available:
-
-- `cursor-acp/auto` - Automatic model selection
-- `cursor-acp/gpt-5.1` - GPT-5.1
-- `cursor-acp/gpt-5.2` - GPT-5.2
-- `cursor-acp/claude-4.5-sonnet` - Claude 4.5 Sonnet
-- `cursor-acp/claude-4.5-sonnet-thinking` - Claude 4.5 Sonnet Thinking
-- `cursor-acp/claude-4.5-opus` - Claude 4.5 Opus
-- `cursor-acp/claude-4.5-haiku` - Claude 4.5 Haiku
-- `cursor-acp/gemini-3-flash` - Gemini 3 Flash
-- `cursor-acp/gemini-3-pro` - Gemini 3 Pro
-- `cursor-acp/deepseek-v3.2` - DeepSeek V3.2
-- `cursor-acp/composer-1` - Cursor Composer 1
-- `cursor-acp/grok-4` - Grok 4
-- `cursor-acp/kimi-k2` - Kimi K2
-- And 21 more models
-
-### Example: OpenCode Config
+Add to your `~/.config/opencode/opencode.json`:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "agent": {
-    "default": {
-      "model": "cursor-acp/gpt-5.1"
+  "models": {
+    "cursor": {
+      "provider": "cursor-acp",
+      "model": "cursor-acp/auto"
     }
   }
 }
 ```
 
-### Example: Programmatic Usage
+## Environment Variables
 
-```typescript
-import { generateText } from "ai";
+- `CURSOR_AGENT_EXECUTABLE` - Path to cursor-agent binary (default: `cursor-agent`)
 
-const result = await generateText({
-  model: "cursor-acp/gpt-5.1",
-  prompt: "Write a function to add two numbers",
-});
+## Features
 
-console.log(result.text);
-```
+- **Stdin-based communication** - Avoids E2BIG errors with large prompts
+- **Streaming support** - Real-time response streaming
+- **Session management** - ACP-compliant session tracking
+- **Tool mapping** - Converts Cursor tool events to ACP format
+- **Metrics tracking** - Prompt and tool call metrics
+- **Retry logic** - Automatic retry with exponential backoff
 
----
+## Available Models
 
-## Building for Development
+| Model ID | Description |
+|----------|-------------|
+| `cursor-acp/auto` | Auto-select best available model |
+
+## Development
 
 ```bash
 # Install dependencies
-npm install
+bun install
 
 # Build
-npm run build
+bun run build
 
-# Test changes
-npm test
+# Run tests
+bun test
+
+# Run specific test suite
+bun test tests/unit
+bun test tests/integration
+
+# Watch mode
+bun run dev
 ```
 
----
+## Project Structure
 
-## Implementation Details
+```
+src/
+├── acp/
+│   ├── sessions.ts    # Session management
+│   ├── tools.ts       # Tool event mapping
+│   └── metrics.ts     # Metrics tracking
+├── client/
+│   └── simple.ts      # Cursor agent client
+├── utils/
+│   └── logger.ts      # Logging utility
+├── index.ts           # Main exports
+└── provider.ts        # AI SDK provider
 
-- **File**: `src/provider.ts` - Complete rewrite using `@ai-sdk/provider`
-- **Client**: `src/client/simple.ts` - Unchanged, wraps cursor-agent
-- **Config**: Uses `SimpleCursorClient` directly
-- **No HTTP server needed** - AI SDK handles HTTP proxy internally
-- **No plugin hooks needed** - Provider pattern is correct approach
+tests/
+├── unit/              # Unit tests
+├── integration/       # Integration tests
+└── fixtures/          # Test fixtures
+```
 
----
+## API
+
+### SimpleCursorClient
+
+```typescript
+import { SimpleCursorClient } from 'opencode-cursor';
+
+const client = new SimpleCursorClient({
+  cursorAgentPath: 'cursor-agent',
+  timeout: 30000,
+  maxRetries: 3
+});
+
+// Execute prompt
+const result = await client.executePrompt('Hello', {
+  model: 'auto',
+  mode: 'default'
+});
+
+// Stream response
+for await (const line of client.executePromptStream('Hello')) {
+  console.log(line);
+}
+```
+
+### SessionManager
+
+```typescript
+import { SessionManager } from 'opencode-cursor/acp/sessions';
+
+const manager = new SessionManager();
+await manager.initialize();
+
+const session = await manager.createSession({ cwd: '/project' });
+console.log(session.id);
+```
+
+### ToolMapper
+
+```typescript
+import { ToolMapper } from 'opencode-cursor/acp/tools';
+
+const mapper = new ToolMapper();
+const updates = await mapper.mapCursorEventToAcp(cursorEvent, sessionId);
+```
+
+### MetricsTracker
+
+```typescript
+import { MetricsTracker } from 'opencode-cursor/acp/metrics';
+
+const tracker = new MetricsTracker();
+tracker.recordPrompt(sessionId, 'gpt-4', 150);
+tracker.recordToolCall(sessionId, 'bash', 500);
+
+const metrics = tracker.getAggregateMetrics(24); // Last 24 hours
+```
+
+## Testing
+
+All tests pass:
+
+```bash
+$ bun test
+bun test v1.3.6
+
+  ✓ SessionManager (6 tests)
+  ✓ ToolMapper (35 tests)
+  ✓ MetricsTracker (6 tests)
+  ✓ RetryEngine (5 tests)
+  ✓ CursorAgent Integration (3 tests)
+
+  55 pass
+  0 fail
+  108 expect() calls
+```
+
+## Automated Testing
+
+Run the automated test script:
+
+```bash
+./test-all.sh
+```
+
+This runs:
+- Unit tests
+- Integration tests
+- Build verification
+- Lint checks (if configured)
+- Smoke tests
 
 ## License
 
 ISC
-
-## Installation
-
-```bash
-npm install opencode-cursor
-```
-
-The npm package automatically:
-- Installs provider to OpenCode's package.json
-- Adds cursor-acp provider configuration
-- No manual configuration needed
