@@ -1,5 +1,6 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
+import { startCursorOAuth } from "./auth";
 
 const CURSOR_PROVIDER_ID = "cursor-acp";
 const CURSOR_PROXY_HOST = "127.0.0.1";
@@ -454,16 +455,15 @@ export const CursorPlugin: Plugin = async ({ $, directory }: PluginInput) => {
       },
       methods: [
         {
-          label: "Check cursor-agent availability",
-          type: "api",
-          authorize: async () => {
-            const check = await $`cursor-agent --version`.quiet().nothrow();
-            if (check.exitCode !== 0) {
-              return { type: "failed" };
-            }
+          label: "Cursor OAuth",
+          type: "oauth",
+          async authorize() {
+            const { url, instructions, callback } = await startCursorOAuth();
             return {
-              type: "success",
-              key: "cursor-agent",
+              type: "oauth",
+              url,
+              instructions,
+              callback,
             };
           },
         },
