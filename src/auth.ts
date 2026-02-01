@@ -34,10 +34,15 @@ export async function startCursorOAuth(): Promise<{
     const stripAnsi = (str: string) => str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 
     const extractUrl = () => {
-      const cleanOutput = stripAnsi(stdout);
-      // Handle URL that might span multiple lines
-      const normalized = cleanOutput.replace(/\n/g, " ");
-      const urlMatch = normalized.match(/https:\/\/cursor\.com\/loginDeepControl[^\s]+/);
+      let cleanOutput = stripAnsi(stdout);
+      // The URL is split across lines - join them
+      // First remove line continuations (hyphen + newline)
+      cleanOutput = cleanOutput.replace(/-\n/g, "");
+      // Then join remaining newlines that are within the URL
+      // URL starts with https://cursor.com/loginDeepControl and continues until whitespace
+      cleanOutput = cleanOutput.replace(/\n/g, "");
+      // Extract full URL - now it should be continuous
+      const urlMatch = cleanOutput.match(/https:\/\/cursor\.com\/loginDeepControl[^\s]*/);
       if (urlMatch) {
         return urlMatch[0];
       }
