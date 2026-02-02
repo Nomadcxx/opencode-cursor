@@ -50,7 +50,7 @@ export function parseAgentError(stderr: string): ParsedError {
       message: clean,
       userMessage: "Not authenticated with Cursor",
       details: {},
-      suggestion: "Run: opencode auth login cursor-acp",
+      suggestion: "Run: opencode auth login → Other → cursor-acp, or: cursor-agent login",
     };
   }
 
@@ -65,14 +65,22 @@ export function parseAgentError(stderr: string): ParsedError {
     };
   }
 
-  // Model not found
-  if (clean.includes("model not found") || clean.includes("invalid model")) {
+  // Model not found / not available
+  if (clean.includes("model not found") || clean.includes("invalid model") || clean.includes("Cannot use this model")) {
+    // Extract model name and available models from error
+    const modelMatch = clean.match(/Cannot use this model: ([^.]+)/);
+    const availableMatch = clean.match(/Available models: (.+)/);
+
+    const details: Record<string, string> = {};
+    if (modelMatch) details.requested = modelMatch[1];
+    if (availableMatch) details.available = availableMatch[1].split(", ").slice(0, 5).join(", ") + "...";
+
     return {
       type: "model",
       message: clean,
-      userMessage: "Requested model not available",
-      details: {},
-      suggestion: "Run: cursor-agent --list-models to see available models",
+      userMessage: modelMatch ? `Model '${modelMatch[1]}' not available` : "Requested model not available",
+      details,
+      suggestion: "Use cursor-acp/auto or check available models with: cursor-agent --list-models",
     };
   }
 
