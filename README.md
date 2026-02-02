@@ -97,19 +97,28 @@ flowchart TB
     I --> D
 ```
 
-## Comparison
+## Alternatives
 
-| | cursor-acp | cursor-agent CLI | Direct API |
-|---|------------|------------------|------------|
-| **Interface** | HTTP (OpenAI-compatible) | CLI subprocess | REST API |
-| **Max Prompt** | ~unlimited (HTTP body) | ~128KB (ARG_MAX) | Provider limit |
-| **Streaming** | SSE chunks | stdout | SSE/WebSocket |
-| **Auth Storage** | `~/.cursor/auth.json` | `~/.cursor/auth.json` | env vars / keychain |
-| **Billing** | Cursor Pro quota | Cursor Pro quota | Per-token |
-| **OpenCode Config** | Plugin + provider | Shell tool | Provider only |
-| **Dependencies** | cursor-agent, bun | cursor-agent | None |
-| **Error Handling** | Parsed (quota/auth/model) | Raw stderr | Provider-specific |
-| **Request Flow** | OpenCode → Proxy → CLI → API | Shell → CLI → API | OpenCode → API |
+| | cursor-acp | [yet-another-opencode-cursor-auth](https://github.com/Yukaii/yet-another-opencode-cursor-auth) | [opencode-cursor-auth](https://github.com/POSO-PocketSolutions/opencode-cursor-auth) | [cursor-opencode-auth](https://github.com/R44VC0RP/cursor-opencode-auth) |
+|---|:---:|:---:|:---:|:---:|
+| **Architecture** | HTTP proxy via cursor-agent | Direct Connect-RPC | HTTP proxy via cursor-agent | Direct Connect-RPC/protobuf |
+| **Platform** | Linux, macOS | Linux, macOS | Linux, macOS | macOS only (Keychain) |
+| **Max Prompt** | Unlimited (HTTP body) | Unknown | ~128KB (ARG_MAX) | Unknown |
+| **Streaming** | ✓ SSE | ✓ SSE | Undocumented | ✓ |
+| **Error Parsing** | ✓ (quota/auth/model) | ✗ | ✗ | Debug logging |
+| **Installer** | ✓ TUI + one-liner | ✗ | ✗ | ✗ |
+| **OAuth Flow** | ✓ OpenCode integration | ✓ Native | Browser login | Keychain |
+| **Tool Calling** | Via cursor-agent | ✓ Native | ✓ Experimental | ✗ |
+| **Stability** | Stable (uses official CLI) | Experimental | Stable | Experimental |
+| **Dependencies** | bun, cursor-agent | npm | bun, cursor-agent | Node.js 18+ |
+| **Port** | 32124 | 18741 | 32123 | 4141 |
+
+**Key advantages of cursor-acp:**
+- Avoids E2BIG errors with large prompts (uses HTTP body, not CLI args)
+- Structured error parsing with actionable suggestions
+- Cross-platform (not locked to macOS Keychain)
+- TUI installer for easy setup
+- Uses official cursor-agent CLI (more stable than reverse-engineering Connect-RPC)
 
 ## Prerequisites
 
