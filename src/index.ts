@@ -10,6 +10,12 @@ export type { AuthResult } from "./auth.js";
 export { checkAuthStatus, formatStatusOutput } from "./commands/status";
 export type { AuthStatus } from "./commands/status";
 
+// Utilities
+export { createLogger } from "./utils/logger";
+export type { Logger } from "./utils/logger";
+export { parseAgentError, formatErrorForUser, stripAnsi } from "./utils/errors";
+export type { ParsedError, ErrorType } from "./utils/errors";
+
 // Default export for OpenCode plugin usage
 export { CursorPlugin as default } from "./plugin.js";
 
