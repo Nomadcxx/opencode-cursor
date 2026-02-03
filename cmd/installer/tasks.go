@@ -292,21 +292,26 @@ func updateConfig(m *model) error {
 
 func validateConfig(m *model) error {
 	if err := validateJSON(m.configPath); err != nil {
-		return fmt.Errorf("config validation failed: %w", err)
+		return NewValidationError("config validation failed", m.configPath, err)
 	}
 
-	// Verify cursor-acp provider exists in config
-	data, _ := os.ReadFile(m.configPath)
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		return NewConfigError("failed to read config for validation", m.configPath, err)
+	}
+
 	var config map[string]interface{}
-	json.Unmarshal(data, &config)
+	if err := json.Unmarshal(data, &config); err != nil {
+		return NewConfigError("failed to parse config JSON", m.configPath, err)
+	}
 
 	providers, ok := config["provider"].(map[string]interface{})
 	if !ok {
-		return fmt.Errorf("provider section missing from config")
+		return NewValidationError("provider section missing from config", m.configPath, nil)
 	}
 
 	if _, exists := providers["cursor-acp"]; !exists {
-		return fmt.Errorf("cursor-acp provider not found in config")
+		return NewValidationError("cursor-acp provider not found in config", m.configPath, nil)
 	}
 
 	return nil
