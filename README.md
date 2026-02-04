@@ -214,6 +214,29 @@ Auth token is created once via `opencode auth login` or `cursor-agent login`. Af
 
 **Quota exceeded** - Check [cursor.com/settings](https://cursor.com/settings)
 
+**Authentication failed or incomplete** - Enable debug logging to diagnose:
+```bash
+CURSOR_ACP_LOG_LEVEL=debug opencode auth login cursor-acp
+```
+
+Common causes:
+- Browser didn't open automatically - manually open the URL shown in the terminal
+- Auth file not created - ensure `cursor-agent login` works directly first
+- Timeout - authentication must complete within 5 minutes
+
+### Debug Logging
+
+Set the log level via environment variable:
+- `CURSOR_ACP_LOG_LEVEL=debug` - Verbose output for troubleshooting
+- `CURSOR_ACP_LOG_LEVEL=info` - Default level
+- `CURSOR_ACP_LOG_LEVEL=warn` - Warnings and errors only
+- `CURSOR_ACP_LOG_LEVEL=error` - Errors only
+
+Disable log output entirely:
+```bash
+CURSOR_ACP_LOG_SILENT=true opencode run "your prompt"
+```
+
 ## License
 
 BSD-3-Clause
