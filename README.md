@@ -1,5 +1,10 @@
 ![header](docs/header.png)
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
+  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
+</p>
+
 Use your Cursor Pro subscription in [OpenCode](https://github.com/anomalyco/opencode). HTTP proxy to cursor-agent with OAuth support.
 
 ## Installation
@@ -157,21 +162,55 @@ Common models: `auto`, `sonnet-4.5`, `opus-4.6-thinking`, `opus-4.6`, `gpt-5.2`,
 
 ```mermaid
 flowchart TB
-    OC["OpenCode"]
-    SDK["@ai-sdk/openai-compatible\nbaseURL http://localhost:32124/v1"]
-    PLUGIN["cursor-acp plugin\nHTTP :32124\nPOST /v1/chat/completions\nGET /v1/models\nSSE streaming"]
-    CA["cursor-agent\nstdin → prompt\nstdout → response"]
-    AUTH["~/.cursor/cli-config.json\n~/.cursor/auth.json\nOAuth token"]
-    API["Cursor API"]
+    subgraph SETUP["📦 Setup (one-time)"]
+        direction TB
+        INSTALL["install.sh / TUI installer"]
+        BUILD["bun install && bun run build"]
+        SYNC["sync-models.sh\ncursor-agent models → parse"]
+        INSTALL --> BUILD --> SYNC
+    end
 
-    OC --> SDK
-    SDK -->|HTTP| PLUGIN
-    PLUGIN -->|spawn| CA
-    AUTH -.->|read| CA
-    CA -->|HTTPS| API
+    subgraph AUTH_FLOW["🔑 Auth (one-time)"]
+        direction TB
+        LOGIN["opencode auth login\nor cursor-agent login"]
+        BROWSER["Browser OAuth\ncursor.com"]
+        LOGIN -->|"open URL"| BROWSER
+        BROWSER -->|"token saved"| CREDS
+    end
+
+    subgraph CONFIG["⚙️ Config & Credentials"]
+        direction LR
+        SYMLINK["~/.config/opencode/plugin/cursor-acp.js\n→ dist/index.js"]
+        CONF["~/.config/opencode/opencode.json\nprovider · models · baseURL"]
+        CREDS["~/.cursor/auth.json\nor ~/.config/cursor/cli-config.json"]
+    end
+
+    subgraph RUNTIME["▶ Runtime (every request)"]
+        direction TB
+        OC["OpenCode"]
+        SDK["@ai-sdk/openai-compatible"]
+        PROXY["cursor-acp HTTP proxy\n:32124"]
+        CA["cursor-agent\nstdin→prompt · stdout→response"]
+        API["Cursor API"]
+
+        OC -->|"select model"| SDK
+        SDK -->|"POST /v1/chat/completions"| PROXY
+        PROXY -->|"spawn + pipe stdin"| CA
+        CA -->|"HTTPS"| API
+        API -->|"response"| CA
+        CA -->|"stdout"| PROXY
+        PROXY -->|"SSE stream"| SDK
+        SDK --> OC
+    end
+
+    SETUP -.->|"creates"| SYMLINK
+    SETUP -.->|"populates"| CONF
+    SYMLINK -.->|"loads plugin"| PROXY
+    CONF -.->|"configures"| SDK
+    CREDS -.->|"reads token"| CA
 ```
 
-Auth token is created once via `opencode auth login` or `cursor-agent login`. After that, `cursor-agent` reads it automatically on each request.
+**Setup** runs once during installation. **Auth** creates credentials via browser OAuth. At **runtime**, every request flows through the HTTP proxy which spawns `cursor-agent` per call, piping prompts via stdin to avoid shell argument limits.
 
 ## Alternatives
 
