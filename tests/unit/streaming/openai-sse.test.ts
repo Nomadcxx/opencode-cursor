@@ -62,7 +62,7 @@ describe("openai-sse", () => {
     expect(toolDelta.tool_calls[0].function.arguments).toBe("{\"path\":\"/tmp/file\"}");
   });
 
-  it("emits thinking deltas", () => {
+  it("emits thinking deltas from assistant message", () => {
     const converter = new StreamToSseConverter("test-model", {
       id: "chunk-id",
       created: 123,
@@ -77,5 +77,30 @@ describe("openai-sse", () => {
     });
 
     expect(parseChunk(chunk[0]).choices[0].delta.content).toBe("Plan");
+  });
+
+  it("emits thinking deltas from real thinking events", () => {
+    const converter = new StreamToSseConverter("test-model", {
+      id: "chunk-id",
+      created: 123,
+    });
+
+    const first = converter.handleEvent({
+      type: "thinking",
+      subtype: "delta",
+      text: "Analyzing",
+      session_id: "test",
+    });
+
+    expect(parseChunk(first[0]).choices[0].delta.content).toBe("Analyzing");
+
+    const second = converter.handleEvent({
+      type: "thinking",
+      subtype: "delta",
+      text: "Analyzing the problem",
+      session_id: "test",
+    });
+
+    expect(parseChunk(second[0]).choices[0].delta.content).toBe(" the problem");
   });
 });

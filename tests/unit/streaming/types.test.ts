@@ -73,7 +73,7 @@ describe("stream-json types", () => {
     expect(isThinking(event)).toBe(false);
   });
 
-  it("detects thinking events", () => {
+  it("detects thinking events in assistant message", () => {
     const event = {
       type: "assistant",
       message: {
@@ -84,6 +84,30 @@ describe("stream-json types", () => {
 
     expect(isThinking(event)).toBe(true);
     expect(isAssistantText(event)).toBe(false);
+  });
+
+  it("detects real thinking events (type=thinking)", () => {
+    const event = {
+      type: "thinking",
+      subtype: "delta",
+      text: "Let me analyze this...",
+      session_id: "test-session",
+      timestamp_ms: 1700000000000,
+    } as const;
+
+    expect(isThinking(event)).toBe(true);
+    expect(extractThinking(event)).toBe("Let me analyze this...");
+  });
+
+  it("extracts empty string from completed thinking event", () => {
+    const event = {
+      type: "thinking",
+      subtype: "completed",
+      session_id: "test-session",
+    } as const;
+
+    expect(isThinking(event)).toBe(true);
+    expect(extractThinking(event)).toBe("");
   });
 
   it("detects tool_call and result events", () => {

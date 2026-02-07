@@ -27,7 +27,7 @@ describe("ai-sdk stream parts", () => {
     expect(second).toEqual([{ type: "text-delta", textDelta: " world" }]);
   });
 
-  it("emits thinking deltas", () => {
+  it("emits thinking deltas from assistant message", () => {
     const converter = new StreamToAiSdkParts();
 
     const parts = converter.handleEvent({
@@ -39,6 +39,28 @@ describe("ai-sdk stream parts", () => {
     });
 
     expect(parts).toEqual([{ type: "text-delta", textDelta: "Plan" }]);
+  });
+
+  it("emits thinking deltas from real thinking events", () => {
+    const converter = new StreamToAiSdkParts();
+
+    const first = converter.handleEvent({
+      type: "thinking",
+      subtype: "delta",
+      text: "Let me analyze",
+      session_id: "test",
+    });
+
+    expect(first).toEqual([{ type: "text-delta", textDelta: "Let me analyze" }]);
+
+    const second = converter.handleEvent({
+      type: "thinking",
+      subtype: "delta",
+      text: "Let me analyze this problem",
+      session_id: "test",
+    });
+
+    expect(second).toEqual([{ type: "text-delta", textDelta: " this problem" }]);
   });
 
   it("emits tool call start and delta", () => {

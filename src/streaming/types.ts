@@ -42,14 +42,18 @@ export type StreamJsonAssistantEvent = {
   };
 };
 
+/**
+ * Thinking event from cursor-agent stream-json output.
+ * Real format: {"type":"thinking","subtype":"delta","text":"...","session_id":"...","timestamp_ms":...}
+ * OR: {"type":"thinking","subtype":"completed","session_id":"...","timestamp_ms":...}
+ */
 export type StreamJsonThinkingEvent = {
   type: "thinking";
+  subtype?: "delta" | "completed" | string;
+  text?: string;
   timestamp?: number;
+  timestamp_ms?: number;
   session_id?: string;
-  message: {
-    role: "assistant";
-    content: StreamJsonThinkingContent[];
-  };
 };
 
 export type StreamJsonToolCallPayload = {
@@ -120,9 +124,9 @@ export const extractText = (event: StreamJsonAssistantEvent) =>
 
 export const extractThinking = (
   event: StreamJsonAssistantEvent | StreamJsonThinkingEvent,
-) => {
+): string => {
   if (event.type === "thinking") {
-    return event.message.content.map((content) => content.thinking).join("");
+    return event.text ?? "";
   }
 
   return event.message.content
