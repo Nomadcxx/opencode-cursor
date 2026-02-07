@@ -1,5 +1,6 @@
 import type { ToolListResponse } from "@opencode-ai/sdk";
 import { createLogger } from "../utils/logger";
+import stripAnsi from "strip-ansi";
 
 const log = createLogger("tools:discovery");
 
@@ -26,8 +27,9 @@ export class OpenCodeToolDiscovery {
   constructor(client: any, opts: DiscoveryOptions = {}) {
     this.client = client;
     this.ttl = opts.ttlMs ?? Number(process.env.CURSOR_ACP_TOOL_CACHE_TTL_MS || 60000);
-    // Default to SDK-first; users can force CLI via env or opts if they really need to.
-    this.executorPref = opts.executor ?? ((process.env.CURSOR_ACP_TOOL_EXECUTOR as any) || "sdk");
+    // Default: auto (SDK first, CLI fallback). Users can force sdk or cli.
+    const envPref = process.env.CURSOR_ACP_TOOL_EXECUTOR as any;
+    this.executorPref = opts.executor ?? (envPref === "sdk" || envPref === "cli" ? envPref : "auto");
   }
 
   async listTools(): Promise<OpenCodeTool[]> {
@@ -57,9 +59,9 @@ export class OpenCodeToolDiscovery {
       try {
         const { spawnSync } = await import("node:child_process");
         const res = spawnSync("opencode", ["tool", "list", "--json"], { encoding: "utf-8" });
-        if (res.status === 0 && res.stdout) {
-          const parsed = JSON.parse(res.stdout);
-          tools = (parsed?.data?.tools || []).map((t: any) => this.normalize(t, "cli"));
+        const parsed = this.parseCliJson(res.stdout || "");
+        if (parsed?.data?.tools?.length) {
+          tools = parsed.data.tools.map((t: any) => this.normalize(t, "cli"));
         } else {
           log.warn("CLI tool list failed", { status: res.status, stderr: res.stderr });
         }
@@ -113,5 +115,24 @@ export class OpenCodeToolDiscovery {
       log.debug("MCP tool discovery skipped", { error: String(err) });
       return [];
     }
+  }
+
+  // Parse JSON from noisy CLI output (strip ANSI, take last JSON object)
+  private parseCliJson(stdout: string): any | null {
+    const clean = stripAnsi(stdout || "").trim();
+    if (!clean) return null;
+    // Fast path
+    try {
+      return JSON.parse(clean);
+    } catch {}
+    // Find last '{'
+    const lastBrace = clean.lastIndexOf("{");
+    if (lastBrace >= 0) {
+      const substr = clean.slice(lastBrace);
+      try {
+        return JSON.parse(substr);
+      } catch {}
+    }
+    return null;
   }
 }

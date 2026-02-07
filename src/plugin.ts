@@ -715,12 +715,13 @@ export const CursorPlugin: Plugin = async ({ $, directory, client }: PluginInput
 
     for (const t of list) {
       add(t.name, t);
-      const skillAlias = `oc_skill_${t.id.replace(/[^a-zA-Z0-9_\\-]/g, "_")}`.slice(0, 64);
+      const baseId = t.id.replace(/[^a-zA-Z0-9_\\-]/g, "_");
+      const skillAlias = `oc_skill_${baseId}`.slice(0, 64);
       if (!toolsByName.has(skillAlias)) add(skillAlias, t);
-      if (t.id.includes("superskill")) {
-        const superAlias = `oc_superskill_${t.id.replace(/[^a-zA-Z0-9_\\-]/g, "_")}`.slice(0, 64);
-        if (!toolsByName.has(superAlias)) add(superAlias, t);
-      }
+      const superAlias = `oc_superskill_${baseId}`.slice(0, 64);
+      if (!toolsByName.has(superAlias)) add(superAlias, t);
+      const spAlias = `oc_superpowers_${baseId}`.slice(0, 64);
+      if (!toolsByName.has(spAlias)) add(spAlias, t);
     }
 
     lastToolNames = toolEntries.map((e) => e.function.name);
