@@ -683,7 +683,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 /**
  * OpenCode plugin for Cursor Agent
  */
-export const CursorPlugin: Plugin = async ({ $, directory, client }: PluginInput) => {
+export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: PluginInput) => {
   log.info("Plugin initializing", { directory });
   await ensurePluginDirectory();
 
