@@ -58,7 +58,10 @@ export class OpenCodeToolDiscovery {
     if (tools.length === 0 && this.executorPref !== "sdk") {
       try {
         const { spawnSync } = await import("node:child_process");
-        const res = spawnSync("opencode", ["tool", "list", "--json"], { encoding: "utf-8" });
+        const cliCmd = process.env.OPENCODE_TOOL_LIST_SHIM
+          ? process.env.OPENCODE_TOOL_LIST_SHIM.split(" ")
+          : ["opencode", "tool", "list", "--json"];
+        const res = spawnSync(cliCmd[0], cliCmd.slice(1), { encoding: "utf-8" });
         const parsed = this.parseCliJson(res.stdout || "");
         if (parsed?.data?.tools?.length) {
           tools = parsed.data.tools.map((t: any) => this.normalize(t, "cli"));
