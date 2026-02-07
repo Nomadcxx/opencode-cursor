@@ -414,9 +414,7 @@ func restoreAllBackups(m *model) error {
 }
 
 func cleanupBackups(m *model) {
-	for path := range m.backupFiles {
-		os.Remove(path)
-	}
+	// On success we just drop the in-memory copies; never delete the user's files.
 	m.backupFiles = make(map[string][]byte)
 }
 
