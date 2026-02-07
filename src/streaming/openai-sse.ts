@@ -22,6 +22,7 @@ type OpenAiToolCall = {
 
 type OpenAiDelta = {
   content?: string;
+  reasoning_content?: string;
   tool_calls?: OpenAiToolCall[];
 };
 
@@ -69,13 +70,17 @@ export class StreamToSseConverter {
 
   handleEvent(event: StreamJsonEvent): string[] {
     if (isAssistantText(event)) {
+      const hasPartialTimestamp = typeof (event as any).timestamp_ms === "number";
+      if (!hasPartialTimestamp) {
+        return [];
+      }
       const delta = this.tracker.nextText(extractText(event));
       return delta ? [this.chunkWith({ content: delta })] : [];
     }
 
     if (isThinking(event)) {
       const delta = this.tracker.nextThinking(extractThinking(event));
-      return delta ? [this.chunkWith({ content: delta })] : [];
+      return delta ? [this.chunkWith({ reasoning_content: delta })] : [];
     }
 
     if (isToolCall(event)) {

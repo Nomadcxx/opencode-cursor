@@ -8,7 +8,7 @@ import { startCursorOAuth } from "./auth";
 import { LineBuffer } from "./streaming/line-buffer.js";
 import { StreamToSseConverter, formatSseDone } from "./streaming/openai-sse.js";
 import { parseStreamJsonLine } from "./streaming/parser.js";
-import { extractText, isAssistantText } from "./streaming/types.js";
+import { extractText, extractThinking, isAssistantText, isThinking } from "./streaming/types.js";
 import { createLogger } from "./utils/logger";
 import { parseAgentError, formatErrorForUser, stripAnsi } from "./utils/errors";
 import { OpenCodeToolDiscovery } from "./tools/discovery.js";
@@ -38,7 +38,20 @@ function getGlobalKey(): string {
   return "__opencode_cursor_proxy_server__";
 }
 
-function createChatCompletionResponse(model: string, content: string) {
+const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
+const EMIT_TOOL_UPDATES = process.env.CURSOR_ACP_EMIT_TOOL_UPDATES === "true";
+const FORWARD_TOOL_CALLS = process.env.CURSOR_ACP_FORWARD_TOOL_CALLS === "true";
+
+function createChatCompletionResponse(model: string, content: string, reasoningContent?: string) {
+  const message: { role: "assistant"; content: string; reasoning_content?: string } = {
+    role: "assistant",
+    content,
+  };
+
+  if (reasoningContent && reasoningContent.length > 0) {
+    message.reasoning_content = reasoningContent;
+  }
+
   return {
     id: `cursor-acp-${Date.now()}`,
     object: "chat.completion",
@@ -47,7 +60,7 @@ function createChatCompletionResponse(model: string, content: string) {
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content },
+        message,
         finish_reason: "stop",
       },
     ],
@@ -70,16 +83,40 @@ function createChatCompletionChunk(id: string, created: number, model: string, d
   };
 }
 
-function extractAssistantTextFromStream(output: string): string {
+function extractCompletionFromStream(output: string): { assistantText: string; reasoningText: string } {
   const lines = output.split("\n");
-  let content = "";
+  let assistantText = "";
+  let reasoningText = "";
+  let sawAssistantPartials = false;
+
   for (const line of lines) {
     const event = parseStreamJsonLine(line);
-    if (event && isAssistantText(event)) {
-      content = extractText(event);
+    if (!event) {
+      continue;
+    }
+
+    if (isAssistantText(event)) {
+      const text = extractText(event);
+      if (!text) continue;
+
+      const isPartial = typeof (event as any).timestamp_ms === "number";
+      if (isPartial) {
+        assistantText += text;
+        sawAssistantPartials = true;
+      } else if (!sawAssistantPartials) {
+        assistantText = text;
+      }
+    }
+
+    if (isThinking(event)) {
+      const thinking = extractThinking(event);
+      if (thinking) {
+        reasoningText += thinking;
+      }
     }
   }
-  return content;
+
+  return { assistantText, reasoningText };
 }
 
 function formatToolUpdateEvent(update: ToolUpdate): string {
@@ -198,11 +235,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         "--print",
         "--output-format",
         "stream-json",
+        "--stream-partial-output",
         "--workspace",
         workspaceDirectory,
         "--model",
         model,
       ];
+      if (FORCE_TOOL_MODE) {
+        cmd.push("--force");
+      }
 
       const child = bunAny.Bun.spawn({
         cmd,
@@ -239,8 +280,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           });
         }
 
-        const assistantText = extractAssistantTextFromStream(stdout);
-        const payload = createChatCompletionResponse(model, assistantText || stdout || stderr);
+        const completion = extractCompletionFromStream(stdout);
+        const payload = createChatCompletionResponse(
+          model,
+          completion.assistantText || stdout || stderr,
+          completion.reasoningText || undefined,
+        );
         return new Response(JSON.stringify(payload), {
           status: 200,
           headers: { "Content-Type": "application/json" },
@@ -278,16 +323,22 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                     event,
                     event.session_id ?? toolSessionId,
                   );
-                  for (const update of updates) {
-                    controller.enqueue(encoder.encode(formatToolUpdateEvent(update)));
+                  if (EMIT_TOOL_UPDATES) {
+                    for (const update of updates) {
+                      controller.enqueue(encoder.encode(formatToolUpdateEvent(update)));
+                    }
                   }
 
-                  // Handle OpenCode tools
-                  if (toolRouter) {
+                  // Optional: forward tool calls to OpenCode tool executor.
+                  if (FORWARD_TOOL_CALLS && toolRouter) {
                     const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                     if (toolResult) {
                       controller.enqueue(encoder.encode(`data: ${JSON.stringify(toolResult)}\n\n`));
                     }
+                  }
+
+                  if (!FORWARD_TOOL_CALLS) {
+                    continue;
                   }
                 }
 
@@ -307,8 +358,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   event,
                   event.session_id ?? toolSessionId,
                 );
-                for (const update of updates) {
-                  controller.enqueue(encoder.encode(formatToolUpdateEvent(update)));
+                if (EMIT_TOOL_UPDATES) {
+                  for (const update of updates) {
+                    controller.enqueue(encoder.encode(formatToolUpdateEvent(update)));
+                  }
+                }
+
+                if (!FORWARD_TOOL_CALLS) {
+                  continue;
                 }
               }
               for (const sse of converter.handleEvent(event)) {
@@ -452,11 +509,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         "--print",
         "--output-format",
         "stream-json",
+        "--stream-partial-output",
         "--workspace",
         workspaceDirectory,
         "--model",
         model,
       ];
+      if (FORCE_TOOL_MODE) {
+        cmd.push("--force");
+      }
 
       const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
 
@@ -474,44 +535,24 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         child.on("close", async (code) => {
           const stdout = Buffer.concat(stdoutChunks).toString().trim();
           const stderr = Buffer.concat(stderrChunks).toString().trim();
-          const assistantText = extractAssistantTextFromStream(stdout);
+          const completion = extractCompletionFromStream(stdout);
 
           if (code !== 0 && stderr.length > 0) {
             const parsed = parseAgentError(stderr);
             const userError = formatErrorForUser(parsed);
             log.error("cursor-cli failed", { type: parsed.type, message: parsed.message });
             // Return error as chat completion so user always sees it
-            const errorResponse = {
-              id: `cursor-acp-${Date.now()}`,
-              object: "chat.completion",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [
-                {
-                  index: 0,
-                  message: { role: "assistant", content: userError },
-                  finish_reason: "stop",
-                },
-              ],
-            };
+            const errorResponse = createChatCompletionResponse(model, userError);
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(errorResponse));
             return;
           }
 
-            const response = {
-              id: `cursor-acp-${Date.now()}`,
-              object: "chat.completion",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [
-                {
-                  index: 0,
-                  message: { role: "assistant", content: assistantText || stdout || stderr },
-                  finish_reason: "stop",
-                },
-              ],
-            };
+          const response = createChatCompletionResponse(
+            model,
+            completion.assistantText || stdout || stderr,
+            completion.reasoningText || undefined,
+          );
 
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify(response));
@@ -544,15 +585,21 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 event,
                 event.session_id ?? toolSessionId,
               );
-              for (const update of updates) {
-                res.write(formatToolUpdateEvent(update));
+              if (EMIT_TOOL_UPDATES) {
+                for (const update of updates) {
+                  res.write(formatToolUpdateEvent(update));
+                }
               }
 
-              if (toolRouter) {
+              if (FORWARD_TOOL_CALLS && toolRouter) {
                 const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                 if (toolResult) {
                   res.write(`data: ${JSON.stringify(toolResult)}\n\n`);
                 }
+              }
+
+              if (!FORWARD_TOOL_CALLS) {
+                continue;
               }
             }
 
@@ -574,15 +621,21 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 event,
                 event.session_id ?? toolSessionId,
               );
-              for (const update of updates) {
-                res.write(formatToolUpdateEvent(update));
+              if (EMIT_TOOL_UPDATES) {
+                for (const update of updates) {
+                  res.write(formatToolUpdateEvent(update));
+                }
               }
 
-              if (toolRouter) {
+              if (FORWARD_TOOL_CALLS && toolRouter) {
                 const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                 if (toolResult) {
                   res.write(`data: ${JSON.stringify(toolResult)}\n\n`);
                 }
+              }
+
+              if (!FORWARD_TOOL_CALLS) {
+                continue;
               }
             }
 
@@ -704,6 +757,9 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
 
     const toolEntries: any[] = [];
     const add = (name: string, t: any) => {
+      if (!toolsByName.has(name)) {
+        toolsByName.set(name, t);
+      }
       toolEntries.push({
         type: "function" as const,
         function: {
@@ -716,6 +772,11 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
 
     for (const t of list) {
       add(t.name, t);
+
+      if (t.name === "bash" && !toolsByName.has("shell")) {
+        add("shell", t);
+      }
+
       const baseId = t.id.replace(/[^a-zA-Z0-9_\\-]/g, "_");
       const skillAlias = `oc_skill_${baseId}`.slice(0, 64);
       if (!toolsByName.has(skillAlias)) add(skillAlias, t);
