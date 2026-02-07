@@ -248,7 +248,7 @@ flowchart TB
 ## Features
 
 - HTTP proxy (avoids E2BIG errors)
-- Streaming responses
+- Streaming responses with thinking and tool call support
 - OAuth authentication
 - Error parsing (quota/auth/network)
 
