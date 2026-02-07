@@ -15,6 +15,7 @@ import { OpenCodeToolDiscovery } from "./tools/discovery.js";
 import { toOpenAiParameters, describeTool } from "./tools/schema.js";
 import { OpenCodeToolExecutor } from "./tools/executor.js";
 import { ToolRouter } from "./tools/router.js";
+import { createOpencodeClient } from "@opencode-ai/sdk";
 import { OpenCodeToolDiscovery } from "./tools/discovery.js";
 import { toOpenAiParameters, describeTool } from "./tools/schema.js";
 import { OpenCodeToolExecutor } from "./tools/executor.js";
@@ -688,8 +689,12 @@ export const CursorPlugin: Plugin = async ({ $, directory, client }: PluginInput
 
   // Tools (skills) discovery/execution wiring
   const toolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS !== "false"; // default ON
-  const discovery = toolsEnabled ? new OpenCodeToolDiscovery(client) : null;
-  const executor = toolsEnabled ? new OpenCodeToolExecutor(client) : null;
+  // Build a client with serverUrl so SDK tool.list works even if the injected client isn't fully configured.
+  const serverClient = toolsEnabled
+    ? createOpencodeClient({ serverUrl: serverUrl.toString(), directory })
+    : null;
+  const discovery = toolsEnabled ? new OpenCodeToolDiscovery(serverClient ?? client) : null;
+  const executor = toolsEnabled ? new OpenCodeToolExecutor(serverClient ?? client) : null;
   const toolsByName = new Map<string, any>();
   const router = toolsEnabled && executor ? new ToolRouter({ executor, toolsByName }) : null;
   let lastToolNames: string[] = [];
