@@ -1,6 +1,6 @@
 import { createLogger } from "../utils/logger";
 import stripAnsi from "strip-ansi";
-import type { ToolRegistry } from "./registry";
+import type { ToolRegistry } from "./core/registry.js";
 
 const log = createLogger("tools:executor");
 
@@ -32,7 +32,7 @@ export class ToolExecutor {
   }
 
   async execute(name: string, args: Record<string, any>): Promise<string> {
-    const executor = this.registry.getExecutor(name);
+    const executor = this.registry.getHandler(name);
     if (!executor) {
       throw new Error(`Tool '${name}' not found in registry`);
     }

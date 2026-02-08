@@ -13,9 +13,15 @@ import { createLogger } from "./utils/logger";
 import { parseAgentError, formatErrorForUser, stripAnsi } from "./utils/errors";
 import { OpenCodeToolDiscovery } from "./tools/discovery.js";
 import { toOpenAiParameters, describeTool } from "./tools/schema.js";
-import { OpenCodeToolExecutor } from "./tools/executor.js";
 import { ToolRouter } from "./tools/router.js";
 import { createOpencodeClient } from "@opencode-ai/sdk";
+import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
+import { LocalExecutor } from "./tools/executors/local.js";
+import { SdkExecutor } from "./tools/executors/sdk.js";
+import { McpExecutor } from "./tools/executors/mcp.js";
+import { executeWithChain } from "./tools/core/executor.js";
+import { registerDefaultTools } from "./tools/defaults.js";
+import type { IToolExecutor } from "./tools/core/types.js";
 
 const log = createLogger("plugin");
 
@@ -690,9 +696,27 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
     ? createOpencodeClient({ serverUrl: serverUrl.toString(), directory })
     : null;
   const discovery = toolsEnabled ? new OpenCodeToolDiscovery(serverClient ?? client) : null;
-  const executor = toolsEnabled ? new OpenCodeToolExecutor(serverClient ?? client) : null;
+
+  // Build executor chain: Local -> SDK -> MCP
+  const localRegistry = new CoreRegistry();
+  registerDefaultTools(localRegistry);
+
+  const timeoutMs = Number(process.env.CURSOR_ACP_TOOL_TIMEOUT_MS || 30000);
+  const localExec = new LocalExecutor(localRegistry);
+  const sdkExec = toolsEnabled ? new SdkExecutor(serverClient ?? client, timeoutMs) : null;
+  const mcpExec = toolsEnabled ? new McpExecutor(serverClient ?? client, timeoutMs) : null;
+
+  const executorChain: IToolExecutor[] = [localExec];
+  if (sdkExec) executorChain.push(sdkExec);
+  if (mcpExec) executorChain.push(mcpExec);
+
   const toolsByName = new Map<string, any>();
-  const router = toolsEnabled && executor ? new ToolRouter({ executor, toolsByName }) : null;
+  const router = toolsEnabled
+    ? new ToolRouter({
+        execute: (toolId, args) => executeWithChain(executorChain, toolId, args),
+        toolsByName,
+      })
+    : null;
   let lastToolNames: string[] = [];
   let lastToolMap: Array<{ id: string; name: string }> = [];
 

@@ -1,21 +1,20 @@
 import { describe, it, expect } from "bun:test";
 import { ToolExecutor } from "../../src/tools/executor.js";
-import { ToolRegistry } from "../../src/tools/registry.js";
+import { ToolRegistry } from "../../src/tools/core/registry.js";
 
 describe("ToolExecutor", () => {
   it("should execute registered tool", async () => {
     const registry = new ToolRegistry();
-    registry.register("echo", {
-      type: "function",
-      function: {
-        name: "echo",
-        description: "Echo text",
-        parameters: {
-          type: "object",
-          properties: { text: { type: "string" } },
-          required: ["text"]
-        }
-      }
+    registry.register({
+      id: "echo",
+      name: "echo",
+      description: "Echo text",
+      parameters: {
+        type: "object",
+        properties: { text: { type: "string" } },
+        required: ["text"]
+      },
+      source: "local"
     }, async (args) => args.text);
 
     const executor = new ToolExecutor(registry);

@@ -1,34 +1,33 @@
-import type { ToolRegistry } from "./registry.js";
+import type { ToolRegistry } from "./core/registry.js";
 
 /**
  * Register default OpenCode tools in the registry
  */
 export function registerDefaultTools(registry: ToolRegistry): void {
   // 1. Bash tool - Execute shell commands
-  registry.register("bash", {
-    type: "function",
-    function: {
-      name: "bash",
-      description: "Execute a shell command in a safe environment",
-      parameters: {
-        type: "object",
-        properties: {
-          command: {
-            type: "string",
-            description: "The shell command to execute"
-          },
-          timeout: {
-            type: "number",
-            description: "Timeout in milliseconds (default: 30000)"
-          },
-          cwd: {
-            type: "string",
-            description: "Working directory for the command"
-          }
+  registry.register({
+    id: "bash",
+    name: "bash",
+    description: "Execute a shell command in a safe environment",
+    parameters: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description: "The shell command to execute"
         },
-        required: ["command"]
-      }
-    }
+        timeout: {
+          type: "number",
+          description: "Timeout in milliseconds (default: 30000)"
+        },
+        cwd: {
+          type: "string",
+          description: "Working directory for the command"
+        }
+      },
+      required: ["command"]
+    },
+    source: "local" as const
   }, async (args) => {
     const { exec } = await import("child_process");
     const { promisify } = await import("util");
@@ -46,30 +45,29 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 2. Read tool - Read file contents
-  registry.register("read", {
-    type: "function",
-    function: {
-      name: "read",
-      description: "Read the contents of a file",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Absolute path to the file to read"
-          },
-          offset: {
-            type: "number",
-            description: "Line number to start reading from"
-          },
-          limit: {
-            type: "number",
-            description: "Maximum number of lines to read"
-          }
+  registry.register({
+    id: "read",
+    name: "read",
+    description: "Read the contents of a file",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Absolute path to the file to read"
         },
-        required: ["path"]
-      }
-    }
+        offset: {
+          type: "number",
+          description: "Line number to start reading from"
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of lines to read"
+        }
+      },
+      required: ["path"]
+    },
+    source: "local" as const
   }, async (args) => {
     const fs = await import("fs");
     try {
@@ -89,26 +87,25 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 3. Write tool - Write file contents
-  registry.register("write", {
-    type: "function",
-    function: {
-      name: "write",
-      description: "Write content to a file (creates or overwrites)",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Absolute path to the file to write"
-          },
-          content: {
-            type: "string",
-            description: "Content to write to the file"
-          }
+  registry.register({
+    id: "write",
+    name: "write",
+    description: "Write content to a file (creates or overwrites)",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Absolute path to the file to write"
         },
-        required: ["path", "content"]
-      }
-    }
+        content: {
+          type: "string",
+          description: "Content to write to the file"
+        }
+      },
+      required: ["path", "content"]
+    },
+    source: "local" as const
   }, async (args) => {
     const fs = await import("fs");
     const path = await import("path");
@@ -127,30 +124,29 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 4. Edit tool - Edit file contents
-  registry.register("edit", {
-    type: "function",
-    function: {
-      name: "edit",
-      description: "Edit a file by replacing old text with new text",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Absolute path to the file to edit"
-          },
-          old_string: {
-            type: "string",
-            description: "The text to replace"
-          },
-          new_string: {
-            type: "string",
-            description: "The replacement text"
-          }
+  registry.register({
+    id: "edit",
+    name: "edit",
+    description: "Edit a file by replacing old text with new text",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Absolute path to the file to edit"
         },
-        required: ["path", "old_string", "new_string"]
-      }
-    }
+        old_string: {
+          type: "string",
+          description: "The text to replace"
+        },
+        new_string: {
+          type: "string",
+          description: "The replacement text"
+        }
+      },
+      required: ["path", "old_string", "new_string"]
+    },
+    source: "local" as const
   }, async (args) => {
     const fs = await import("fs");
     try {
@@ -170,30 +166,29 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 5. Grep tool - Search file contents
-  registry.register("grep", {
-    type: "function",
-    function: {
-      name: "grep",
-      description: "Search for a pattern in files",
-      parameters: {
-        type: "object",
-        properties: {
-          pattern: {
-            type: "string",
-            description: "The search pattern (regex supported)"
-          },
-          path: {
-            type: "string",
-            description: "Directory or file to search in"
-          },
-          include: {
-            type: "string",
-            description: "File pattern to include (e.g., '*.ts')"
-          }
+  registry.register({
+    id: "grep",
+    name: "grep",
+    description: "Search for a pattern in files",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "The search pattern (regex supported)"
         },
-        required: ["pattern", "path"]
-      }
-    }
+        path: {
+          type: "string",
+          description: "Directory or file to search in"
+        },
+        include: {
+          type: "string",
+          description: "File pattern to include (e.g., '*.ts')"
+        }
+      },
+      required: ["pattern", "path"]
+    },
+    source: "local" as const
   }, async (args) => {
     const { exec } = await import("child_process");
     const { promisify } = await import("util");
@@ -213,22 +208,21 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 6. LS tool - List directory contents
-  registry.register("ls", {
-    type: "function",
-    function: {
-      name: "ls",
-      description: "List directory contents",
-      parameters: {
-        type: "object",
-        properties: {
-          path: {
-            type: "string",
-            description: "Absolute path to the directory"
-          }
-        },
-        required: ["path"]
-      }
-    }
+  registry.register({
+    id: "ls",
+    name: "ls",
+    description: "List directory contents",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Absolute path to the directory"
+        }
+      },
+      required: ["path"]
+    },
+    source: "local" as const
   }, async (args) => {
     const fs = await import("fs");
     const path = await import("path");
@@ -249,26 +243,25 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 
   // 7. Glob tool - Find files matching pattern
-  registry.register("glob", {
-    type: "function",
-    function: {
-      name: "glob",
-      description: "Find files matching a glob pattern",
-      parameters: {
-        type: "object",
-        properties: {
-          pattern: {
-            type: "string",
-            description: "Glob pattern (e.g., '**/*.ts')"
-          },
-          path: {
-            type: "string",
-            description: "Directory to search in (default: current directory)"
-          }
+  registry.register({
+    id: "glob",
+    name: "glob",
+    description: "Find files matching a glob pattern",
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob pattern (e.g., '**/*.ts')"
         },
-        required: ["pattern"]
-      }
-    }
+        path: {
+          type: "string",
+          description: "Directory to search in (default: current directory)"
+        }
+      },
+      required: ["pattern"]
+    },
+    source: "local" as const
   }, async (args) => {
     const { exec } = await import("child_process");
     const { promisify } = await import("util");

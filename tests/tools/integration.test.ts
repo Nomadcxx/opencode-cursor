@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { ToolRegistry } from "../../src/tools/registry.js";
+import { ToolRegistry } from "../../src/tools/core/registry.js";
 import { ToolExecutor } from "../../src/tools/executor.js";
 import { registerDefaultTools, getDefaultToolNames } from "../../src/tools/defaults.js";
 import { createToolSchemaPrompt } from "../../src/tools/mapper.js";
@@ -245,12 +245,19 @@ describe("Tool Integration Tests", () => {
     it("should handle no matches", async () => {
       registerDefaultTools(registry);
 
+      // Create empty temp directory to ensure no matches
+      const tmpDir = `/tmp/grep-test-empty-${Date.now()}`;
+      fs.mkdirSync(tmpDir);
+
       const result = await executor.execute("grep", {
         pattern: "xyz12345nonexistent",
-        path: "/tmp"
+        path: tmpDir
       });
 
       expect(result).toContain("No matches");
+
+      // Cleanup
+      fs.rmdirSync(tmpDir);
     });
   });
 
@@ -316,12 +323,22 @@ describe("Tool Integration Tests", () => {
 
   describe("Tool Schema Mapper", () => {
     it("should generate tool schema prompt", () => {
-      const tools = registry.getAllDefinitions();
+      const tools = registry.list();
       expect(tools.length).toBe(0);
 
       registerDefaultTools(registry);
 
-      const prompt = createToolSchemaPrompt(registry.getAllDefinitions());
+      // Convert Tool[] to ToolDefinition[] for mapper
+      const toolDefs = registry.list().map(t => ({
+        type: "function" as const,
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters
+        }
+      }));
+
+      const prompt = createToolSchemaPrompt(toolDefs);
       expect(prompt.length).toBeGreaterThan(0);
       expect(prompt).toContain("Tool:");
       expect(prompt).toContain("bash");
@@ -375,7 +392,8 @@ describe("Tool Integration Tests", () => {
       expect(toolNames).toHaveLength(7);
 
       for (const name of toolNames) {
-        expect(registry.has(name)).toBe(true);
+        const tool = registry.getTool(name);
+        expect(tool).toBeDefined();
       }
     });
 

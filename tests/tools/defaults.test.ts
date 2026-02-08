@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { ToolRegistry } from "../../src/tools/registry.js";
+import { ToolRegistry } from "../../src/tools/core/registry.js";
 import { registerDefaultTools, getDefaultToolNames } from "../../src/tools/defaults.js";
 import { ToolExecutor } from "../../src/tools/executor.js";
 
@@ -12,7 +12,8 @@ describe("Default Tools", () => {
     expect(toolNames).toHaveLength(7);
 
     for (const name of toolNames) {
-      expect(registry.has(name)).toBe(true);
+      const tool = registry.getTool(name);
+      expect(tool).toBeDefined();
     }
   });
 
@@ -20,28 +21,28 @@ describe("Default Tools", () => {
     const registry = new ToolRegistry();
     registerDefaultTools(registry);
 
-    const bash = registry.get("bash");
-    expect(bash?.definition.function.name).toBe("bash");
-    expect(bash?.definition.function.parameters.required).toContain("command");
+    const bash = registry.getTool("bash");
+    expect(bash?.name).toBe("bash");
+    expect(bash?.parameters.required).toContain("command");
 
-    const read = registry.get("read");
-    expect(read?.definition.function.name).toBe("read");
-    expect(read?.definition.function.parameters.required).toContain("path");
+    const read = registry.getTool("read");
+    expect(read?.name).toBe("read");
+    expect(read?.parameters.required).toContain("path");
 
-    const write = registry.get("write");
-    expect(write?.definition.function.name).toBe("write");
+    const write = registry.getTool("write");
+    expect(write?.name).toBe("write");
 
-    const edit = registry.get("edit");
-    expect(edit?.definition.function.name).toBe("edit");
+    const edit = registry.getTool("edit");
+    expect(edit?.name).toBe("edit");
 
-    const grep = registry.get("grep");
-    expect(grep?.definition.function.name).toBe("grep");
+    const grep = registry.getTool("grep");
+    expect(grep?.name).toBe("grep");
 
-    const ls = registry.get("ls");
-    expect(ls?.definition.function.name).toBe("ls");
+    const ls = registry.getTool("ls");
+    expect(ls?.name).toBe("ls");
 
-    const glob = registry.get("glob");
-    expect(glob?.definition.function.name).toBe("glob");
+    const glob = registry.getTool("glob");
+    expect(glob?.name).toBe("glob");
   });
 
   it("should execute ls tool", async () => {
@@ -125,14 +126,14 @@ describe("Default Tools", () => {
     const registry = new ToolRegistry();
     registerDefaultTools(registry);
 
-    const definitions = registry.getAllDefinitions();
-    expect(definitions).toHaveLength(7);
+    const tools = registry.list();
+    expect(tools).toHaveLength(7);
 
-    // All should be function types
-    for (const def of definitions) {
-      expect(def.type).toBe("function");
-      expect(def.function.name).toBeDefined();
-      expect(def.function.description).toBeDefined();
+    // All should have required fields
+    for (const tool of tools) {
+      expect(tool.name).toBeDefined();
+      expect(tool.description).toBeDefined();
+      expect(tool.source).toBe("local");
     }
   });
 });
