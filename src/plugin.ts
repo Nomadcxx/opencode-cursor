@@ -289,7 +289,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   }
 
                   // Handle OpenCode tools
-                  if (toolRouter) {
+                  if (toolRouter && forwardToolCalls) {
                     const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                     if (toolResult) {
                       controller.enqueue(encoder.encode(`data: ${JSON.stringify(toolResult)}\n\n`));
@@ -554,7 +554,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 res.write(formatToolUpdateEvent(update));
               }
 
-              if (toolRouter) {
+              if (toolRouter && forwardToolCalls) {
                 const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                 if (toolResult) {
                   res.write(`data: ${JSON.stringify(toolResult)}\n\n`);
@@ -584,7 +584,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 res.write(formatToolUpdateEvent(update));
               }
 
-              if (toolRouter) {
+              if (toolRouter && forwardToolCalls) {
                 const toolResult = await toolRouter.handleToolCall(event as any, { id, created, model });
                 if (toolResult) {
                   res.write(`data: ${JSON.stringify(toolResult)}\n\n`);
@@ -691,6 +691,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
 
   // Tools (skills) discovery/execution wiring
   const toolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS !== "false"; // default ON
+  const forwardToolCalls = process.env.CURSOR_ACP_FORWARD_TOOL_CALLS !== "false"; // default ON
   // Build a client with serverUrl so SDK tool.list works even if the injected client isn't fully configured.
   const serverClient = toolsEnabled
     ? createOpencodeClient({ serverUrl: serverUrl.toString(), directory })
