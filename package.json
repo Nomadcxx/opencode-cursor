@@ -1,6 +1,6 @@
 {
   "name": "@nomadcxx/opencode-cursor",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "No prompt limits. No broken streams. Full thinking + tool support. Your Cursor subscription, properly integrated.",
   "type": "module",
   "main": "dist/index.js",
