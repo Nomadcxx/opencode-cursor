@@ -77,6 +77,23 @@ describe("proxy/tool-loop", () => {
     expect(call).toBeNull();
   });
 
+  it("maps updateTodos alias to allowed todowrite tool name", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_4",
+      name: "updateTodos",
+      tool_call: {
+        updateTodos: {
+          args: { todos: [{ content: "Book flights", status: "pending" }] },
+        },
+      },
+    };
+
+    const call = extractOpenAiToolCall(event, new Set(["todowrite"]));
+    expect(call).not.toBeNull();
+    expect(call?.function.name).toBe("todowrite");
+  });
+
   it("builds valid non-stream tool call response", () => {
     const response = createToolCallCompletionResponse(
       { id: "resp-1", created: 123, model: "cursor-acp/auto" },

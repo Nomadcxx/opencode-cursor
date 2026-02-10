@@ -344,7 +344,7 @@ func validateConfig(m *model) error {
 
 func verifyPlugin(m *model) error {
 	// Try to load plugin with node to catch syntax/import errors
-	pluginPath := filepath.Join(m.projectDir, "dist", "index.js")
+	pluginPath := filepath.Join(m.projectDir, "dist", "plugin-entry.js")
 	cmd := exec.Command("node", "-e", fmt.Sprintf(`require("%s")`, pluginPath))
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("plugin failed to load: %w", err)

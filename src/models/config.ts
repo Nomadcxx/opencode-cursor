@@ -52,7 +52,7 @@ export class ConfigUpdater {
     baseURL: string
   ): OpenCodeProviderConfig {
     return {
-      npm: "file:///home/nomadx/opencode-cursor",
+      npm: "@ai-sdk/openai-compatible",
       name: "Cursor Agent Provider",
       options: {
         baseURL,

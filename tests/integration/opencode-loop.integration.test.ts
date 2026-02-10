@@ -33,6 +33,24 @@ const TODO_WRITE_TOOL = {
   },
 };
 
+const EDIT_TOOL = {
+  type: "function",
+  function: {
+    name: "edit",
+    description: "Edit a file",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+      },
+      required: ["path", "old_string", "new_string"],
+      additionalProperties: false,
+    },
+  },
+};
+
 const MOCK_CURSOR_AGENT = `#!/usr/bin/env node
 const fs = require("fs");
 
@@ -125,6 +143,26 @@ process.stdin.on("end", () => {
         },
       },
     ];
+  } else if (scenario === "tool-edit-invalid") {
+    events = [
+      {
+        type: "tool_call",
+        call_id: "c1",
+        tool_call: {
+          editToolCall: {
+            args: { path: "TODO.md", content: "full rewrite" },
+          },
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "edit fallback text" }],
+        },
+      },
+    ];
   } else {
     events = [
       {
@@ -189,6 +227,7 @@ describe("OpenCode-owned tool loop integration", () => {
   let originalToolsEnabled: string | undefined;
   let originalReuseExistingProxy: string | undefined;
   let originalProviderBoundary: string | undefined;
+  let originalToolLoopMaxRepeat: string | undefined;
   let mockDir = "";
   let promptFile = "";
   let argsFile = "";
@@ -200,6 +239,7 @@ describe("OpenCode-owned tool loop integration", () => {
     originalToolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS;
     originalReuseExistingProxy = process.env.CURSOR_ACP_REUSE_EXISTING_PROXY;
     originalProviderBoundary = process.env.CURSOR_ACP_PROVIDER_BOUNDARY;
+    originalToolLoopMaxRepeat = process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
     mockDir = mkdtempSync(join(tmpdir(), "cursor-agent-mock-"));
     promptFile = join(mockDir, "prompt.txt");
     argsFile = join(mockDir, "args.json");
@@ -213,6 +253,7 @@ describe("OpenCode-owned tool loop integration", () => {
     process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS = "true";
     process.env.CURSOR_ACP_REUSE_EXISTING_PROXY = "false";
     process.env.CURSOR_ACP_PROVIDER_BOUNDARY = "v1";
+    process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT = "1";
     process.env.MOCK_CURSOR_PROMPT_FILE = "";
     process.env.MOCK_CURSOR_ARGS_FILE = "";
     process.env.MOCK_CURSOR_SCENARIO = "assistant-text";
@@ -262,6 +303,11 @@ describe("OpenCode-owned tool loop integration", () => {
       delete process.env.CURSOR_ACP_PROVIDER_BOUNDARY;
     } else {
       process.env.CURSOR_ACP_PROVIDER_BOUNDARY = originalProviderBoundary;
+    }
+    if (originalToolLoopMaxRepeat === undefined) {
+      delete process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
+    } else {
+      process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT = originalToolLoopMaxRepeat;
     }
     delete process.env.MOCK_CURSOR_PROMPT_FILE;
     delete process.env.MOCK_CURSOR_ARGS_FILE;
@@ -329,6 +375,73 @@ describe("OpenCode-owned tool loop integration", () => {
     const json: any = await response.json();
     expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe("todowrite");
     expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  it("does not rewrite edit tool calls to write when args are invalid", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [EDIT_TOOL],
+      messages: [{ role: "user", content: "Edit TODO.md" }],
+    });
+
+    const json: any = await response.json();
+    expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe("edit");
+    expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments).toContain("\"content\"");
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  it("returns a terminal assistant error chunk when repeated invalid calls exceed loop guard threshold", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [EDIT_TOOL],
+      messages: [
+        { role: "user", content: "Edit TODO.md" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c1",
+              type: "function",
+              function: {
+                name: "edit",
+                arguments: "{\"path\":\"TODO.md\",\"content\":\"full rewrite\"}",
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "c1",
+          content: "Invalid arguments: missing required fields old_string,new_string",
+        },
+      ],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const assistantContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .find((value): value is string => typeof value === "string");
+    expect(assistantContent).toContain("Tool loop guard stopped repeated failing calls to \"edit\"");
+
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    expect(toolDelta).toBeUndefined();
+
+    const finishReasons = chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean);
+    expect(finishReasons).toContain("stop");
+    expect(finishReasons).not.toContain("tool_calls");
+    expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
   });
 
   it("continues on second turn with role tool result and includes TOOL_RESULT in prompt", async () => {

@@ -15,6 +15,21 @@ export interface ToolLoopMeta {
   model: string;
 }
 
+const TOOL_NAME_ALIASES = new Map<string, string>([
+  // todo write aliases
+  ["updatetodos", "todowrite"],
+  ["updatetodostoolcall", "todowrite"],
+  ["todowrite", "todowrite"],
+  ["todowritetoolcall", "todowrite"],
+  ["writetodos", "todowrite"],
+  ["todowritefn", "todowrite"],
+  // todo read aliases
+  ["readtodos", "todoread"],
+  ["readtodostoolcall", "todoread"],
+  ["todoread", "todoread"],
+  ["todoreadtoolcall", "todoread"],
+]);
+
 export function extractAllowedToolNames(tools: Array<any>): Set<string> {
   const names = new Set<string>();
   for (const tool of tools) {
@@ -35,7 +50,12 @@ export function extractOpenAiToolCall(
   }
 
   const { name, args } = extractToolNameAndArgs(event);
-  if (!name || !allowedToolNames.has(name)) {
+  if (!name) {
+    return null;
+  }
+
+  const resolvedName = resolveAllowedToolName(name, allowedToolNames);
+  if (!resolvedName) {
     return null;
   }
 
@@ -44,7 +64,7 @@ export function extractOpenAiToolCall(
     id: callId,
     type: "function",
     function: {
-      name,
+      name: resolvedName,
       arguments: toOpenAiArguments(args),
     },
   };
@@ -136,6 +156,37 @@ function normalizeToolName(raw: string): string {
     return base.charAt(0).toLowerCase() + base.slice(1);
   }
   return raw;
+}
+
+function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): string | null {
+  if (allowedToolNames.has(name)) {
+    return name;
+  }
+
+  const normalizedName = normalizeAliasKey(name);
+  for (const allowedName of allowedToolNames) {
+    if (normalizeAliasKey(allowedName) === normalizedName) {
+      return allowedName;
+    }
+  }
+
+  const aliasedCanonical = TOOL_NAME_ALIASES.get(normalizedName);
+  if (!aliasedCanonical) {
+    return null;
+  }
+
+  const canonicalNormalized = normalizeAliasKey(aliasedCanonical);
+  for (const allowedName of allowedToolNames) {
+    if (normalizeAliasKey(allowedName) === canonicalNormalized) {
+      return allowedName;
+    }
+  }
+
+  return null;
+}
+
+function normalizeAliasKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function toOpenAiArguments(args: unknown): string {

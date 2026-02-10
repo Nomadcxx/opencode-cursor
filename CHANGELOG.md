@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.2] - 2026-02-09
+
+### Added
+- OpenCode-owned tool loop adapter for OpenAI-style `tool_calls` responses (`src/proxy/tool-loop.ts`)
+- Focused integration coverage for request-1/request-2 tool loop continuity (`tests/integration/opencode-loop.integration.test.ts`)
+- CI test split scripts: `test:ci:unit` and `test:ci:integration`
+- GitHub Actions job summaries for unit and integration suites
+- Packaging CLI entrypoint `open-cursor` for npm/global installs (`src/cli/opencode-cursor.ts`)
+- Model discovery parser utility for CLI install/sync workflows (`src/cli/model-discovery.ts`)
+
+### Changed
+- CI workflow split into separate `unit` and `integration` jobs
+- Integration CI defaults to OpenCode-owned loop mode (`CURSOR_ACP_TOOL_LOOP_MODE=opencode`)
+- npm package metadata now targets publish/install as `open-cursor`
+- Build now emits CLI artifacts for package bins (`dist/opencode-cursor.js`, `dist/discover.js`)
+
+### Fixed
+- Node proxy fallback after `EADDRINUSE` now recreates the server before dynamic port bind
+- Streaming termination guards prevent duplicate flush/output after intercepted tool call
+- Auth unit tests now clean all candidate auth paths to avoid environment-dependent flakes
+- Provider config generator no longer hardcodes a local filesystem npm path
+- Added auth home-path override (`CURSOR_ACP_HOME_DIR`) for deterministic auth path resolution in tests/automation
+- Added proxy reuse toggle (`CURSOR_ACP_REUSE_EXISTING_PROXY`) to avoid accidentally attaching to unrelated local proxy servers
+
 ## [2.1.0] - 2026-02-07
 
 ### Added

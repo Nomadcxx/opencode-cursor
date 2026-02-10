@@ -295,6 +295,7 @@ Integration CI defaults to OpenCode-owned loop mode:
 - `CURSOR_ACP_TOOL_LOOP_MODE=opencode`
 - `CURSOR_ACP_PROVIDER_BOUNDARY=v1`
 - `CURSOR_ACP_PROVIDER_BOUNDARY_AUTOFALLBACK=false`
+- `CURSOR_ACP_TOOL_LOOP_MAX_REPEAT=3`
 - `CURSOR_ACP_ENABLE_OPENCODE_TOOLS=true`
 - `CURSOR_ACP_FORWARD_TOOL_CALLS=false`
 - `CURSOR_ACP_EMIT_TOOL_UPDATES=false`
@@ -329,10 +330,12 @@ Provider-boundary rollout:
 - `CURSOR_ACP_PROVIDER_BOUNDARY=legacy` - Original provider/runtime boundary behavior
 - `CURSOR_ACP_PROVIDER_BOUNDARY=v1` - New shared boundary/interception path (recommended)
 - `CURSOR_ACP_PROVIDER_BOUNDARY_AUTOFALLBACK=true` - Emergency fallback from `v1` to `legacy` for the current request only
+- `CURSOR_ACP_TOOL_LOOP_MAX_REPEAT=3` - Max repeated failing tool-call fingerprints before guard termination (or fallback when enabled)
 
 Auto-fallback trigger conditions:
 - Only active when `CURSOR_ACP_PROVIDER_BOUNDARY=v1`
-- Triggered only when `v1` boundary extraction throws during tool-call interception
+- Triggered when `v1` boundary extraction throws during tool-call interception
+- Triggered when the tool-loop guard threshold is reached (same tool + arg shape + error class)
 - Does not trigger for normal cases like disallowed tools or no tool call
 - Does not trigger for unrelated runtime errors (for example, tool mapper/tool execution failures)
 

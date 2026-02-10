@@ -1,15 +1,21 @@
-#!/usr/bin/env bun
-import { ModelDiscoveryService } from "../models/discovery.js";
-import { ConfigUpdater } from "../models/config.js";
+#!/usr/bin/env node
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import {
+  discoverModelsFromCursorAgent,
+  fallbackModels,
+} from "./model-discovery.js";
 
 async function main() {
   console.log("Discovering Cursor models...");
-
-  const service = new ModelDiscoveryService();
-  const models = await service.discover();
+  let models = fallbackModels();
+  try {
+    models = discoverModelsFromCursorAgent();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Warning: cursor-agent model discovery failed, using fallback list (${message})`);
+  }
 
   console.log(`Found ${models.length} models:`);
   for (const model of models) {
@@ -17,7 +23,6 @@ async function main() {
   }
 
   // Update config
-  const updater = new ConfigUpdater();
   const configPath = join(homedir(), ".config/opencode/opencode.json");
 
   if (!existsSync(configPath)) {
@@ -29,7 +34,7 @@ async function main() {
 
   // Update cursor-acp provider models
   if (existingConfig.provider?.["cursor-acp"]) {
-    const formatted = updater.formatModels(models);
+    const formatted = Object.fromEntries(models.map((model) => [model.id, { name: model.name }]));
     existingConfig.provider["cursor-acp"].models = {
       ...existingConfig.provider["cursor-acp"].models,
       ...formatted

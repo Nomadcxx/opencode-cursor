@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createProviderBoundary } from "../../src/provider/boundary";
+import { createToolLoopGuard } from "../../src/provider/tool-loop-guard";
 import {
   handleToolLoopEventLegacy,
   handleToolLoopEventV1,
@@ -27,6 +28,8 @@ function createBaseOptions(overrides: Partial<EventOptions> = {}): EventOptions 
     event,
     toolLoopMode: "opencode",
     allowedToolNames: new Set(["read"]),
+    toolSchemaMap: new Map(),
+    toolLoopGuard: createToolLoopGuard([], 3),
     toolMapper: {
       mapCursorEventToAcp: async () => updates,
     } as any,
@@ -85,6 +88,8 @@ describe("provider runtime interception parity", () => {
       event,
       toolLoopMode: "proxy-exec",
       allowedToolNames: new Set(["read"]),
+      toolSchemaMap: new Map(),
+      toolLoopGuard: createToolLoopGuard([], 3),
       toolMapper: {
         mapCursorEventToAcp: async () => [{ toolCallId: "u1", status: "pending" }],
       } as any,
@@ -157,7 +162,7 @@ describe("provider runtime interception fallback", () => {
     });
 
     expect(fallbackCalled).toBe(true);
-    expect(mapperCalls).toBe(1);
+    expect(mapperCalls).toBe(0);
     expect(interceptedName).toBe("read");
     expect(result).toEqual({ intercepted: true, skipConverter: true });
   });
@@ -193,6 +198,103 @@ describe("provider runtime interception fallback", () => {
       autoFallbackToLegacy: true,
     });
 
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+  });
+
+  it("normalizes v1 arguments using schema compatibility before intercept", async () => {
+    let interceptedArgs = "";
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c3",
+          tool_call: {
+            writeToolCall: {
+              args: { filePath: "foo.txt", contents: "hello" },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["write"]),
+        toolSchemaMap: new Map([
+          [
+            "write",
+            {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+              required: ["path", "content"],
+            },
+          ],
+        ]),
+        onInterceptedToolCall: async (toolCall) => {
+          interceptedArgs = toolCall.function.arguments;
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(interceptedArgs).toContain("\"path\":\"foo.txt\"");
+    expect(interceptedArgs).toContain("\"content\":\"hello\"");
+  });
+
+  it("returns terminal result when loop guard threshold is reached without fallback", async () => {
+    const guard = createToolLoopGuard(
+      [{ role: "tool", tool_call_id: "c1", content: "invalid schema: missing path" }],
+      1,
+    );
+    guard.evaluate({
+      id: "c1",
+      type: "function",
+      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+    });
+
+    const result = await handleToolLoopEventWithFallback({
+      ...createBaseOptions({
+        toolLoopGuard: guard,
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundaryMode: "v1",
+      autoFallbackToLegacy: false,
+    });
+
+    expect(result.intercepted).toBe(false);
+    expect(result.skipConverter).toBe(true);
+    expect(result.terminate?.reason).toBe("loop_guard");
+  });
+
+  it("falls back to legacy when loop guard threshold is reached and auto-fallback is enabled", async () => {
+    let fallbackCalled = false;
+    let interceptedName = "";
+    const guard = createToolLoopGuard(
+      [{ role: "tool", tool_call_id: "c1", content: "invalid schema: missing path" }],
+      1,
+    );
+    guard.evaluate({
+      id: "c1",
+      type: "function",
+      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+    });
+
+    const result = await handleToolLoopEventWithFallback({
+      ...createBaseOptions({
+        toolLoopGuard: guard,
+        onInterceptedToolCall: async (toolCall) => {
+          interceptedName = toolCall.function.name;
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundaryMode: "v1",
+      autoFallbackToLegacy: true,
+      onFallbackToLegacy: () => {
+        fallbackCalled = true;
+      },
+    });
+
+    expect(fallbackCalled).toBe(true);
+    expect(interceptedName).toBe("read");
     expect(result).toEqual({ intercepted: true, skipConverter: true });
   });
 });

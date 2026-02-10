@@ -21,6 +21,14 @@ export interface AuthResult {
   error?: string;
 }
 
+function getHomeDir(): string {
+  const override = process.env.CURSOR_ACP_HOME_DIR;
+  if (override && override.length > 0) {
+    return override;
+  }
+  return homedir();
+}
+
 export async function pollForAuthFile(
   timeoutMs: number = AUTH_POLL_TIMEOUT,
   intervalMs: number = AUTH_POLL_INTERVAL
@@ -215,7 +223,7 @@ export function verifyCursorAuth(): boolean {
  * - Linux: ~/.config/cursor/ (XDG), XDG_CONFIG_HOME/cursor/, ~/.cursor/
  */
 export function getPossibleAuthPaths(): string[] {
-  const home = homedir();
+  const home = getHomeDir();
   const paths: string[] = [];
   const isDarwin = platform() === "darwin";
 
