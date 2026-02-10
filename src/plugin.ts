@@ -11,11 +11,11 @@ import { StreamToSseConverter, formatSseDone } from "./streaming/openai-sse.js";
 import { parseStreamJsonLine } from "./streaming/parser.js";
 import { extractText, extractThinking, isAssistantText, isThinking } from "./streaming/types.js";
 import { createLogger } from "./utils/logger";
+import { RequestPerf } from "./utils/perf";
 import { parseAgentError, formatErrorForUser, stripAnsi } from "./utils/errors";
 import { buildPromptFromMessages } from "./proxy/prompt-builder.js";
 import {
   extractAllowedToolNames,
-  extractOpenAiToolCall,
   type OpenAiToolCall,
 } from "./proxy/tool-loop.js";
 import { OpenCodeToolDiscovery } from "./tools/discovery.js";
@@ -39,6 +39,12 @@ import {
   type ToolOptionResolution,
 } from "./provider/boundary.js";
 import { handleToolLoopEventWithFallback } from "./provider/runtime-interception.js";
+import { buildToolSchemaMap } from "./provider/tool-schema-compat.js";
+import {
+  createToolLoopGuard,
+  parseToolLoopMaxRepeat,
+  type ToolLoopGuard,
+} from "./provider/tool-loop-guard.js";
 
 const log = createLogger("plugin");
 
@@ -88,6 +94,11 @@ const PROVIDER_BOUNDARY =
     : createProviderBoundary(PROVIDER_BOUNDARY_MODE, CURSOR_PROVIDER_ID);
 const ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK =
   process.env.CURSOR_ACP_PROVIDER_BOUNDARY_AUTOFALLBACK === "true";
+const TOOL_LOOP_MAX_REPEAT_RAW = process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
+const {
+  value: TOOL_LOOP_MAX_REPEAT,
+  valid: TOOL_LOOP_MAX_REPEAT_VALID,
+} = parseToolLoopMaxRepeat(TOOL_LOOP_MAX_REPEAT_RAW);
 const {
   proxyExecuteToolCalls: PROXY_EXECUTE_TOOL_CALLS,
   suppressConverterToolEvents: SUPPRESS_CONVERTER_TOOL_EVENTS,
@@ -257,15 +268,23 @@ function createBoundaryRuntimeContext(scope: string) {
   };
 }
 
-function findFirstAllowedToolCallInOutput(
+async function findFirstAllowedToolCallInOutput(
   output: string,
-  allowedToolNames: Set<string>,
-  toolLoopMode: ToolLoopMode,
-  boundary: ProviderBoundary,
-): OpenAiToolCall | null {
-  if (allowedToolNames.size === 0 || !output) {
-    return null;
+  options: {
+    toolLoopMode: ToolLoopMode;
+    allowedToolNames: Set<string>;
+    toolSchemaMap: Map<string, unknown>;
+    toolLoopGuard: ToolLoopGuard;
+    boundaryContext: ReturnType<typeof createBoundaryRuntimeContext>;
+    responseMeta: { id: string; created: number; model: string };
+  },
+): Promise<{ toolCall: OpenAiToolCall | null; terminationMessage: string | null }> {
+  if (options.allowedToolNames.size === 0 || !output) {
+    return { toolCall: null, terminationMessage: null };
   }
+
+  const toolMapper = new ToolMapper();
+  const toolSessionId = options.responseMeta.id;
 
   for (const line of output.split("\n")) {
     const event = parseStreamJsonLine(line);
@@ -273,22 +292,47 @@ function findFirstAllowedToolCallInOutput(
       continue;
     }
 
-    const toolCall =
-      boundary.mode === "legacy"
-        ? toolLoopMode === "opencode"
-          ? extractOpenAiToolCall(event as any, allowedToolNames)
-          : null
-        : boundary.maybeExtractToolCall(
-            event as any,
-            allowedToolNames,
-            toolLoopMode,
-          );
-    if (toolCall) {
-      return toolCall;
+    let interceptedToolCall: OpenAiToolCall | null = null;
+    const result = await handleToolLoopEventWithFallback({
+      event: event as any,
+      boundary: options.boundaryContext.getBoundary(),
+      boundaryMode: options.boundaryContext.getBoundary().mode,
+      autoFallbackToLegacy: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
+      toolLoopMode: options.toolLoopMode,
+      allowedToolNames: options.allowedToolNames,
+      toolSchemaMap: options.toolSchemaMap,
+      toolLoopGuard: options.toolLoopGuard,
+      toolMapper,
+      toolSessionId,
+      shouldEmitToolUpdates: false,
+      proxyExecuteToolCalls: false,
+      suppressConverterToolEvents: false,
+      responseMeta: options.responseMeta,
+      onToolUpdate: () => {},
+      onToolResult: () => {},
+      onInterceptedToolCall: (toolCall) => {
+        interceptedToolCall = toolCall;
+      },
+      onFallbackToLegacy: (error) => {
+        options.boundaryContext.activateLegacyFallback("findFirstAllowedToolCallInOutput", error);
+      },
+    });
+
+    if (result.terminate) {
+      return {
+        toolCall: null,
+        terminationMessage: result.terminate.message,
+      };
+    }
+    if (result.intercepted && interceptedToolCall) {
+      return {
+        toolCall: interceptedToolCall,
+        terminationMessage: null,
+      };
     }
   }
 
-  return null;
+  return { toolCall: null, terminationMessage: null };
 }
 
 async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: ToolRouter): Promise<string> {
@@ -360,17 +404,27 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         });
       }
 
-        const body: any = await req.json().catch(() => ({}));
-        const messages: Array<any> = Array.isArray(body?.messages) ? body.messages : [];
-        const stream = body?.stream === true;
-        const tools = Array.isArray(body?.tools) ? body.tools : [];
-        const allowedToolNames = extractAllowedToolNames(tools);
-        const boundaryContext = createBoundaryRuntimeContext("bun-handler");
+      log.debug("Proxy request (bun)", { method: req.method, path: url.pathname });
+      const body: any = await req.json().catch(() => ({}));
+      const messages: Array<any> = Array.isArray(body?.messages) ? body.messages : [];
+      const stream = body?.stream === true;
+      const tools = Array.isArray(body?.tools) ? body.tools : [];
+      const allowedToolNames = extractAllowedToolNames(tools);
+      const toolSchemaMap = buildToolSchemaMap(tools);
+      const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
+      const boundaryContext = createBoundaryRuntimeContext("bun-handler");
 
       const prompt = buildPromptFromMessages(messages, tools);
       const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
         boundary.normalizeRuntimeModel(body?.model),
       );
+      log.debug("Proxy chat request (bun)", {
+        stream,
+        model,
+        messages: messages.length,
+        tools: tools.length,
+        promptChars: prompt.length,
+      });
 
       const bunAny = globalThis as any;
       if (!bunAny.Bun?.spawn) {
@@ -415,29 +469,41 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const stdout = (stdoutText || "").trim();
         const stderr = (stderrText || "").trim();
-        const toolCall = boundaryContext.run(
-          "findFirstAllowedToolCallInOutput",
-          (boundary) =>
-            findFirstAllowedToolCallInOutput(
-              stdout,
-              allowedToolNames,
-              TOOL_LOOP_MODE,
-              boundary,
-            ),
-        );
-        if (toolCall) {
-          log.debug("Intercepted OpenCode tool call (non-stream)", {
-            name: toolCall.function.name,
-            callId: toolCall.id,
+        const exitCode = child.exitCode;
+        log.debug("cursor-agent completed (bun non-stream)", {
+          exitCode,
+          stdoutChars: stdout.length,
+          stderrChars: stderr.length,
+        });
+        const meta = {
+          id: `cursor-acp-${Date.now()}`,
+          created: Math.floor(Date.now() / 1000),
+          model,
+        };
+        const intercepted = await findFirstAllowedToolCallInOutput(stdout, {
+          toolLoopMode: TOOL_LOOP_MODE,
+          allowedToolNames,
+          toolSchemaMap,
+          toolLoopGuard,
+          boundaryContext,
+          responseMeta: meta,
+        });
+        if (intercepted.terminationMessage) {
+          const payload = createChatCompletionResponse(model, intercepted.terminationMessage);
+          return new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
           });
-          const meta = {
-            id: `cursor-acp-${Date.now()}`,
-            created: Math.floor(Date.now() / 1000),
-            model,
-          };
+        }
+
+        if (intercepted.toolCall) {
+          log.debug("Intercepted OpenCode tool call (non-stream)", {
+            name: intercepted.toolCall.function.name,
+            callId: intercepted.toolCall.id,
+          });
           const payload = boundaryContext.run(
             "createNonStreamToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, intercepted.toolCall),
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -445,12 +511,18 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           });
         }
 
-        // cursor-agent sometimes returns non-zero even with usable stdout.
-        // Treat stdout as success unless we have explicit stderr.
-        if (child.exitCode !== 0 && stderr.length > 0) {
-          const parsed = parseAgentError(stderr);
+        if (exitCode !== 0) {
+          const errSource =
+            stderr
+            || stdout
+            || `cursor-agent exited with code ${String(exitCode ?? "unknown")} and no output`;
+          const parsed = parseAgentError(errSource);
           const userError = formatErrorForUser(parsed);
-          log.error("cursor-cli failed", { type: parsed.type, message: parsed.message });
+          log.error("cursor-cli failed", {
+            type: parsed.type,
+            message: parsed.message,
+            code: exitCode,
+          });
           // Return error as chat completion so user always sees it
           const errorPayload = createChatCompletionResponse(model, userError);
           return new Response(JSON.stringify(errorPayload), {
@@ -475,12 +547,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const encoder = new TextEncoder();
       const id = `cursor-acp-${Date.now()}`;
       const created = Math.floor(Date.now() / 1000);
+      const perf = new RequestPerf(id);
       const toolMapper = new ToolMapper();
       const toolSessionId = id;
 
+      perf.mark("spawn");
       const sse = new ReadableStream({
         async start(controller) {
           let streamTerminated = false;
+          let firstTokenReceived = false;
           try {
             const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
             const converter = new StreamToSseConverter(model, { id, created });
@@ -506,12 +581,27 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 // ignore
               }
             };
+            const emitTerminalAssistantErrorAndTerminate = (message: string) => {
+              if (streamTerminated) {
+                return;
+              }
+              const errChunk = createChatCompletionChunk(id, created, model, message, true);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
+              controller.enqueue(encoder.encode(formatSseDone()));
+              streamTerminated = true;
+              try {
+                child.kill();
+              } catch {
+                // ignore
+              }
+            };
 
             while (true) {
               if (streamTerminated) break;
               const { value, done } = await reader.read();
               if (done) break;
               if (!value || value.length === 0) continue;
+              if (!firstTokenReceived) { perf.mark("first-token"); firstTokenReceived = true; }
 
               for (const line of lineBuffer.push(value)) {
                 if (streamTerminated) break;
@@ -521,6 +611,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 }
 
                 if (event.type === "tool_call") {
+                  perf.mark("tool-call");
                   const result = await handleToolLoopEventWithFallback({
                     event: event as any,
                     boundary: boundaryContext.getBoundary(),
@@ -528,6 +619,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                     autoFallbackToLegacy: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
                     toolLoopMode: TOOL_LOOP_MODE,
                     allowedToolNames,
+                    toolSchemaMap,
+                    toolLoopGuard,
                     toolMapper,
                     toolSessionId,
                     shouldEmitToolUpdates: SHOULD_EMIT_TOOL_UPDATES,
@@ -548,6 +641,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                       boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);
                     },
                   });
+                  if (result.terminate) {
+                    emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                    break;
+                  }
                   if (result.intercepted) {
                     break;
                   }
@@ -579,6 +676,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   autoFallbackToLegacy: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
                   toolLoopMode: TOOL_LOOP_MODE,
                   allowedToolNames,
+                  toolSchemaMap,
+                  toolLoopGuard,
                   toolMapper,
                   toolSessionId,
                   shouldEmitToolUpdates: SHOULD_EMIT_TOOL_UPDATES,
@@ -599,6 +698,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                     boundaryContext.activateLegacyFallback("handleToolLoopEvent.flush", error);
                   },
                 });
+                if (result.terminate) {
+                  emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                  break;
+                }
                 if (result.intercepted) {
                   break;
                 }
@@ -616,19 +719,29 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
             if (child.exitCode !== 0) {
               const stderrText = await new Response(child.stderr).text();
-              const parsed = parseAgentError(stderrText);
+              const errSource = (stderrText || "").trim()
+                || `cursor-agent exited with code ${String(child.exitCode ?? "unknown")} and no output`;
+              const parsed = parseAgentError(errSource);
               const msg = formatErrorForUser(parsed);
-              log.error("cursor-cli streaming failed", { type: parsed.type });
+              log.error("cursor-cli streaming failed", {
+                type: parsed.type,
+                code: child.exitCode,
+              });
               const errChunk = createChatCompletionChunk(id, created, model, msg, true);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
               controller.enqueue(encoder.encode(formatSseDone()));
               return;
             }
 
+            log.debug("cursor-agent completed (bun stream)", {
+              exitCode: child.exitCode,
+            });
             const doneChunk = createChatCompletionChunk(id, created, model, "", true);
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneChunk)}\n\n`));
             controller.enqueue(encoder.encode(formatSseDone()));
           } finally {
+            perf.mark("request:done");
+            perf.summarize();
             controller.close();
           }
         },
@@ -712,6 +825,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         return;
       }
 
+      log.debug("Proxy request (node)", { method: req.method, path: url.pathname });
       let body = "";
       for await (const chunk of req) {
         body += chunk;
@@ -722,12 +836,21 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const stream = bodyData?.stream === true;
       const tools = Array.isArray(bodyData?.tools) ? bodyData.tools : [];
       const allowedToolNames = extractAllowedToolNames(tools);
+      const toolSchemaMap = buildToolSchemaMap(tools);
+      const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
 
       const prompt = buildPromptFromMessages(messages, tools);
       const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
         boundary.normalizeRuntimeModel(bodyData?.model),
       );
+      log.debug("Proxy chat request (node)", {
+        stream,
+        model,
+        messages: messages.length,
+        tools: tools.length,
+        promptChars: prompt.length,
+      });
 
       const cmd = [
         "cursor-agent",
@@ -753,6 +876,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       if (!stream) {
         const stdoutChunks: Buffer[] = [];
         const stderrChunks: Buffer[] = [];
+        let spawnErrorText: string | null = null;
+
+        child.on("error", (error: any) => {
+          spawnErrorText = String(error?.message || error);
+          log.error("Failed to spawn cursor-agent", { error: spawnErrorText, model });
+        });
 
         child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
         child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
@@ -760,29 +889,40 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         child.on("close", async (code) => {
           const stdout = Buffer.concat(stdoutChunks).toString().trim();
           const stderr = Buffer.concat(stderrChunks).toString().trim();
-          const toolCall = boundaryContext.run(
-            "findFirstAllowedToolCallInOutput",
-            (boundary) =>
-              findFirstAllowedToolCallInOutput(
-                stdout,
-                allowedToolNames,
-                TOOL_LOOP_MODE,
-                boundary,
-              ),
-          );
-          if (toolCall) {
+          log.debug("cursor-agent completed (node non-stream)", {
+            code,
+            stdoutChars: stdout.length,
+            stderrChars: stderr.length,
+            spawnError: spawnErrorText != null,
+          });
+          const meta = {
+            id: `cursor-acp-${Date.now()}`,
+            created: Math.floor(Date.now() / 1000),
+            model,
+          };
+          const intercepted = await findFirstAllowedToolCallInOutput(stdout, {
+            toolLoopMode: TOOL_LOOP_MODE,
+            allowedToolNames,
+            toolSchemaMap,
+            toolLoopGuard,
+            boundaryContext,
+            responseMeta: meta,
+          });
+          if (intercepted.terminationMessage) {
+            const terminationResponse = createChatCompletionResponse(model, intercepted.terminationMessage);
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(terminationResponse));
+            return;
+          }
+
+          if (intercepted.toolCall) {
             log.debug("Intercepted OpenCode tool call (non-stream)", {
-              name: toolCall.function.name,
-              callId: toolCall.id,
+              name: intercepted.toolCall.function.name,
+              callId: intercepted.toolCall.id,
             });
-            const meta = {
-              id: `cursor-acp-${Date.now()}`,
-              created: Math.floor(Date.now() / 1000),
-              model,
-            };
             const payload = boundaryContext.run(
               "createNonStreamToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, intercepted.toolCall),
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -791,10 +931,19 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
           const completion = extractCompletionFromStream(stdout);
 
-          if (code !== 0 && stderr.length > 0) {
-            const parsed = parseAgentError(stderr);
+          if (code !== 0 || spawnErrorText) {
+            const errSource =
+              stderr
+              || stdout
+              || spawnErrorText
+              || `cursor-agent exited with code ${String(code ?? "unknown")} and no output`;
+            const parsed = parseAgentError(errSource);
             const userError = formatErrorForUser(parsed);
-            log.error("cursor-cli failed", { type: parsed.type, message: parsed.message });
+            log.error("cursor-cli failed", {
+              type: parsed.type,
+              message: parsed.message,
+              code,
+            });
             // Return error as chat completion so user always sees it
             const errorResponse = createChatCompletionResponse(model, userError);
             res.writeHead(200, { "Content-Type": "application/json" });
@@ -821,12 +970,33 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const id = `cursor-acp-${Date.now()}`;
         const created = Math.floor(Date.now() / 1000);
+        const perf = new RequestPerf(id);
+        perf.mark("spawn");
 
         const converter = new StreamToSseConverter(model, { id, created });
         const lineBuffer = new LineBuffer();
         const toolMapper = new ToolMapper();
         const toolSessionId = id;
+        const stderrChunks: Buffer[] = [];
         let streamTerminated = false;
+        let firstTokenReceived = false;
+        child.stderr.on("data", (chunk) => {
+          stderrChunks.push(Buffer.from(chunk));
+        });
+        child.on("error", (error: any) => {
+          if (streamTerminated || res.writableEnded) {
+            return;
+          }
+          const errSource = String(error?.message || error);
+          log.error("Failed to spawn cursor-agent (stream)", { error: errSource, model });
+          const parsed = parseAgentError(errSource);
+          const msg = formatErrorForUser(parsed);
+          const errChunk = createChatCompletionChunk(id, created, model, msg, true);
+          res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
+          res.write(formatSseDone());
+          streamTerminated = true;
+          res.end();
+        });
         const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
           if (streamTerminated || res.writableEnded) {
             return;
@@ -852,11 +1022,27 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             // ignore
           }
         };
+        const emitTerminalAssistantErrorAndTerminate = (message: string) => {
+          if (streamTerminated || res.writableEnded) {
+            return;
+          }
+          const errChunk = createChatCompletionChunk(id, created, model, message, true);
+          res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
+          res.write(formatSseDone());
+          streamTerminated = true;
+          res.end();
+          try {
+            child.kill();
+          } catch {
+            // ignore
+          }
+        };
 
         child.stdout.on("data", async (chunk) => {
           if (streamTerminated || res.writableEnded) {
             return;
           }
+          if (!firstTokenReceived) { perf.mark("first-token"); firstTokenReceived = true; }
           for (const line of lineBuffer.push(chunk)) {
             if (streamTerminated || res.writableEnded) {
               break;
@@ -867,6 +1053,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             }
 
             if (event.type === "tool_call") {
+              perf.mark("tool-call");
               const result = await handleToolLoopEventWithFallback({
                 event: event as any,
                 boundary: boundaryContext.getBoundary(),
@@ -874,6 +1061,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 autoFallbackToLegacy: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
                 toolLoopMode: TOOL_LOOP_MODE,
                 allowedToolNames,
+                toolSchemaMap,
+                toolLoopGuard,
                 toolMapper,
                 toolSessionId,
                 shouldEmitToolUpdates: SHOULD_EMIT_TOOL_UPDATES,
@@ -894,6 +1083,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);
                 },
               });
+              if (result.terminate) {
+                emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                break;
+              }
               if (result.intercepted) {
                 break;
               }
@@ -932,6 +1125,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 autoFallbackToLegacy: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
                 toolLoopMode: TOOL_LOOP_MODE,
                 allowedToolNames,
+                toolSchemaMap,
+                toolLoopGuard,
                 toolMapper,
                 toolSessionId,
                 shouldEmitToolUpdates: SHOULD_EMIT_TOOL_UPDATES,
@@ -952,6 +1147,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   boundaryContext.activateLegacyFallback("handleToolLoopEvent.close", error);
                 },
               });
+              if (result.terminate) {
+                emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                break;
+              }
               if (result.intercepted) {
                 break;
               }
@@ -971,26 +1170,25 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             return;
           }
 
+          perf.mark("request:done");
+          perf.summarize();
+          const stderrText = Buffer.concat(stderrChunks).toString().trim();
+          log.debug("cursor-agent completed (node stream)", {
+            code,
+            stderrChars: stderrText.length,
+          });
           if (code !== 0) {
-            child.stderr.on("data", (chunk) => {
-              if (streamTerminated || res.writableEnded) {
-                return;
-              }
-              const errChunk = {
-                id,
-                object: "chat.completion.chunk",
-                created,
-                model,
-                choices: [
-                  {
-                    index: 0,
-                    delta: { content: `cursor-agent failed: ${chunk.toString()}` },
-                    finish_reason: "stop",
-                  },
-                ],
-              };
-              res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
-            });
+            const errSource =
+              stderrText
+              || `cursor-agent exited with code ${String(code ?? "unknown")} and no output`;
+            const parsed = parseAgentError(errSource);
+            const msg = formatErrorForUser(parsed);
+            const errChunk = createChatCompletionChunk(id, created, model, msg, true);
+            res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
+            res.write(formatSseDone());
+            streamTerminated = true;
+            res.end();
+            return;
           }
 
           const doneChunk = {
@@ -1166,6 +1364,11 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
       value: PROVIDER_BOUNDARY_MODE_RAW,
     });
   }
+  if (!TOOL_LOOP_MAX_REPEAT_VALID) {
+    log.warn("Invalid CURSOR_ACP_TOOL_LOOP_MAX_REPEAT; defaulting to 3", {
+      value: TOOL_LOOP_MAX_REPEAT_RAW,
+    });
+  }
   if (ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK && PROVIDER_BOUNDARY.mode !== "v1") {
     log.debug("Provider boundary auto-fallback is enabled but inactive unless mode=v1");
   }
@@ -1174,6 +1377,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
     providerBoundary: PROVIDER_BOUNDARY.mode,
     proxyExecToolCalls: PROXY_EXECUTE_TOOL_CALLS,
     providerBoundaryAutoFallback: ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK,
+    toolLoopMaxRepeat: TOOL_LOOP_MAX_REPEAT,
   });
   await ensurePluginDirectory();
 

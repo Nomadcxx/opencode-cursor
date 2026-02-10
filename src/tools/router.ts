@@ -58,9 +58,13 @@ export class ToolRouter {
 
     const args = this.extractArgs(event);
     log.debug("Executing tool", { name, toolId: tool.id });
+    const t0 = Date.now();
     const result = await this.ctx.execute(tool.id, args);
+    const elapsed = Date.now() - t0;
     if (result.status === "error") {
-      log.warn("Tool execution returned error", { name, error: result.error });
+      log.warn("Tool execution returned error", { name, error: result.error, elapsed });
+    } else {
+      log.debug("Tool execution completed", { name, toolId: tool.id, elapsed });
     }
     return this.buildResult(meta, callId, name, result);
   }
