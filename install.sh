@@ -64,7 +64,11 @@ else
 
     echo "Building plugin..."
     bun install
-    bun run build
+    if ! bun run build; then
+        echo "Initial build failed. Retrying with forced dependency reinstall..."
+        bun install --force --no-cache
+        bun run build
+    fi
 
     if [ ! -s "dist/plugin-entry.js" ]; then
         echo "Error: dist/plugin-entry.js not found or empty after build"

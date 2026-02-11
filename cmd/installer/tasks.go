@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,21 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// fetchCursorModels calls cursor-agent models and parses the output
-func fetchCursorModels() (map[string]interface{}, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "cursor-agent", "models")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, NewExecError("cursor-agent models failed", string(output), err)
-	}
-
-	// Strip ANSI escape codes
-	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
-	clean := ansiRegex.ReplaceAllString(string(output), "")
-
+func parseCursorModelsOutput(clean string) (map[string]interface{}, error) {
 	// More permissive regex: allows uppercase, underscores, and various separators
 	// Pattern: model-id followed by separator and display name
 	lineRegex := regexp.MustCompile(`^([a-zA-Z0-9._-]+)\s+[-–—:]\s+(.+?)(?:\s+\((current|default)\))*\s*$`)
@@ -50,14 +37,75 @@ func fetchCursorModels() (map[string]interface{}, error) {
 	}
 
 	if len(models) == 0 {
-		return nil, NewParseError(
-			"no models found in cursor-agent output",
-			clean,
-			fmt.Errorf("regex matched 0 of %d lines; raw output preserved in error", len(lines)),
-		)
+		return nil, fmt.Errorf("regex matched 0 of %d lines", len(lines))
 	}
 
 	return models, nil
+}
+
+// fetchCursorModels calls cursor-agent models and parses the output
+func fetchCursorModels() (map[string]interface{}, error) {
+	variants := [][]string{
+		{"models"},
+		{"--list", "models"},
+	}
+
+	ansiRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	var lastErr error
+	var lastClean string
+
+	for _, args := range variants {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cmd := exec.CommandContext(ctx, "cursor-agent", args...)
+		output, err := cmd.CombinedOutput()
+		cancel()
+
+		if err != nil {
+			lastErr = NewExecError(
+				fmt.Sprintf("cursor-agent %s failed", strings.Join(args, " ")),
+				string(output),
+				err,
+			)
+			continue
+		}
+
+		clean := ansiRegex.ReplaceAllString(string(output), "")
+		lastClean = clean
+
+		models, parseErr := parseCursorModelsOutput(clean)
+		if parseErr == nil {
+			return models, nil
+		}
+
+		lastErr = NewParseError(
+			"no models found in cursor-agent output",
+			clean,
+			parseErr,
+		)
+	}
+
+	if lastErr != nil {
+		return nil, lastErr
+	}
+
+	return nil, NewParseError("failed to fetch models from cursor-agent", lastClean, fmt.Errorf("all command variants failed"))
+}
+
+func isMissingModuleBuildError(err error) bool {
+	var installerErr *InstallerError
+	if errors.As(err, &installerErr) {
+		output := strings.ToLower(installerErr.RawOutput)
+		if strings.Contains(output, "could not resolve") ||
+			strings.Contains(output, "maybe you need to \"bun install\"") ||
+			strings.Contains(output, "cannot find package") {
+			return true
+		}
+	}
+
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "could not resolve") ||
+		strings.Contains(msg, "cannot find package") ||
+		strings.Contains(msg, "bun install")
 }
 
 func (m model) startInstallation() (tea.Model, tea.Cmd) {
@@ -114,14 +162,29 @@ func buildPlugin(m *model) error {
 	installCmd := exec.Command("bun", "install")
 	installCmd.Dir = m.projectDir
 	if err := runCommand("bun install", installCmd, m.logFile); err != nil {
-		return fmt.Errorf("bun install failed")
+		return err
 	}
 
 	// Run bun run build
 	buildCmd := exec.Command("bun", "run", "build")
 	buildCmd.Dir = m.projectDir
 	if err := runCommand("bun run build", buildCmd, m.logFile); err != nil {
-		return fmt.Errorf("bun run build failed")
+		if !isMissingModuleBuildError(err) {
+			return err
+		}
+
+		// Recovery path for stale/broken node_modules where bun install did not restore all packages.
+		repairCmd := exec.Command("bun", "install", "--force", "--no-cache")
+		repairCmd.Dir = m.projectDir
+		if repairErr := runCommand("bun install --force --no-cache", repairCmd, m.logFile); repairErr != nil {
+			return repairErr
+		}
+
+		retryBuildCmd := exec.Command("bun", "run", "build")
+		retryBuildCmd.Dir = m.projectDir
+		if retryErr := runCommand("bun run build (retry)", retryBuildCmd, m.logFile); retryErr != nil {
+			return retryErr
+		}
 	}
 
 	// Verify dist/plugin-entry.js exists (plugin-only entrypoint)
@@ -149,7 +212,7 @@ func installAiSdk(m *model) error {
 	installCmd := exec.Command("bun", "install", "@ai-sdk/openai-compatible")
 	installCmd.Dir = opencodeDir
 	if err := runCommand("bun install @ai-sdk/openai-compatible", installCmd, m.logFile); err != nil {
-		return NewExecError("failed to install AI SDK", "", err)
+		return err
 	}
 
 	return nil

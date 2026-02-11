@@ -5,6 +5,30 @@ import (
 	"strings"
 )
 
+func summarizeRawOutput(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	lines := strings.Split(raw, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if len(line) > 220 {
+			return line[:220] + "..."
+		}
+		return line
+	}
+
+	if len(raw) > 220 {
+		return raw[:220] + "..."
+	}
+	return raw
+}
+
 type InstallerError struct {
 	Category    string
 	Message     string
@@ -19,6 +43,9 @@ func (e *InstallerError) Error() string {
 	b.WriteString(fmt.Sprintf("[%s] %s", e.Category, e.Message))
 	if e.Details != "" {
 		b.WriteString(fmt.Sprintf(": %s", e.Details))
+	}
+	if summary := summarizeRawOutput(e.RawOutput); summary != "" {
+		b.WriteString(fmt.Sprintf(" | output: %s", summary))
 	}
 	if e.Cause != nil {
 		b.WriteString(fmt.Sprintf(" (cause: %v)", e.Cause))
