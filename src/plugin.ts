@@ -1328,24 +1328,34 @@ function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
   const entries: Record<string, any> = {};
   const tools = registry.list();
 
-  for (const t of tools) {
-    const handler = registry.getHandler(t.name);
-    if (!handler) continue;
-
-    const zodArgs = jsonSchemaToZod(t.parameters);
-
-    entries[t.name] = tool({
-      description: t.description,
+  const addEntry = (name: string, description: string, zodArgs: any, handler: (args: any) => Promise<any>) => {
+    entries[name] = tool({
+      description,
       args: zodArgs,
       async execute(args: any, context: any) {
         try {
           return await handler(args);
         } catch (error: any) {
-          log.warn("Tool hook execution failed", { tool: t.name, error: String(error?.message || error) });
+          log.warn("Tool hook execution failed", { tool: name, error: String(error?.message || error) });
           throw error;
         }
       },
     });
+  };
+
+  for (const t of tools) {
+    const handler = registry.getHandler(t.name);
+    if (!handler) continue;
+
+    const zodArgs = jsonSchemaToZod(t.parameters);
+    addEntry(t.name, t.description, zodArgs, handler);
+
+    // Some agent variants call `shell` instead of `bash`.
+    // Register a compatibility alias so subagent flows do not fail with
+    // unavailable tool errors.
+    if (t.name === "bash" && !entries.shell) {
+      addEntry("shell", t.description, zodArgs, handler);
+    }
   }
 
   return entries;
