@@ -28,6 +28,7 @@ describe("Plugin tool hook", () => {
     // Verify default tools are registered
     const toolNames = Object.keys(hooks.tool || {});
     expect(toolNames).toContain("bash");
+    expect(toolNames).toContain("shell");
     expect(toolNames).toContain("read");
     expect(toolNames).toContain("write");
     expect(toolNames).toContain("edit");
