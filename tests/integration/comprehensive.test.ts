@@ -223,17 +223,18 @@ describe("Comprehensive End-to-End Integration", () => {
 
     it("should cache model discovery", async () => {
       const service = new ModelDiscoveryService({ cacheTTL: 5000 });
+      let queryCalls = 0;
+      const originalQuery = (service as any).queryCursorAgent.bind(service);
+      (service as any).queryCursorAgent = async () => {
+        queryCalls += 1;
+        return originalQuery();
+      };
 
-      const startTime1 = Date.now();
-      await service.discover();
-      const endTime1 = Date.now();
+      const models1 = await service.discover();
+      const models2 = await service.discover();
 
-      const startTime2 = Date.now();
-      await service.discover(); // Should be cached
-      const endTime2 = Date.now();
-
-      // Second call should be much faster (cached)
-      expect(endTime2 - startTime2).toBeLessThan(endTime1 - startTime1);
+      expect(models2).toEqual(models1);
+      expect(queryCalls).toBe(1);
     });
   });
 

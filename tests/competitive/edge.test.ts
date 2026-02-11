@@ -113,19 +113,18 @@ describe("Competitive Edge Analysis", () => {
 
     it("should have faster model discovery with caching", async () => {
       const service = new ModelDiscoveryService({ cacheTTL: 60000 });
+      let queryCalls = 0;
+      const originalQuery = (service as any).queryCursorAgent.bind(service);
+      (service as any).queryCursorAgent = async () => {
+        queryCalls += 1;
+        return originalQuery();
+      };
 
-      // First discovery
-      const start1 = Date.now();
-      await service.discover();
-      const time1 = Date.now() - start1;
+      const models1 = await service.discover();
+      const models2 = await service.discover();
 
-      // Second discovery (cached)
-      const start2 = Date.now();
-      await service.discover();
-      const time2 = Date.now() - start2;
-
-      // Cached should be significantly faster
-      expect(time2).toBeLessThan(time1);
+      expect(models2).toEqual(models1);
+      expect(queryCalls).toBe(1);
     });
 
     it("should handle concurrent tool executions efficiently", async () => {
