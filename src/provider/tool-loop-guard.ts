@@ -44,6 +44,7 @@ export function createToolLoopGuard(
   const {
     byCallId,
     latest,
+    latestByToolName,
     initialCounts,
     initialCoarseCounts,
     initialValidationCounts,
@@ -56,8 +57,27 @@ export function createToolLoopGuard(
 
   return {
     evaluate(toolCall) {
-      const errorClass = byCallId.get(toolCall.id) ?? latest ?? "unknown";
+      const errorClass = byCallId.get(toolCall.id)
+        ?? latestByToolName.get(toolCall.function.name)
+        ?? latest
+        ?? "unknown";
       const argShape = deriveArgumentShape(toolCall.function.arguments);
+      if (errorClass === "success") {
+        // For success paths, only track identical value payloads to avoid blocking
+        // legitimate repeated tool usage with different arguments.
+        const valueSignature = deriveArgumentValueSignature(toolCall.function.arguments);
+        const successFingerprint = `${toolCall.function.name}|values:${valueSignature}|success`;
+        const repeatCount = (counts.get(successFingerprint) ?? 0) + 1;
+        counts.set(successFingerprint, repeatCount);
+        return {
+          fingerprint: successFingerprint,
+          repeatCount,
+          maxRepeat,
+          errorClass,
+          triggered: repeatCount > maxRepeat,
+          tracked: true,
+        };
+      }
       const strictFingerprint = `${toolCall.function.name}|${argShape}|${errorClass}`;
       const coarseFingerprint = `${toolCall.function.name}|${errorClass}`;
 
@@ -144,6 +164,7 @@ function indexToolResultErrorClasses(messages: Array<unknown>): {
 function indexToolLoopHistory(messages: Array<unknown>): {
   byCallId: Map<string, ToolLoopErrorClass>;
   latest: ToolLoopErrorClass | null;
+  latestByToolName: Map<string, ToolLoopErrorClass>;
   initialCounts: Map<string, number>;
   initialCoarseCounts: Map<string, number>;
   initialValidationCounts: Map<string, number>;
@@ -156,9 +177,25 @@ function indexToolLoopHistory(messages: Array<unknown>): {
   const initialValidationCoarseCounts = new Map<string, number>();
   const assistantCalls = extractAssistantToolCalls(messages);
 
+  // Build per-tool-name latest errorClass by cross-referencing assistant calls
+  // with tool result classifications.  In multi-tool turns (e.g. edit + context_info),
+  // the global `latest` may belong to the wrong tool; this map ensures each tool
+  // name resolves to the errorClass of *its own* most recent result.
+  const latestByToolName = new Map<string, ToolLoopErrorClass>();
   for (const call of assistantCalls) {
-    const errorClass = byCallId.get(call.id) ?? latest ?? "unknown";
+    const ec = byCallId.get(call.id);
+    if (ec !== undefined) {
+      latestByToolName.set(call.name, ec);
+    }
+  }
+
+  for (const call of assistantCalls) {
+    const errorClass = byCallId.get(call.id) ?? latestByToolName.get(call.name) ?? latest ?? "unknown";
     if (errorClass === "success") {
+      incrementCount(
+        initialCounts,
+        `${call.name}|values:${call.argValueSignature}|success`,
+      );
       continue;
     }
     const strictFingerprint = `${call.name}|${call.argShape}|${errorClass}`;
@@ -180,6 +217,7 @@ function indexToolLoopHistory(messages: Array<unknown>): {
   return {
     byCallId,
     latest,
+    latestByToolName,
     initialCounts,
     initialCoarseCounts,
     initialValidationCounts,
@@ -215,6 +253,9 @@ function classifyToolResult(content: unknown): ToolLoopErrorClass {
   if (containsAny(text, ["timeout", "timed out"])) {
     return "timeout";
   }
+  if (containsAny(text, ["# todos", "\n[ ] ", "\n[x] ", "\n[x]"])) {
+    return "success";
+  }
   if (containsAny(text, ["success", "completed", "\"ok\":true", "\"success\":true"])) {
     return "success";
   }
@@ -234,13 +275,29 @@ function deriveArgumentShape(rawArguments: string): string {
   }
 }
 
+function deriveArgumentValueSignature(rawArguments: string): string {
+  try {
+    const parsed = JSON.parse(rawArguments);
+    return hashString(JSON.stringify(canonicalizeValue(parsed)));
+  } catch {
+    return `invalid:${hashString(rawArguments)}`;
+  }
+}
+
 function extractAssistantToolCalls(messages: Array<unknown>): Array<{
   id: string;
   name: string;
   argShape: string;
+  argValueSignature: string;
   argKeys: string[];
 }> {
-  const calls: Array<{ id: string; name: string; argShape: string; argKeys: string[] }> = [];
+  const calls: Array<{
+    id: string;
+    name: string;
+    argShape: string;
+    argValueSignature: string;
+    argKeys: string[];
+  }> = [];
   for (const message of messages) {
     if (!isRecord(message) || message.role !== "assistant" || !Array.isArray(message.tool_calls)) {
       continue;
@@ -261,6 +318,7 @@ function extractAssistantToolCalls(messages: Array<unknown>): Array<{
         id,
         name,
         argShape: deriveArgumentShape(rawArguments),
+        argValueSignature: deriveArgumentValueSignature(rawArguments),
         argKeys: extractArgumentKeys(rawArguments),
       });
     }
@@ -356,6 +414,30 @@ function shapeOf(value: unknown): unknown {
     return "null";
   }
   return typeof value;
+}
+
+function canonicalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalizeValue(entry));
+  }
+  if (isRecord(value)) {
+    const canonical: Record<string, unknown> = {};
+    for (const key of Object.keys(value).sort()) {
+      canonical[key] = canonicalizeValue(value[key]);
+    }
+    return canonical;
+  }
+  return value;
+}
+
+function hashString(value: string): string {
+  // FNV-1a 32-bit hash is stable and cheap for loop-guard fingerprints.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function toLowerText(content: unknown): string {

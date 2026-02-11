@@ -354,7 +354,7 @@ export async function handleToolLoopEventWithFallback(
       && (result.terminate.reason === "loop_guard" || result.terminate.reason === "schema_validation")
     ) {
       if (result.terminate.reason === "loop_guard") {
-        if (result.terminate.errorClass === "validation") {
+        if (result.terminate.errorClass === "validation" || result.terminate.errorClass === "success") {
           return result;
         }
         shared.toolLoopGuard.resetFingerprint(result.terminate.fingerprint);
@@ -400,10 +400,13 @@ function evaluateToolLoopGuard(
 
   return {
     reason: "loop_guard",
-    message:
-      `Tool loop guard stopped repeated failing calls to "${toolCall.function.name}" `
-      + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
-      + "Adjust tool arguments and retry.",
+    message: decision.errorClass === "success"
+      ? `Tool loop guard stopped repeated successful calls to "${toolCall.function.name}" `
+        + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
+        + "This likely indicates a model/tool-call loop; adjust prompt or tool strategy and retry."
+      : `Tool loop guard stopped repeated failing calls to "${toolCall.function.name}" `
+        + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
+        + "Adjust tool arguments and retry.",
     tool: toolCall.function.name,
     fingerprint: decision.fingerprint,
     repeatCount: decision.repeatCount,

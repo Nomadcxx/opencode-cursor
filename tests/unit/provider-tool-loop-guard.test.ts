@@ -87,7 +87,7 @@ describe("tool loop guard", () => {
     expect(third.repeatCount).toBe(3);
   });
 
-  it("does not track successful tool results", () => {
+  it("tracks repeated identical successful tool calls and triggers after threshold", () => {
     const guard = createToolLoopGuard(
       [
         {
@@ -99,7 +99,39 @@ describe("tool loop guard", () => {
       2,
     );
 
-    const decision = guard.evaluate({
+    const call = {
+      id: "c1",
+      type: "function",
+      function: {
+        name: "read",
+        arguments: JSON.stringify({ path: "foo.txt" }),
+      },
+    } as const;
+
+    const first = guard.evaluate(call);
+    const second = guard.evaluate(call);
+    const third = guard.evaluate(call);
+
+    expect(first.tracked).toBe(true);
+    expect(first.triggered).toBe(false);
+    expect(second.triggered).toBe(false);
+    expect(third.triggered).toBe(true);
+    expect(third.errorClass).toBe("success");
+  });
+
+  it("does not trigger success guard when successful args differ", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "tool",
+          tool_call_id: "c1",
+          content: "{\"success\":true}",
+        },
+      ],
+      2,
+    );
+
+    const first = guard.evaluate({
       id: "c1",
       type: "function",
       function: {
@@ -107,9 +139,126 @@ describe("tool loop guard", () => {
         arguments: JSON.stringify({ path: "foo.txt" }),
       },
     });
+    const second = guard.evaluate({
+      id: "c1",
+      type: "function",
+      function: {
+        name: "read",
+        arguments: JSON.stringify({ path: "bar.txt" }),
+      },
+    });
+    const third = guard.evaluate({
+      id: "c1",
+      type: "function",
+      function: {
+        name: "read",
+        arguments: JSON.stringify({ path: "baz.txt" }),
+      },
+    });
 
-    expect(decision.tracked).toBe(false);
-    expect(decision.triggered).toBe(false);
+    expect(first.triggered).toBe(false);
+    expect(second.triggered).toBe(false);
+    expect(third.triggered).toBe(false);
+  });
+
+  it("treats todowrite markdown output as success for loop tracking", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "tool",
+          tool_call_id: "todo1",
+          content: "# Todos\n[ ] smoke",
+        },
+      ],
+      1,
+    );
+
+    const first = guard.evaluate({
+      id: "todo1",
+      type: "function",
+      function: {
+        name: "todowrite",
+        arguments: JSON.stringify({
+          todos: [
+            {
+              id: "smoke",
+              content: "smoke",
+              status: "pending",
+              priority: "medium",
+            },
+          ],
+        }),
+      },
+    });
+    const second = guard.evaluate({
+      id: "todo1",
+      type: "function",
+      function: {
+        name: "todowrite",
+        arguments: JSON.stringify({
+          todos: [
+            {
+              id: "smoke",
+              content: "smoke",
+              status: "pending",
+              priority: "medium",
+            },
+          ],
+        }),
+      },
+    });
+
+    expect(first.errorClass).toBe("success");
+    expect(first.triggered).toBe(false);
+    expect(second.triggered).toBe(true);
+  });
+
+  it("seeds success-loop history across requests for identical successful calls", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "prev-success",
+              type: "function",
+              function: {
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "TODO.md",
+                  old_string: "",
+                  new_string: "ok",
+                }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "prev-success",
+          content: "File edited successfully: TODO.md",
+        },
+      ],
+      1,
+    );
+
+    const decision = guard.evaluate({
+      id: "next-success",
+      type: "function",
+      function: {
+        name: "edit",
+        arguments: JSON.stringify({
+          path: "TODO.md",
+          old_string: "",
+          new_string: "ok",
+        }),
+      },
+    });
+
+    expect(decision.errorClass).toBe("success");
+    expect(decision.triggered).toBe(true);
+    expect(decision.repeatCount).toBe(2);
   });
 
   it("resets fingerprint counts", () => {
@@ -197,5 +346,136 @@ describe("tool loop guard", () => {
 
     expect(decision.triggered).toBe(true);
     expect(decision.errorClass).toBe("validation");
+  });
+
+  it("classifies edit as success in multi-tool turn where context_info is unknown", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "edit-1",
+              type: "function",
+              function: {
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "TODO.md",
+                  old_string: "",
+                  new_string: "ok",
+                }),
+              },
+            },
+            {
+              id: "ctx-1",
+              type: "function",
+              function: {
+                name: "context_info",
+                arguments: JSON.stringify({ query: "project" }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "edit-1",
+          content: "File edited successfully: TODO.md",
+        },
+        {
+          role: "tool",
+          tool_call_id: "ctx-1",
+          content: "Here is some context about the project.",
+        },
+      ],
+      1,
+    );
+
+    const decision = guard.evaluate({
+      id: "edit-2",
+      type: "function",
+      function: {
+        name: "edit",
+        arguments: JSON.stringify({
+          path: "TODO.md",
+          old_string: "",
+          new_string: "ok",
+        }),
+      },
+    });
+
+    expect(decision.errorClass).toBe("success");
+    expect(decision.triggered).toBe(true);
+    expect(decision.repeatCount).toBe(2);
+  });
+
+  it("seeds per-tool-name errorClass independently in multi-tool history", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "edit-a",
+              type: "function",
+              function: {
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "A.md",
+                  old_string: "",
+                  new_string: "a",
+                }),
+              },
+            },
+            {
+              id: "read-a",
+              type: "function",
+              function: {
+                name: "read",
+                arguments: JSON.stringify({ path: "missing.txt" }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "edit-a",
+          content: "File edited successfully: A.md",
+        },
+        {
+          role: "tool",
+          tool_call_id: "read-a",
+          content: "Error: ENOENT: no such file or directory",
+        },
+      ],
+      1,
+    );
+
+    const editDecision = guard.evaluate({
+      id: "edit-b",
+      type: "function",
+      function: {
+        name: "edit",
+        arguments: JSON.stringify({
+          path: "A.md",
+          old_string: "",
+          new_string: "a",
+        }),
+      },
+    });
+    expect(editDecision.errorClass).toBe("success");
+    expect(editDecision.triggered).toBe(true);
+
+    const readDecision = guard.evaluate({
+      id: "read-b",
+      type: "function",
+      function: {
+        name: "read",
+        arguments: JSON.stringify({ path: "missing.txt" }),
+      },
+    });
+    expect(readDecision.errorClass).toBe("not_found");
+    expect(readDecision.triggered).toBe(true);
   });
 });

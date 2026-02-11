@@ -73,6 +73,80 @@ describe("tool schema compatibility", () => {
     expect(result.validation.ok).toBe(true);
   });
 
+  it("normalizes glob aliases targetDirectory/globPattern", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "g1",
+        type: "function",
+        function: {
+          name: "glob",
+          arguments: JSON.stringify({
+            targetDirectory: "TOOL_SMOKE_DIR",
+            globPattern: "**/*.txt",
+          }),
+        },
+      },
+      new Map([
+        [
+          "glob",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              pattern: { type: "string" },
+            },
+            required: ["pattern"],
+            additionalProperties: false,
+          },
+        ],
+      ]),
+    );
+
+    expect(result.normalizedArgs.path).toBe("TOOL_SMOKE_DIR");
+    expect(result.normalizedArgs.pattern).toBe("**/*.txt");
+    expect(result.normalizedArgs.targetDirectory).toBeUndefined();
+    expect(result.normalizedArgs.globPattern).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
+  it("normalizes grep aliases searchPattern/includePattern", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "g2",
+        type: "function",
+        function: {
+          name: "grep",
+          arguments: JSON.stringify({
+            searchPattern: "beta",
+            filePath: "TOOL_SMOKE_DIR/src/grep.txt",
+            includePattern: "*.txt",
+          }),
+        },
+      },
+      new Map([
+        [
+          "grep",
+          {
+            type: "object",
+            properties: {
+              pattern: { type: "string" },
+              path: { type: "string" },
+              include: { type: "string" },
+            },
+            required: ["pattern", "path"],
+            additionalProperties: false,
+          },
+        ],
+      ]),
+    );
+
+    expect(result.normalizedArgs.pattern).toBe("beta");
+    expect(result.normalizedArgs.path).toBe("TOOL_SMOKE_DIR/src/grep.txt");
+    expect(result.normalizedArgs.include).toBe("*.txt");
+    expect(result.normalizedArgs.searchPattern).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
   it("keeps canonical keys when aliases collide", () => {
     const result = applyToolSchemaCompat(
       {

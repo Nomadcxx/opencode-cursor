@@ -537,6 +537,125 @@ describe("provider runtime interception fallback", () => {
     expect(result.terminate?.errorClass).toBe("validation");
   });
 
+  it("does not fallback on success loop-guard termination; returns terminal response", async () => {
+    let fallbackCalled = false;
+    const guard = createToolLoopGuard(
+      [{ role: "tool", tool_call_id: "c1", content: "{\"success\":true}" }],
+      1,
+    );
+    guard.evaluate({
+      id: "c1",
+      type: "function",
+      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+    });
+
+    const result = await handleToolLoopEventWithFallback({
+      ...createBaseOptions({
+        toolLoopGuard: guard,
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundaryMode: "v1",
+      autoFallbackToLegacy: true,
+      onFallbackToLegacy: () => {
+        fallbackCalled = true;
+      },
+    });
+
+    expect(fallbackCalled).toBe(false);
+    expect(result.intercepted).toBe(false);
+    expect(result.skipConverter).toBe(true);
+    expect(result.terminate?.reason).toBe("loop_guard");
+    expect(result.terminate?.errorClass).toBe("success");
+  });
+
+  it("does not fallback on multi-tool success loop-guard termination (edit + context_info history)", async () => {
+    let fallbackCalled = false;
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "edit-1",
+              type: "function",
+              function: {
+                name: "edit",
+                arguments: JSON.stringify({
+                  path: "TODO.md",
+                  old_string: "",
+                  new_string: "ok",
+                }),
+              },
+            },
+            {
+              id: "ctx-1",
+              type: "function",
+              function: {
+                name: "context_info",
+                arguments: JSON.stringify({ query: "project" }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "edit-1",
+          content: "File edited successfully: TODO.md",
+        },
+        {
+          role: "tool",
+          tool_call_id: "ctx-1",
+          content: "Here is some context.",
+        },
+      ],
+      1,
+    );
+
+    const result = await handleToolLoopEventWithFallback({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "edit-2",
+          tool_call: {
+            editToolCall: {
+              args: { path: "TODO.md", streamContent: "ok" },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit"]),
+        toolSchemaMap: new Map([
+          [
+            "edit",
+            {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                old_string: { type: "string" },
+                new_string: { type: "string" },
+              },
+              required: ["path", "old_string", "new_string"],
+              additionalProperties: false,
+            },
+          ],
+        ]),
+        toolLoopGuard: guard,
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundaryMode: "v1",
+      autoFallbackToLegacy: true,
+      onFallbackToLegacy: () => {
+        fallbackCalled = true;
+      },
+    });
+
+    expect(fallbackCalled).toBe(false);
+    expect(result.intercepted).toBe(false);
+    expect(result.skipConverter).toBe(true);
+    expect(result.terminate?.reason).toBe("loop_guard");
+    expect(result.terminate?.errorClass).toBe("success");
+  });
+
   it("falls back on non-validation loop-guard termination when auto-fallback is enabled", async () => {
     let fallbackCalled = false;
     let interceptedName = "";
