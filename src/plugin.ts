@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
-import { isAbsolute, join, resolve } from "path";
+import { isAbsolute, join, relative, resolve } from "path";
 import { ToolMapper, type ToolUpdate } from "./acp/tools.js";
 import { startCursorOAuth } from "./auth";
 import { LineBuffer } from "./streaming/line-buffer.js";
@@ -68,6 +68,34 @@ function getGlobalKey(): string {
   return "__opencode_cursor_proxy_server__";
 }
 
+function getOpenCodeConfigPrefix(): string {
+  const configHome = process.env.XDG_CONFIG_HOME
+    ? resolve(process.env.XDG_CONFIG_HOME)
+    : join(homedir(), ".config");
+  return join(configHome, "opencode");
+}
+
+function isWithinPath(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function resolveCandidate(value: string | undefined): string {
+  if (!value || value.trim().length === 0) {
+    return "";
+  }
+  return resolve(value);
+}
+
+function isNonConfigPath(pathValue: string): boolean {
+  if (!pathValue) {
+    return false;
+  }
+  return !isWithinPath(getOpenCodeConfigPrefix(), pathValue);
+}
+
+const SESSION_WORKSPACE_CACHE_LIMIT = 200;
+
 function resolveWorkspaceDirectory(worktree: string | undefined, directory: string | undefined): string {
   const envWorkspace = process.env.CURSOR_ACP_WORKSPACE?.trim();
   if (envWorkspace) {
@@ -79,23 +107,20 @@ function resolveWorkspaceDirectory(worktree: string | undefined, directory: stri
     return resolve(envProjectDir);
   }
 
-  const configHome = process.env.XDG_CONFIG_HOME
-    ? resolve(process.env.XDG_CONFIG_HOME)
-    : join(homedir(), ".config");
-  const configPrefix = join(configHome, "opencode");
+  const configPrefix = getOpenCodeConfigPrefix();
 
-  const worktreeCandidate = worktree ? resolve(worktree) : "";
-  if (worktreeCandidate && !worktreeCandidate.startsWith(configPrefix)) {
+  const worktreeCandidate = resolveCandidate(worktree);
+  if (worktreeCandidate && !isWithinPath(configPrefix, worktreeCandidate)) {
     return worktreeCandidate;
   }
 
-  const dirCandidate = directory ? resolve(directory) : "";
-  if (dirCandidate && !dirCandidate.startsWith(configPrefix)) {
+  const dirCandidate = resolveCandidate(directory);
+  if (dirCandidate && !isWithinPath(configPrefix, dirCandidate)) {
     return dirCandidate;
   }
 
-  const cwd = process.cwd();
-  if (cwd && !cwd.startsWith(configPrefix)) {
+  const cwd = resolve(process.cwd());
+  if (cwd && !isWithinPath(configPrefix, cwd)) {
     return cwd;
   }
 
@@ -1371,25 +1396,54 @@ function jsonSchemaToZod(jsonSchema: any): any {
   return zodShape;
 }
 
-function resolveToolContextBaseDir(context: any, fallbackBaseDir?: string): string | null {
-  // OpenCode's plugin runtime may report `context.directory` as the OpenCode config dir
-  // (e.g. ~/.config/opencode). Prefer `worktree`, otherwise ignore config-dir `directory`
-  // and fall back to the provider workspace.
-  const configHome = process.env.XDG_CONFIG_HOME
-    ? resolve(process.env.XDG_CONFIG_HOME)
-    : join(homedir(), ".config");
-  const configPrefix = join(configHome, "opencode");
+function resolveToolContextBaseDirWithSession(
+  context: any,
+  fallbackBaseDir?: string,
+  sessionWorkspaceBySession?: Map<string, string>,
+): string | null {
+  const sessionID = typeof context?.sessionID === "string" && context.sessionID.trim().length > 0
+    ? context.sessionID.trim()
+    : "";
 
-  const worktree = typeof context?.worktree === "string" ? context.worktree.trim() : "";
-  if (worktree) return worktree;
+  const worktree = resolveCandidate(typeof context?.worktree === "string" ? context.worktree : undefined);
+  const directory = resolveCandidate(typeof context?.directory === "string" ? context.directory : undefined);
+  const fallback = resolveCandidate(fallbackBaseDir);
+  const pinned = sessionID && sessionWorkspaceBySession
+    ? resolveCandidate(sessionWorkspaceBySession.get(sessionID))
+    : "";
 
-  const directory = typeof context?.directory === "string" ? context.directory.trim() : "";
-  if (directory && !resolve(directory).startsWith(configPrefix)) return directory;
+  const pinSession = (candidate: string) => {
+    if (sessionID && sessionWorkspaceBySession && isNonConfigPath(candidate)) {
+      if (!sessionWorkspaceBySession.has(sessionID) && sessionWorkspaceBySession.size >= SESSION_WORKSPACE_CACHE_LIMIT) {
+        const oldestSession = sessionWorkspaceBySession.keys().next().value;
+        if (typeof oldestSession === "string") {
+          sessionWorkspaceBySession.delete(oldestSession);
+        }
+      }
+      sessionWorkspaceBySession.set(sessionID, candidate);
+    }
+  };
 
-  const fallback = typeof fallbackBaseDir === "string" ? fallbackBaseDir.trim() : "";
-  if (fallback) return fallback;
+  if (isNonConfigPath(worktree)) {
+    pinSession(worktree);
+    return worktree;
+  }
 
-  return directory || null;
+  if (isNonConfigPath(pinned)) {
+    return pinned;
+  }
+
+  if (isNonConfigPath(directory)) {
+    pinSession(directory);
+    return directory;
+  }
+
+  if (isNonConfigPath(fallback)) {
+    pinSession(fallback);
+    return fallback;
+  }
+
+  return null;
 }
 
 function toAbsoluteWithBase(value: unknown, baseDir: string): unknown {
@@ -1408,8 +1462,9 @@ function applyToolContextDefaults(
   rawArgs: Record<string, unknown>,
   context: any,
   fallbackBaseDir?: string,
+  sessionWorkspaceBySession?: Map<string, string>,
 ): Record<string, unknown> {
-  const baseDir = resolveToolContextBaseDir(context, fallbackBaseDir);
+  const baseDir = resolveToolContextBaseDirWithSession(context, fallbackBaseDir, sessionWorkspaceBySession);
   if (!baseDir) {
     return rawArgs;
   }
@@ -1447,6 +1502,7 @@ function applyToolContextDefaults(
  */
 function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string): Record<string, any> {
   const entries: Record<string, any> = {};
+  const sessionWorkspaceBySession = new Map<string, string>();
   const tools = registry.list();
   for (const t of tools) {
     const handler = registry.getHandler(t.name);
@@ -1459,7 +1515,13 @@ function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string):
         args: zodArgs,
         async execute(args: any, context: any) {
           try {
-            const normalizedArgs = applyToolContextDefaults(toolName, args, context, fallbackBaseDir);
+            const normalizedArgs = applyToolContextDefaults(
+              toolName,
+              args,
+              context,
+              fallbackBaseDir,
+              sessionWorkspaceBySession,
+            );
             return await handler(normalizedArgs);
           } catch (error: any) {
             log.warn("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync } from "fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, existsSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CursorPlugin } from "../../src/plugin";
@@ -20,17 +20,20 @@ function createMockInput(directory: string, worktree: string = directory): Plugi
   };
 }
 
-function createToolContext(directory: string, worktree: string = directory): any {
-  return {
-    sessionID: "test-session",
+function createToolContext(directory: string, worktree?: string, sessionID = "test-session"): any {
+  const context: any = {
+    sessionID,
     messageID: "test-message",
     agent: "test-agent",
     directory,
-    worktree,
     abort: new AbortController().signal,
     metadata: () => {},
     ask: async () => {},
   };
+  if (worktree !== undefined) {
+    context.worktree = worktree;
+  }
+  return context;
 }
 
 describe("Plugin tool hook", () => {
@@ -78,7 +81,7 @@ describe("Plugin tool hook", () => {
           path: "nested/output.txt",
           content: "hello from context",
         },
-        createToolContext(projectDir),
+        createToolContext(projectDir, projectDir),
       );
 
       const expectedPath = join(projectDir, "nested/output.txt");
@@ -126,7 +129,7 @@ describe("Plugin tool hook", () => {
         {
           command: "pwd",
         },
-        createToolContext(projectDir),
+        createToolContext(projectDir, projectDir),
       );
 
       expect(realpathSync((out || "").trim())).toBe(realpathSync(projectDir));
@@ -143,12 +146,55 @@ describe("Plugin tool hook", () => {
         {
           command: "pwd",
         },
-        createToolContext(projectDir),
+        createToolContext(projectDir, projectDir),
       );
 
       expect(realpathSync((out || "").trim())).toBe(realpathSync(projectDir));
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("pins non-config workspace per session and reuses it when later context loses worktree", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-project-"));
+    const xdgConfigHome = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-xdg-"));
+    const unexpectedDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-unexpected-"));
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+
+    try {
+      process.env.XDG_CONFIG_HOME = xdgConfigHome;
+      const configDir = join(xdgConfigHome, "opencode");
+      mkdirSync(configDir, { recursive: true });
+
+      const hooks = await CursorPlugin(createMockInput(configDir, configDir));
+
+      const out1 = await hooks.tool?.write?.execute(
+        { path: "nested/first.txt", content: "first" },
+        createToolContext(configDir, projectDir, "session-pin-1"),
+      );
+      const out2 = await hooks.tool?.write?.execute(
+        { path: "nested/second.txt", content: "second" },
+        createToolContext(configDir, undefined, "session-pin-1"),
+      );
+
+      const expectedFirstPath = join(projectDir, "nested/first.txt");
+      const expectedSecondPath = join(projectDir, "nested/second.txt");
+      const unexpectedPath = join(unexpectedDir, "nested/second.txt");
+
+      expect(readFileSync(expectedFirstPath, "utf-8")).toBe("first");
+      expect(readFileSync(expectedSecondPath, "utf-8")).toBe("second");
+      expect(out1).toContain(expectedFirstPath);
+      expect(out2).toContain(expectedSecondPath);
+      expect(existsSync(unexpectedPath)).toBe(false);
+    } finally {
+      if (prevXdg === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = prevXdg;
+      }
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(xdgConfigHome, { recursive: true, force: true });
+      rmSync(unexpectedDir, { recursive: true, force: true });
     }
   });
 });
