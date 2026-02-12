@@ -68,16 +68,26 @@ function getGlobalKey(): string {
   return "__opencode_cursor_proxy_server__";
 }
 
-function resolveWorkspaceDirectory(directory: string | undefined): string {
+function resolveWorkspaceDirectory(worktree: string | undefined, directory: string | undefined): string {
   const envWorkspace = process.env.CURSOR_ACP_WORKSPACE?.trim();
   if (envWorkspace) {
     return resolve(envWorkspace);
+  }
+
+  const envProjectDir = process.env.OPENCODE_CURSOR_PROJECT_DIR?.trim();
+  if (envProjectDir) {
+    return resolve(envProjectDir);
   }
 
   const configHome = process.env.XDG_CONFIG_HOME
     ? resolve(process.env.XDG_CONFIG_HOME)
     : join(homedir(), ".config");
   const configPrefix = join(configHome, "opencode");
+
+  const worktreeCandidate = worktree ? resolve(worktree) : "";
+  if (worktreeCandidate && !worktreeCandidate.startsWith(configPrefix)) {
+    return worktreeCandidate;
+  }
 
   const dirCandidate = directory ? resolve(directory) : "";
   if (dirCandidate && !dirCandidate.startsWith(configPrefix)) {
@@ -1345,14 +1355,25 @@ function jsonSchemaToZod(jsonSchema: any): any {
   return zodShape;
 }
 
-function resolveToolContextBaseDir(context: any): string | null {
-  const candidates = [context?.worktree, context?.directory];
-  for (const candidate of candidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-  return null;
+function resolveToolContextBaseDir(context: any, fallbackBaseDir?: string): string | null {
+  // OpenCode's plugin runtime may report `context.directory` as the OpenCode config dir
+  // (e.g. ~/.config/opencode). Prefer `worktree`, otherwise ignore config-dir `directory`
+  // and fall back to the provider workspace.
+  const configHome = process.env.XDG_CONFIG_HOME
+    ? resolve(process.env.XDG_CONFIG_HOME)
+    : join(homedir(), ".config");
+  const configPrefix = join(configHome, "opencode");
+
+  const worktree = typeof context?.worktree === "string" ? context.worktree.trim() : "";
+  if (worktree) return worktree;
+
+  const directory = typeof context?.directory === "string" ? context.directory.trim() : "";
+  if (directory && !resolve(directory).startsWith(configPrefix)) return directory;
+
+  const fallback = typeof fallbackBaseDir === "string" ? fallbackBaseDir.trim() : "";
+  if (fallback) return fallback;
+
+  return directory || null;
 }
 
 function toAbsoluteWithBase(value: unknown, baseDir: string): unknown {
@@ -1370,8 +1391,9 @@ function applyToolContextDefaults(
   toolName: string,
   rawArgs: Record<string, unknown>,
   context: any,
+  fallbackBaseDir?: string,
 ): Record<string, unknown> {
-  const baseDir = resolveToolContextBaseDir(context);
+  const baseDir = resolveToolContextBaseDir(context, fallbackBaseDir);
   if (!baseDir) {
     return rawArgs;
   }
@@ -1407,7 +1429,7 @@ function applyToolContextDefaults(
 /**
  * Build tool hook entries from local registry
  */
-function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
+function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string): Record<string, any> {
   const entries: Record<string, any> = {};
   const tools = registry.list();
   for (const t of tools) {
@@ -1421,7 +1443,7 @@ function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
         args: zodArgs,
         async execute(args: any, context: any) {
           try {
-            const normalizedArgs = applyToolContextDefaults(toolName, args, context);
+            const normalizedArgs = applyToolContextDefaults(toolName, args, context, fallbackBaseDir);
             return await handler(normalizedArgs);
           } catch (error: any) {
             log.warn("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });
@@ -1444,9 +1466,15 @@ function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
 /**
  * OpenCode plugin for Cursor Agent
  */
-export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: PluginInput) => {
-  const workspaceDirectory = resolveWorkspaceDirectory(directory);
-  log.debug("Plugin initializing", { directory, workspaceDirectory, serverUrl: serverUrl?.toString() });
+export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, serverUrl }: PluginInput) => {
+  const workspaceDirectory = resolveWorkspaceDirectory(worktree, directory);
+  log.debug("Plugin initializing", {
+    directory,
+    worktree,
+    workspaceDirectory,
+    cwd: process.cwd(),
+    serverUrl: serverUrl?.toString(),
+  });
   if (!TOOL_LOOP_MODE_VALID) {
     log.warn("Invalid CURSOR_ACP_TOOL_LOOP_MODE; defaulting to opencode", { value: TOOL_LOOP_MODE_RAW });
   }
@@ -1589,7 +1617,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, client, serverUrl }: 
   log.debug("Proxy server started", { baseURL: proxyBaseURL });
 
   // Build tool hook entries from local registry
-  const toolHookEntries = buildToolHookEntries(localRegistry);
+  const toolHookEntries = buildToolHookEntries(localRegistry, workspaceDirectory);
 
   return {
     tool: toolHookEntries,

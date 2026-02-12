@@ -1,14 +1,14 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CursorPlugin } from "../../src/plugin";
 import type { PluginInput } from "@opencode-ai/plugin";
 
-function createMockInput(directory: string): PluginInput {
+function createMockInput(directory: string, worktree: string = directory): PluginInput {
   return {
     directory,
-    worktree: directory,
+    worktree,
     serverUrl: new URL("http://localhost:8080"),
     client: {
       tool: {
@@ -20,13 +20,13 @@ function createMockInput(directory: string): PluginInput {
   };
 }
 
-function createToolContext(directory: string): any {
+function createToolContext(directory: string, worktree: string = directory): any {
   return {
     sessionID: "test-session",
     messageID: "test-message",
     agent: "test-agent",
     directory,
-    worktree: directory,
+    worktree,
     abort: new AbortController().signal,
     metadata: () => {},
     ask: async () => {},
@@ -86,6 +86,35 @@ describe("Plugin tool hook", () => {
       expect(out).toContain(expectedPath);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers worktree when context.directory is the OpenCode config dir", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-worktree-"));
+    const xdgConfigHome = mkdtempSync(join(tmpdir(), "plugin-hook-xdg-"));
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgConfigHome;
+    try {
+      const configDir = join(xdgConfigHome, "opencode");
+      mkdirSync(configDir, { recursive: true });
+
+      const hooks = await CursorPlugin(createMockInput(configDir, projectDir));
+      const out = await hooks.tool?.write?.execute(
+        { path: "nested/output.txt", content: "hello from worktree" },
+        createToolContext(configDir, projectDir),
+      );
+
+      const expectedPath = join(projectDir, "nested/output.txt");
+      expect(readFileSync(expectedPath, "utf-8")).toBe("hello from worktree");
+      expect(out).toContain(expectedPath);
+    } finally {
+      if (prevXdg === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = prevXdg;
+      }
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(xdgConfigHome, { recursive: true, force: true });
     }
   });
 
