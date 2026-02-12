@@ -3,7 +3,7 @@ import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
-import { join } from "path";
+import { isAbsolute, join, resolve } from "path";
 import { ToolMapper, type ToolUpdate } from "./acp/tools.js";
 import { startCursorOAuth } from "./auth";
 import { LineBuffer } from "./streaming/line-buffer.js";
@@ -1321,13 +1321,71 @@ function jsonSchemaToZod(jsonSchema: any): any {
   return zodShape;
 }
 
+function resolveToolContextBaseDir(context: any): string | null {
+  const candidates = [context?.worktree, context?.directory];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function toAbsoluteWithBase(value: unknown, baseDir: string): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || isAbsolute(trimmed)) {
+    return value;
+  }
+  return resolve(baseDir, trimmed);
+}
+
+function applyToolContextDefaults(
+  toolName: string,
+  rawArgs: Record<string, unknown>,
+  context: any,
+): Record<string, unknown> {
+  const baseDir = resolveToolContextBaseDir(context);
+  if (!baseDir) {
+    return rawArgs;
+  }
+
+  const args: Record<string, unknown> = { ...rawArgs };
+
+  for (const key of [
+    "path",
+    "filePath",
+    "targetPath",
+    "directory",
+    "dir",
+    "folder",
+    "targetDirectory",
+    "targetFile",
+    "cwd",
+    "workdir",
+  ]) {
+    args[key] = toAbsoluteWithBase(args[key], baseDir);
+  }
+
+  if ((toolName === "bash" || toolName === "shell") && args.cwd === undefined && args.workdir === undefined) {
+    args.cwd = baseDir;
+  }
+
+  if ((toolName === "grep" || toolName === "glob" || toolName === "ls") && args.path === undefined) {
+    args.path = baseDir;
+  }
+
+  return args;
+}
+
 /**
  * Build tool hook entries from local registry
  */
 function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
   const entries: Record<string, any> = {};
   const tools = registry.list();
-
   for (const t of tools) {
     const handler = registry.getHandler(t.name);
     if (!handler) continue;
@@ -1339,7 +1397,8 @@ function buildToolHookEntries(registry: CoreRegistry): Record<string, any> {
       args: zodArgs,
       async execute(args: any, context: any) {
         try {
-          return await handler(args);
+          const normalizedArgs = applyToolContextDefaults(t.name, args, context);
+          return await handler(normalizedArgs);
         } catch (error: any) {
           log.warn("Tool hook execution failed", { tool: t.name, error: String(error?.message || error) });
           throw error;
