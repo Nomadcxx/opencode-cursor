@@ -1,6 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
+import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
@@ -75,8 +76,29 @@ function getOpenCodeConfigPrefix(): string {
   return join(configHome, "opencode");
 }
 
+function canonicalizePathForCompare(pathValue: string): string {
+  const resolvedPath = resolve(pathValue);
+  let normalizedPath = resolvedPath;
+
+  try {
+    normalizedPath = typeof realpathSync.native === "function"
+      ? realpathSync.native(resolvedPath)
+      : realpathSync(resolvedPath);
+  } catch {
+    normalizedPath = resolvedPath;
+  }
+
+  if (process.platform === "darwin") {
+    return normalizedPath.toLowerCase();
+  }
+
+  return normalizedPath;
+}
+
 function isWithinPath(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
+  const normalizedRoot = canonicalizePathForCompare(root);
+  const normalizedCandidate = canonicalizePathForCompare(candidate);
+  const rel = relative(normalizedRoot, normalizedCandidate);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, existsSync } from "fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, existsSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { CursorPlugin } from "../../src/plugin";
@@ -195,6 +195,47 @@ describe("Plugin tool hook", () => {
       rmSync(projectDir, { recursive: true, force: true });
       rmSync(xdgConfigHome, { recursive: true, force: true });
       rmSync(unexpectedDir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats config path aliases (symlink/case variants) as config and falls back to workspace", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-config-alias-project-"));
+    const xdgConfigHome = mkdtempSync(join(tmpdir(), "plugin-hook-config-alias-xdg-"));
+    const aliasParentDir = mkdtempSync(join(tmpdir(), "plugin-hook-config-alias-parent-"));
+    const aliasXdgHome = join(aliasParentDir, "xdg-home-alias");
+    const prevXdg = process.env.XDG_CONFIG_HOME;
+
+    try {
+      process.env.XDG_CONFIG_HOME = xdgConfigHome;
+      symlinkSync(xdgConfigHome, aliasXdgHome);
+
+      const configDir = join(xdgConfigHome, "opencode");
+      mkdirSync(configDir, { recursive: true });
+
+      const aliasConfigDir = join(aliasXdgHome, "opencode");
+      const filename = `symlink-alias-${Date.now()}.txt`;
+
+      const hooks = await CursorPlugin(createMockInput(configDir, projectDir));
+      const out = await hooks.tool?.write?.execute(
+        { path: `nested/${filename}`, content: "alias fallback" },
+        createToolContext(aliasConfigDir, undefined, "session-alias-1"),
+      );
+
+      const expectedPath = join(projectDir, `nested/${filename}`);
+      const unexpectedPath = join(configDir, `nested/${filename}`);
+
+      expect(readFileSync(expectedPath, "utf-8")).toBe("alias fallback");
+      expect(out).toContain(expectedPath);
+      expect(existsSync(unexpectedPath)).toBe(false);
+    } finally {
+      if (prevXdg === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = prevXdg;
+      }
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(xdgConfigHome, { recursive: true, force: true });
+      rmSync(aliasParentDir, { recursive: true, force: true });
     }
   });
 });
