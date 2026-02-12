@@ -21,14 +21,14 @@ Note: if `npm` is available, `install.sh` installs/upgrades `@rama_nigg/open-cur
 
 ```bash
 npm install -g @rama_nigg/open-cursor
-open-cursor install
+npm exec -- @rama_nigg/open-cursor install
 ```
 
 Upgrade later with:
 
 ```bash
 npm update -g @rama_nigg/open-cursor
-open-cursor sync-models
+npm exec -- @rama_nigg/open-cursor install
 ```
 
 **Option C: TUI Installer**
@@ -48,7 +48,7 @@ Install the cursor-acp plugin for OpenCode:
 
 1. Preferred install (npm):
    npm install -g @rama_nigg/open-cursor
-   open-cursor install
+   npm exec -- @rama_nigg/open-cursor install
 
 2. Fallback (build from source):
    git clone https://github.com/Nomadcxx/opencode-cursor.git
@@ -131,19 +131,12 @@ opencode run "your prompt" --model cursor-acp/auto
 opencode run "your prompt" --model cursor-acp/sonnet-4.5
 ```
 
-If installed via npm, manage setup with:
-
-```bash
-open-cursor status
-open-cursor sync-models
-```
-
 ## Models
 
 Models are pulled from `cursor-agent models` and written to your config during installation. If Cursor adds new models later:
 
 ```bash
-open-cursor sync-models
+npm exec -- @rama_nigg/open-cursor install
 ```
 
 Or, if you installed from source (no npm CLI):

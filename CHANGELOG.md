@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified npm install instructions and removed “check npm view first” from README.
 - CLI help output now matches the invoked binary name (`open-cursor`).
 
+## [2.1.6] - 2026-02-12
+
+### Changed
+- README now uses `npm exec -- @rama_nigg/open-cursor ...` examples to avoid PATH issues with global npm bin.
+- Removed README references to `open-cursor sync-models` and `open-cursor status` (use `install` to resync models).
+
 ## [2.1.4] - 2026-02-12
 
 ### Fixed
