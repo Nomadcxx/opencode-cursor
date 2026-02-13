@@ -1,7 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
-import { realpathSync } from "fs";
+import { appendFileSync, existsSync, mkdirSync, realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
@@ -48,6 +48,31 @@ import {
 } from "./provider/tool-loop-guard.js";
 
 const log = createLogger("plugin");
+
+// Debug log file for tool-loop investigation
+const DEBUG_LOG_DIR = join(homedir(), ".config", "opencode", "logs");
+const DEBUG_LOG_FILE = join(DEBUG_LOG_DIR, "tool-loop-debug.log");
+
+function ensureDebugLogDir(): void {
+  try {
+    if (!existsSync(DEBUG_LOG_DIR)) {
+      mkdir(DEBUG_LOG_DIR, { recursive: true }).catch(() => {});
+    }
+  } catch {
+    // Ignore errors creating log directory
+  }
+}
+
+function debugLogToFile(message: string, data: any): void {
+  try {
+    ensureDebugLogDir();
+    const timestamp = new Date().toISOString();
+    const logLine = `[${timestamp}] ${message}: ${JSON.stringify(data, null, 2)}\n`;
+    appendFileSync(DEBUG_LOG_FILE, logLine);
+  } catch {
+    // Ignore errors
+  }
+}
 
 export async function ensurePluginDirectory(): Promise<void> {
   const configHome = process.env.XDG_CONFIG_HOME
@@ -493,6 +518,19 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const messages: Array<any> = Array.isArray(body?.messages) ? body.messages : [];
       const stream = body?.stream === true;
       const tools = Array.isArray(body?.tools) ? body.tools : [];
+
+      // DEBUG: Log raw request structure for tool-loop investigation
+      debugLogToFile("raw_request_body", {
+        model: body?.model,
+        stream,
+        toolCount: tools.length,
+        toolNames: tools.map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
+        messageCount: messages.length,
+        messageRoles: messages.map((m: any) => m?.role),
+        hasMessagesWithToolCalls: messages.some((m: any) => Array.isArray(m?.tool_calls) && m.tool_calls.length > 0),
+        hasToolResultMessages: messages.some((m: any) => m?.role === "tool"),
+      });
+
       const allowedToolNames = extractAllowedToolNames(tools);
       const toolSchemaMap = buildToolSchemaMap(tools);
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
