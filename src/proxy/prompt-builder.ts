@@ -148,6 +148,14 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>)
     }
   }
 
+  // Add continuation suffix after tool results to anchor model on completed state
+  const hasToolResults = messages.some((m: any) => m?.role === "tool");
+  if (hasToolResults) {
+    lines.push(
+      "The above tool calls have been executed. Continue your response based on these results."
+    );
+  }
+
   // DEBUG: Log the final prompt structure
   const finalPrompt = lines.join("\n\n");
   debugLogToFile("buildPromptFromMessages: final prompt", {
