@@ -3,6 +3,7 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 
 const CURSOR_PROVIDER_ID = "cursor-acp";
+const NPM_PACKAGE_NAME = "@rama_nigg/open-cursor";
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -18,6 +19,13 @@ export function resolveOpenCodeConfigPath(env: EnvLike = process.env): string {
   return join(configHome, "opencode", "opencode.json");
 }
 
+function matchesPlugin(entry: unknown): boolean {
+  if (typeof entry !== "string") return false;
+  if (entry === CURSOR_PROVIDER_ID) return true;
+  if (entry === NPM_PACKAGE_NAME || entry.startsWith(NPM_PACKAGE_NAME + "@")) return true;
+  return false;
+}
+
 export function isCursorPluginEnabledInConfig(config: unknown): boolean {
   if (!config || typeof config !== "object") {
     return true;
@@ -26,7 +34,7 @@ export function isCursorPluginEnabledInConfig(config: unknown): boolean {
   const configObject = config as { plugin?: unknown; provider?: unknown };
 
   if (Array.isArray(configObject.plugin)) {
-    return configObject.plugin.some((entry) => entry === CURSOR_PROVIDER_ID);
+    return configObject.plugin.some(matchesPlugin);
   }
 
   return true;
