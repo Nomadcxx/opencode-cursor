@@ -3,6 +3,14 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 
 const CURSOR_PROVIDER_ID = "cursor-acp";
+const NPM_PACKAGE_NAME = "@rama_nigg/open-cursor";
+
+function matchesPlugin(entry: string): boolean {
+  if (entry === CURSOR_PROVIDER_ID) return true;
+  if (entry === NPM_PACKAGE_NAME) return true;
+  if (entry.startsWith(`${NPM_PACKAGE_NAME}@`)) return true;
+  return false;
+}
 
 type EnvLike = Record<string, string | undefined>;
 
@@ -26,7 +34,7 @@ export function isCursorPluginEnabledInConfig(config: unknown): boolean {
   const configObject = config as { plugin?: unknown; provider?: unknown };
 
   if (Array.isArray(configObject.plugin)) {
-    return configObject.plugin.some((entry) => entry === CURSOR_PROVIDER_ID);
+    return configObject.plugin.some((entry) => matchesPlugin(entry));
   }
 
   return true;
