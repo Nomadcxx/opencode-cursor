@@ -1,9 +1,10 @@
 {
   "name": "@rama_nigg/open-cursor",
-  "version": "2.2.1",
+  "version": "2.3.1",
   "description": "No prompt limits. No broken streams. Full thinking + tool support. Your Cursor subscription, properly integrated.",
   "type": "module",
   "main": "dist/index.js",
+  "module": "src/plugin-entry.ts",
   "scripts": {
     "build": "bun build ./src/index.ts ./src/plugin-entry.ts ./src/cli/discover.ts ./src/cli/opencode-cursor.ts --outdir ./dist --target node",
     "dev": "bun build ./src/index.ts ./src/plugin-entry.ts ./src/cli/discover.ts ./src/cli/opencode-cursor.ts --outdir ./dist --target node --watch",
@@ -20,10 +21,15 @@
     "cursor-discover": "dist/cli/discover.js"
   },
   "exports": {
-    ".": "./dist/index.js"
+    ".": {
+      "bun": "./src/plugin-entry.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "dependencies": {
     "ai": "^6.0.55",
