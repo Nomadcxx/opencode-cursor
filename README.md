@@ -9,13 +9,41 @@ No prompt limits. No broken streams. Full thinking + tool support in Opencode. Y
 
 ## Installation
 
-**Option A: One-Line Install**
+**Option A — Add to opencode.json (Recommended)**
+
+The simplest approach—just add the npm package to your OpenCode config:
+
+```json
+{
+  "plugin": ["@rama_nigg/open-cursor@latest"],
+  "provider": {
+    "cursor-acp": {
+      "name": "Cursor ACP",
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "cursor-acp/claude-sonnet": { "name": "Claude Sonnet" },
+        "cursor-acp/gpt-4o": { "name": "GPT-4o" },
+        "cursor-acp/gemini-2.5-pro": { "name": "Gemini 2.5 Pro" },
+        "cursor-acp/cursor-small": { "name": "Cursor Small" }
+      }
+    }
+  }
+}
+```
+
+After authenticating with `cursor-agent login`, run `cursor-agent models` to see the full model list, or use one of the automated installers below to auto-discover models.
+
+**Prerequisites:** Only OpenCode required. OpenCode's Bun runtime resolves the npm package automatically.
+
+**Option B — One-line installer (curl)**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
 ```
 
-**Option B: npm Package (Recommended)**
+This automated installer detects your environment and chooses the best installation method.
+
+**Option C — npm global install + CLI**
 
 ```bash
 npm install -g @rama_nigg/open-cursor
@@ -29,7 +57,9 @@ npm update -g @rama_nigg/open-cursor
 open-cursor install
 ```
 
-**Option C: TUI Installer**
+**Option D — Go TUI installer**
+
+Interactive visual installer with dual-mode support (quick install or build from source):
 
 ```bash
 git clone https://github.com/Nomadcxx/opencode-cursor.git
@@ -37,46 +67,55 @@ cd opencode-cursor
 go build -o ./installer ./cmd/installer && ./installer
 ```
 
-**Option D: Let an LLM do it**
+**Option E — LLM instructions**
 
 Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.):
 
 ```
-Install the cursor-acp plugin for OpenCode:
+Install the cursor-acp plugin for OpenCode using the npm package approach:
 
-1. Preferred install (npm):
-   npm install -g @rama_nigg/open-cursor
-   open-cursor install
+1. Edit your opencode.json config file (usually at ~/.config/opencode/opencode.json)
+2. Add "@rama_nigg/open-cursor@latest" to the plugin array
+3. Add the cursor-acp provider configuration with models
+4. Restart OpenCode
 
-2. Fallback (build from source):
-   git clone https://github.com/Nomadcxx/opencode-cursor.git
-   cd opencode-cursor
-   bun install && bun run build
-   mkdir -p ~/.config/opencode/plugin
-   ln -sf $(pwd)/dist/plugin-entry.js ~/.config/opencode/plugin/cursor-acp.js
-   ./scripts/sync-models.sh
+Example configuration:
+{
+  "plugin": ["@rama_nigg/open-cursor@latest"],
+  "provider": {
+    "cursor-acp": {
+      "name": "Cursor ACP",
+      "npm": "@ai-sdk/openai-compatible",
+      "models": {
+        "cursor-acp/claude-sonnet": { "name": "Claude Sonnet" }
+      }
+    }
+  }
+}
 
-3. Verify:
-   opencode models | grep cursor-acp
+5. Authenticate: cursor-agent login
+6. Verify: opencode models | grep cursor-acp
 ```
 
-**Option E: Manual Install**
+**Option F — Manual (from source)**
+
+For developers and contributors who want full control:
 
 ```bash
+git clone https://github.com/Nomadcxx/opencode-cursor.git
+cd opencode-cursor
 bun install && bun run build
 mkdir -p ~/.config/opencode/plugin
 ln -sf $(pwd)/dist/plugin-entry.js ~/.config/opencode/plugin/cursor-acp.js
 ```
 
-The installers handle the rest automatically. If you're doing a manual install, you'll need to do the following steps yourself.
-
-Easiest way is to run the sync script, which populates everything for you:
+The automated installers handle configuration automatically. For manual installs, run the sync script to populate models:
 
 ```bash
 ./scripts/sync-models.sh
 ```
 
-Or if you'd rather do it by hand, add this to `~/.config/opencode/opencode.json` (then run `./scripts/sync-models.sh` to populate models):
+Or configure manually by adding this to `~/.config/opencode/opencode.json` (then run `./scripts/sync-models.sh` to populate models):
 
 ```json
 {
@@ -125,6 +164,22 @@ Or if you'd rather do it by hand, add this to `~/.config/opencode/opencode.json`
   }
 }
 ```
+
+### Plugin Configuration Reference
+
+Depending on your installation method, use the appropriate plugin identifier:
+
+**npm package (recommended for production):**
+```json
+"plugin": ["@rama_nigg/open-cursor@latest"]
+```
+
+**Local build (for development):**
+```json
+"plugin": ["cursor-acp"]
+```
+
+Both approaches work—the npm package is resolved automatically by OpenCode's Bun runtime, while the local build requires the symlink setup shown in Option F above.
 
 ## Authentication
 
@@ -206,12 +261,15 @@ Detailed architecture: [docs/architecture/runtime-tool-loop.md](docs/architectur
 
 ## Prerequisites
 
+**For Option A (npm-direct):** Only [OpenCode](https://opencode.ai/) required.
+
+**For Options B-F:**
 - [Bun](https://bun.sh/)
 - [cursor-agent](https://cursor.com/) - `curl -fsSL https://cursor.com/install | bash`
 
-**Option A (one-line install):** If Go is installed, the script runs the TUI installer; otherwise it performs a shell-only install (Bun + cursor-agent required). For syncing models without the TUI, install [jq](https://jq.org/) or run `./scripts/sync-models.sh` after install.
+**Option B (one-line install):** If Go is installed, the script runs the TUI installer; otherwise it performs a shell-only install (OpenCode + cursor-agent required). For syncing models without the TUI, install [jq](https://jq.org/) or run `./scripts/sync-models.sh` after install.
 
-**Option B (TUI installer):** Go 1.21+ required to build the installer.
+**Option D (TUI installer):** Go 1.21+ required to build the installer.
 
 ## Features
 

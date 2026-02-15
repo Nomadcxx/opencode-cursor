@@ -83,71 +83,29 @@ if command -v go &>/dev/null; then
     ./installer "$@"
     EXIT_CODE=$?
 else
-    echo "Go not found; using shell-only install (Bun and cursor-agent required)."
+    echo "Go not found; using shell-only install."
     echo ""
 
-    if ! command -v bun &>/dev/null; then
-        echo "Error: bun is not installed. Install with: curl -fsSL https://bun.sh/install | bash"
-        exit 1
-    fi
     if ! command -v cursor-agent &>/dev/null; then
         echo "Error: cursor-agent is not installed. Install with: curl -fsSL https://cursor.com/install | bash"
         exit 1
     fi
 
-    mkdir -p "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
-
-    echo "Downloading opencode-cursor..."
-    if [ -d ".git" ]; then
-        git pull origin main
-    else
-        git clone --depth 1 https://github.com/Nomadcxx/opencode-cursor.git .
-    fi
-
-    echo "Building plugin..."
-    bun install
-    if ! bun run build; then
-        echo "Initial build failed. Retrying with forced dependency reinstall..."
-        bun install --force --no-cache
-        bun run build
-    fi
-
-    if [ ! -s "dist/plugin-entry.js" ]; then
-        echo "Error: dist/plugin-entry.js not found or empty after build"
-        exit 1
-    fi
-
     echo "Installing AI SDK in OpenCode..."
     mkdir -p "${CONFIG_HOME}/opencode"
-    (cd "${CONFIG_HOME}/opencode" && bun install "@ai-sdk/openai-compatible")
-
-    echo "Creating plugin symlink..."
-    mkdir -p "$PLUGIN_DIR"
-    rm -f "${PLUGIN_DIR}/cursor-acp.js"
-    ln -sf "$(pwd)/dist/plugin-entry.js" "${PLUGIN_DIR}/cursor-acp.js"
+    if command -v bun &>/dev/null; then
+        (cd "${CONFIG_HOME}/opencode" && bun install "@ai-sdk/openai-compatible")
+    else
+        echo "Warning: bun not found. The AI SDK (@ai-sdk/openai-compatible) must be installed manually."
+        echo "Install bun from https://bun.sh and run: cd ${CONFIG_HOME}/opencode && bun install @ai-sdk/openai-compatible"
+    fi
 
     echo "Updating config..."
+    NPM_PLUGIN="@rama_nigg/open-cursor@latest"
     if [ -f "$CONFIG_PATH" ]; then
         CONFIG_BACKUP="${CONFIG_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
         cp "$CONFIG_PATH" "$CONFIG_BACKUP"
         echo "Config backup written to $CONFIG_BACKUP"
-    fi
-    MODELS_JSON="{}"
-    if command -v jq &>/dev/null; then
-        RAW=$(cursor-agent models 2>&1 || true)
-        CLEAN=$(echo "$RAW" | sed 's/\x1b\[[0-9;]*[a-zA-Z]//g')
-        while IFS= read -r line; do
-            line=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-            if [ -z "$line" ] || echo "$line" | grep -qE '^(Available|Tip:)'; then continue; fi
-            if echo "$line" | grep -qE '^[a-zA-Z0-9._-]+[[:space:]]+[-–—:][[:space:]]+'; then
-                id=$(echo "$line" | sed -E 's/^([a-zA-Z0-9._-]+)[[:space:]]+[-–—:][[:space:]]+.*/\1/')
-                name=$(echo "$line" | sed -E 's/^[a-zA-Z0-9._-]+[[:space:]]+[-–—:][[:space:]]+(.+?)([[:space:]]+\((current|default)\))?[[:space:]]*$/\1/' | sed 's/[[:space:]]*$//')
-                if [ -n "$id" ] && [ -n "$name" ]; then
-                    MODELS_JSON=$(echo "$MODELS_JSON" | jq --arg id "$id" --arg name "$name" '. + {($id): {name: $name}}')
-                fi
-            fi
-        done <<< "$CLEAN"
     fi
 
     if [ ! -f "$CONFIG_PATH" ]; then
@@ -155,46 +113,62 @@ else
         echo '{"plugin":[],"provider":{}}' > "$CONFIG_PATH"
     fi
 
+    NPM_PLUGIN="@rama_nigg/open-cursor@latest"
     if command -v jq &>/dev/null; then
-        UPDATED=$(jq --argjson models "$MODELS_JSON" '
+        UPDATED=$(jq --arg npmPlugin "$NPM_PLUGIN" '
             .provider["cursor-acp"] = ((.provider["cursor-acp"] // {}) | . + {
                 name: "Cursor",
                 npm: "@ai-sdk/openai-compatible",
-                options: { baseURL: "http://127.0.0.1:32124/v1" },
-                models: $models
-            }) | .plugin = ((.plugin // []) | if index("cursor-acp") then . else . + ["cursor-acp"] end)
+                options: { baseURL: "http://127.0.0.1:32124/v1" }
+            }) | .plugin = ((.plugin // []) | 
+                if index("cursor-acp") then 
+                    . 
+                elif map(select(startswith("@rama_nigg/open-cursor"))) | length > 0 then 
+                    . 
+                else 
+                    . + [$npmPlugin] 
+                end)
         ' "$CONFIG_PATH")
         echo "$UPDATED" > "$CONFIG_PATH"
     else
         bun -e "
         const fs=require('fs');
         const p=process.argv[1];
+        const npmPlugin=process.argv[2];
         let c={};
         try{c=JSON.parse(fs.readFileSync(p,'utf8'));}catch(_){}
         c.plugin=c.plugin||[];
-        if(!c.plugin.includes('cursor-acp'))c.plugin.push('cursor-acp');
+        const hasCursorAcp=c.plugin.includes('cursor-acp');
+        const hasNpmPlugin=c.plugin.some(x=>typeof x==='string'&&x.startsWith('@rama_nigg/open-cursor'));
+        if(!hasCursorAcp&&!hasNpmPlugin)c.plugin.push(npmPlugin);
         c.provider=c.provider||{};
-        c.provider['cursor-acp']={...(c.provider['cursor-acp']||{}),name:'Cursor',npm:'@ai-sdk/openai-compatible',options:{baseURL:'http://127.0.0.1:32124/v1'},models:{}};
+        c.provider['cursor-acp']={...(c.provider['cursor-acp']||{}),name:'Cursor',npm:'@ai-sdk/openai-compatible',options:{baseURL:'http://127.0.0.1:32124/v1'}};
         fs.writeFileSync(p,JSON.stringify(c,null,2));
-        " "$CONFIG_PATH"
-        echo "Note: jq not found; models not synced. Run ./scripts/sync-models.sh after installing jq."
+        " "$CONFIG_PATH" "$NPM_PLUGIN"
+        echo "Note: jq not found; models not synced. Run ./scripts/sync-models.sh or cursor-agent models to populate."
     fi
 
     echo ""
     echo "Installation complete!"
-    echo "Plugin: ${PLUGIN_DIR}/cursor-acp.js"
-    echo "Repository: ${INSTALL_DIR} (uninstall: remove symlink and cursor-acp from opencode.json)"
+    echo "Plugin: $NPM_PLUGIN added to opencode.json"
+    echo "To sync models, run: cursor-agent models (then restart OpenCode)"
     EXIT_CODE=0
 fi
 
 echo ""
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "Repository kept at: ${INSTALL_DIR}"
     if command -v go &>/dev/null; then
+        echo "Repository kept at: ${INSTALL_DIR}"
         echo "Uninstall: cd ${INSTALL_DIR} && ./installer --uninstall"
+    else
+        echo "To uninstall, remove the plugin from your opencode.json plugins array."
     fi
 else
-    echo "Installation failed (exit code $EXIT_CODE). Repository kept at: ${INSTALL_DIR}"
+    if command -v go &>/dev/null; then
+        echo "Installation failed (exit code $EXIT_CODE). Repository kept at: ${INSTALL_DIR}"
+    else
+        echo "Installation failed (exit code $EXIT_CODE)."
+    fi
 fi
 
 exit $EXIT_CODE
