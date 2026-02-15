@@ -1,6 +1,6 @@
 {
   "name": "@rama_nigg/open-cursor",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "No prompt limits. No broken streams. Full thinking + tool support. Your Cursor subscription, properly integrated.",
   "type": "module",
   "main": "dist/index.js",
