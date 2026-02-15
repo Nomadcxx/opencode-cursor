@@ -71,6 +71,8 @@ func (m model) View() string {
 	switch m.step {
 	case stepWelcome:
 		mainContent = m.renderWelcome()
+	case stepSelectMode:
+		mainContent = m.renderSelectMode()
 	case stepInstalling:
 		mainContent = m.renderInstalling()
 	case stepUninstalling:
@@ -119,6 +121,8 @@ func (m model) getHelpText() string {
 			return "Enter: Install  •  u: Uninstall  •  q: Quit"
 		}
 		return "Enter: Install  •  q: Quit"
+	case stepSelectMode:
+		return "Press 1 or 2 to continue"
 	case stepInstalling, stepUninstalling:
 		return "Please wait..."
 	case stepComplete:
@@ -173,6 +177,17 @@ func (m model) renderWelcome() string {
 	}
 
 	return b.String()
+}
+
+func (m model) renderSelectMode() string {
+	return "Choose installation method:\n\n" +
+		"  [1] Quick Install (recommended)\n" +
+		"      Adds the npm package to your opencode.json plugin array.\n" +
+		"      Fastest — no building required.\n\n" +
+		"  [2] Build from Source\n" +
+		"      Clones, builds, and symlinks the plugin locally.\n" +
+		"      Use if you need to modify the source code.\n\n" +
+		"Press 1 or 2 to continue."
 }
 
 func (m model) renderInstalling() string {

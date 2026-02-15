@@ -73,6 +73,8 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.step {
 	case stepWelcome:
 		return m.handleWelcomeKeys(key)
+	case stepSelectMode:
+		return m.handleSelectModeKeys(key)
 	case stepInstalling, stepUninstalling:
 		// Can't quit during install/uninstall
 		return m, nil
@@ -92,7 +94,8 @@ func (m model) handleWelcomeKeys(key string) (tea.Model, tea.Cmd) {
 				return m, nil // Don't proceed with blocking errors
 			}
 		}
-		return m.startInstallation()
+		m.step = stepSelectMode
+		return m, nil
 	case "u":
 		// Uninstall - no prerequisites needed
 		if m.existingSetup {
@@ -100,6 +103,29 @@ func (m model) handleWelcomeKeys(key string) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) handleSelectModeKeys(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "1", "q":
+		m.mode = modeQuickInstall
+		return m.startInstallingFromMode()
+	case "2", "s":
+		m.mode = modeBuildFromSource
+		return m.startInstallingFromMode()
+	}
+	return m, nil
+}
+
+func (m model) startInstallingFromMode() (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case modeBuildFromSource:
+		return m.startInstallation()
+	case modeQuickInstall:
+		fallthrough
+	default:
+		return m.startQuickInstallation()
+	}
 }
 
 func (m model) handleCompleteKeys(key string) (tea.Model, tea.Cmd) {

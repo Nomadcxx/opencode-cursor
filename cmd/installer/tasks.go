@@ -128,6 +128,22 @@ func (m model) startInstallation() (tea.Model, tea.Cmd) {
 	return m, tea.Batch(m.spinner.Tick, executeTaskCmd(0, &m))
 }
 
+func (m model) startQuickInstallation() (tea.Model, tea.Cmd) {
+	m.step = stepInstalling
+
+	m.tasks = []installTask{
+		{name: "Check prerequisites", description: "Verifying bun and cursor-agent", execute: checkQuickPrereqs, status: statusPending},
+		{name: "Install AI SDK", description: "Adding @ai-sdk/openai-compatible to opencode", execute: installAiSdk, status: statusPending},
+		{name: "Update config", description: "Adding npm package to opencode.json", execute: updateConfigQuick, status: statusPending},
+		{name: "Fetch models", description: "Fetching models from cursor-agent", execute: fetchAndAddModels, status: statusPending},
+		{name: "Verify plugin loads", description: "Checking if plugin appears in opencode", execute: verifyPostInstall, optional: true, status: statusPending},
+	}
+
+	m.currentTaskIndex = 0
+	m.tasks[0].status = statusRunning
+	return m, tea.Batch(m.spinner.Tick, executeTaskCmd(0, &m))
+}
+
 func executeTaskCmd(index int, m *model) tea.Cmd {
 	return func() tea.Msg {
 		if index >= len(m.tasks) {
@@ -155,6 +171,25 @@ func checkPrerequisites(m *model) error {
 	}
 	if !commandExists("cursor-agent") {
 		return fmt.Errorf("cursor-agent not found - install with: curl -fsS https://cursor.com/install | bash")
+	}
+	return nil
+}
+
+func checkQuickPrereqs(m *model) error {
+	if !commandExists("bun") {
+		return fmt.Errorf("bun not found - install with: curl -fsSL https://bun.sh/install | bash")
+	}
+	if !commandExists("cursor-agent") {
+		return fmt.Errorf("cursor-agent not found - install with: curl -fsS https://cursor.com/install | bash")
+	}
+	if !cursorAgentLoggedIn() {
+		return fmt.Errorf("cursor-agent not logged in - run: cursor-agent login")
+	}
+	if _, err := os.Stat(m.configPath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("opencode config not found: %s", m.configPath)
+		}
+		return fmt.Errorf("failed to stat opencode config: %w", err)
 	}
 	return nil
 }
@@ -405,6 +440,125 @@ func updateConfig(m *model) error {
 	return nil
 }
 
+func updateConfigQuick(m *model) error {
+	_ = backupConfigToDisk(m.configPath)
+	if err := createBackup(m, m.configPath); err != nil {
+		return fmt.Errorf("failed to backup config: %w", err)
+	}
+
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("opencode config not found: %s", m.configPath)
+		}
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	// Ensure provider section exists
+	providers, ok := config["provider"].(map[string]interface{})
+	if !ok {
+		providers = make(map[string]interface{})
+		config["provider"] = providers
+	}
+
+	existingCursorAcp, ok := providers["cursor-acp"].(map[string]interface{})
+	if !ok {
+		if providers["cursor-acp"] != nil {
+			return fmt.Errorf("cursor-acp provider has invalid type (expected object, got %T)", providers["cursor-acp"])
+		}
+		existingCursorAcp = make(map[string]interface{})
+	}
+	if _, hasName := existingCursorAcp["name"]; !hasName {
+		existingCursorAcp["name"] = "Cursor Agent (ACP stdin)"
+	}
+	const defaultBaseURL = "http://127.0.0.1:32124/v1"
+	opts, _ := existingCursorAcp["options"].(map[string]interface{})
+	if opts == nil {
+		opts = make(map[string]interface{})
+		existingCursorAcp["options"] = opts
+	}
+	if _, hasBaseURL := opts["baseURL"]; !hasBaseURL {
+		opts["baseURL"] = defaultBaseURL
+	}
+	providers["cursor-acp"] = existingCursorAcp
+
+	plugins, ok := config["plugin"].([]interface{})
+	if !ok {
+		plugins = []interface{}{}
+	}
+
+	hasPlugin := false
+	for _, p := range plugins {
+		s, ok := p.(string)
+		if ok && (s == "cursor-acp" || strings.HasPrefix(s, npmPackage)) {
+			hasPlugin = true
+			break
+		}
+	}
+	if !hasPlugin {
+		plugins = append(plugins, npmPackage+"@latest")
+		config["plugin"] = plugins
+	}
+
+	output, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize config: %w", err)
+	}
+	if err := os.WriteFile(m.configPath, output, 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return nil
+}
+
+func fetchAndAddModels(m *model) error {
+	data, err := os.ReadFile(m.configPath)
+	if err != nil {
+		return fmt.Errorf("failed to read config: %w", err)
+	}
+
+	var config map[string]interface{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	providers, ok := config["provider"].(map[string]interface{})
+	if !ok {
+		providers = make(map[string]interface{})
+		config["provider"] = providers
+	}
+
+	existingCursorAcp, ok := providers["cursor-acp"].(map[string]interface{})
+	if !ok {
+		if providers["cursor-acp"] != nil {
+			return fmt.Errorf("cursor-acp provider has invalid type (expected object, got %T)", providers["cursor-acp"])
+		}
+		existingCursorAcp = make(map[string]interface{})
+	}
+
+	models, err := fetchCursorModels()
+	if err != nil {
+		return fmt.Errorf("failed to fetch models from cursor-agent: %w", err)
+	}
+	existingCursorAcp["models"] = models
+	providers["cursor-acp"] = existingCursorAcp
+
+	output, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to serialize config: %w", err)
+	}
+	if err := os.WriteFile(m.configPath, output, 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	return nil
+}
+
 func validateConfig(m *model) error {
 	if err := validateJSON(m.configPath); err != nil {
 		return NewValidationError("config validation failed", m.configPath, err)
@@ -648,13 +802,15 @@ func removeProviderConfig(m *model) error {
 
 	// Remove cursor-acp from plugin array
 	if plugins, ok := config["plugin"].([]interface{}); ok {
-		var newPlugins []interface{}
+		filtered := make([]interface{}, 0)
 		for _, p := range plugins {
-			if p != "cursor-acp" {
-				newPlugins = append(newPlugins, p)
+			s, ok := p.(string)
+			if ok && (s == "cursor-acp" || strings.HasPrefix(s, npmPackage)) {
+				continue
 			}
+			filtered = append(filtered, p)
 		}
-		config["plugin"] = newPlugins
+		config["plugin"] = filtered
 	}
 
 	// Write config back
