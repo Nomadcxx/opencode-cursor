@@ -310,11 +310,23 @@ function resolvePluginSource(): string {
   throw new Error("Unable to locate plugin-entry.js next to CLI distribution files");
 }
 
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}
+
 function readConfig(configPath: string): any {
   if (!existsSync(configPath)) {
     return { plugin: [], provider: {} };
   }
-  const raw = readFileSync(configPath, "utf8");
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return { plugin: [], provider: {} };
+    }
+    throw error;
+  }
   try {
     return JSON.parse(raw);
   } catch (error) {
@@ -455,14 +467,22 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   let pluginType: "symlink" | "file" | "missing" = "missing";
   let pluginTarget: string | undefined;
   if (existsSync(pluginPath)) {
-    const stat = lstatSync(pluginPath);
-    pluginType = stat.isSymbolicLink() ? "symlink" : "file";
-    if (pluginType === "symlink") {
-      try {
-        pluginTarget = readFileSync(pluginPath, "utf8");
-      } catch {
-        pluginTarget = undefined;
+    try {
+      const stat = lstatSync(pluginPath);
+      pluginType = stat.isSymbolicLink() ? "symlink" : "file";
+      if (pluginType === "symlink") {
+        try {
+          pluginTarget = readFileSync(pluginPath, "utf8");
+        } catch {
+          pluginTarget = undefined;
+        }
       }
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "ENOENT") {
+        throw error;
+      }
+      pluginType = "missing";
+      pluginTarget = undefined;
     }
   }
 

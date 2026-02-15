@@ -88,6 +88,13 @@ export async function ensurePluginDirectory(): Promise<void> {
 }
 
 const CURSOR_PROVIDER_ID = "cursor-acp";
+const CURSOR_PROVIDER_PREFIX = `${CURSOR_PROVIDER_ID}/`;
+
+export function shouldProcessModel(model: string | undefined): boolean {
+  if (!model) return false;
+  return model.startsWith(CURSOR_PROVIDER_PREFIX);
+}
+
 const CURSOR_PROXY_HOST = "127.0.0.1";
 const CURSOR_PROXY_DEFAULT_PORT = 32124;
 const CURSOR_PROXY_DEFAULT_BASE_URL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
@@ -175,6 +182,26 @@ function resolveWorkspaceDirectory(worktree: string | undefined, directory: stri
   }
 
   return dirCandidate || cwd || configPrefix;
+}
+
+type ProxyRuntimeState = {
+  baseURL?: string;
+  baseURLByWorkspace?: Record<string, string>;
+};
+
+export function normalizeWorkspaceForCompare(pathValue: string): string {
+  return resolve(pathValue);
+}
+
+export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string): boolean {
+  if (!payload || payload.ok !== true) {
+    return false;
+  }
+  if (typeof payload.workspaceDirectory !== "string" || payload.workspaceDirectory.length === 0) {
+    // Legacy proxies that do not expose workspace cannot be safely reused.
+    return false;
+  }
+  return normalizeWorkspaceForCompare(payload.workspaceDirectory) === normalizeWorkspaceForCompare(workspaceDirectory);
 }
 
 const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
@@ -430,7 +457,7 @@ async function findFirstAllowedToolCallInOutput(
     if (result.terminate) {
       return {
         toolCall: null,
-        terminationMessage: result.terminate.message,
+        terminationMessage: result.terminate.silent ? null : result.terminate.message,
       };
     }
     if (result.intercepted && interceptedToolCall) {
@@ -447,21 +474,25 @@ async function findFirstAllowedToolCallInOutput(
 async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: ToolRouter): Promise<string> {
   const key = getGlobalKey();
   const g = globalThis as any;
+  const normalizedWorkspace = normalizeWorkspaceForCompare(workspaceDirectory);
+  const state: ProxyRuntimeState = g[key] ?? { baseURL: "", baseURLByWorkspace: {} };
+  state.baseURLByWorkspace = state.baseURLByWorkspace ?? {};
+  g[key] = state;
 
-  const existingBaseURL = g[key]?.baseURL;
+  const existingBaseURL = state.baseURLByWorkspace[normalizedWorkspace] ?? state.baseURL;
   if (typeof existingBaseURL === "string" && existingBaseURL.length > 0) {
     return existingBaseURL;
   }
 
   // Mark as starting to avoid duplicate starts in-process.
-  g[key] = { baseURL: "" };
+  state.baseURL = "";
 
       const handler = async (req: Request): Promise<Response> => {
         try {
           const url = new URL(req.url);
 
       if (url.pathname === "/health") {
-        return new Response(JSON.stringify({ ok: true }), {
+        return new Response(JSON.stringify({ ok: true, workspaceDirectory }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -598,7 +629,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const stdout = (stdoutText || "").trim();
         const stderr = (stderrText || "").trim();
-        const exitCode = child.exitCode;
+        const exitCode = await child.exited;
         log.debug("cursor-agent completed (bun non-stream)", {
           exitCode,
           stdoutChars: stdout.length,
@@ -771,7 +802,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                     },
                   });
                   if (result.terminate) {
-                    emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                    if (!result.terminate.silent) {
+                      emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                    } else {
+                      // Silent termination: just end the stream without an error message
+                      controller.enqueue(encoder.encode(formatSseDone()));
+                      streamTerminated = true;
+                      try { child.kill(); } catch { /* ignore */ }
+                    }
                     break;
                   }
                   if (result.intercepted) {
@@ -828,7 +866,13 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   },
                 });
                 if (result.terminate) {
-                  emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                  if (!result.terminate.silent) {
+                    emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                  } else {
+                    controller.enqueue(encoder.encode(formatSseDone()));
+                    streamTerminated = true;
+                    try { child.kill(); } catch { /* ignore */ }
+                  }
                   break;
                 }
                 if (result.intercepted) {
@@ -846,15 +890,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               return;
             }
 
-            if (child.exitCode !== 0) {
+            const exitCode = await child.exited;
+            if (exitCode !== 0) {
               const stderrText = await new Response(child.stderr).text();
               const errSource = (stderrText || "").trim()
-                || `cursor-agent exited with code ${String(child.exitCode ?? "unknown")} and no output`;
+                || `cursor-agent exited with code ${String(exitCode ?? "unknown")} and no output`;
               const parsed = parseAgentError(errSource);
               const msg = formatErrorForUser(parsed);
               log.error("cursor-cli streaming failed", {
                 type: parsed.type,
-                code: child.exitCode,
+                code: exitCode,
               });
               const errChunk = createChatCompletionChunk(id, created, model, msg, true);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
@@ -863,7 +908,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             }
 
             log.debug("cursor-agent completed (bun stream)", {
-              exitCode: child.exitCode,
+              exitCode,
             });
             const doneChunk = createChatCompletionChunk(id, created, model, "", true);
             controller.enqueue(encoder.encode(`data: ${JSON.stringify(doneChunk)}\n\n`));
@@ -898,8 +943,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
     try {
       const res = await fetch(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`).catch(() => null);
       if (res && res.ok) {
-        g[key].baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
-        return CURSOR_PROXY_DEFAULT_BASE_URL;
+        const payload = await res.json().catch(() => null);
+        if (isReusableProxyHealthPayload(payload, workspaceDirectory)) {
+          state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
+          state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
+          return CURSOR_PROXY_DEFAULT_BASE_URL;
+        }
       }
     } catch {
       // ignore
@@ -916,7 +965,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ ok: true, workspaceDirectory }));
         return;
       }
 
@@ -1222,7 +1271,13 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 },
               });
               if (result.terminate) {
-                emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                if (!result.terminate.silent) {
+                  emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                } else {
+                  // Silent termination: just end the stream without an error message
+                  streamTerminated = true;
+                  try { child.kill(); } catch { /* ignore */ }
+                }
                 break;
               }
               if (result.intercepted) {
@@ -1286,7 +1341,13 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 },
               });
               if (result.terminate) {
-                emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                if (!result.terminate.silent) {
+                  emitTerminalAssistantErrorAndTerminate(result.terminate.message);
+                } else {
+                  // Silent termination: just end the stream without an error message
+                  streamTerminated = true;
+                  try { child.kill(); } catch { /* ignore */ }
+                }
                 break;
               }
               if (result.intercepted) {
@@ -1364,7 +1425,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
     });
 
     const baseURL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
-    g[key].baseURL = baseURL;
+    state.baseURL = baseURL;
+    state.baseURLByWorkspace![normalizedWorkspace] = baseURL;
     return baseURL;
   } catch (error: any) {
     if (error?.code !== "EADDRINUSE") {
@@ -1376,8 +1438,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       try {
         const res = await fetch(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`).catch(() => null);
         if (res && res.ok) {
-          g[key].baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
-          return CURSOR_PROXY_DEFAULT_BASE_URL;
+          const payload = await res.json().catch(() => null);
+          if (isReusableProxyHealthPayload(payload, workspaceDirectory)) {
+            state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
+            state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
+            return CURSOR_PROXY_DEFAULT_BASE_URL;
+          }
         }
       } catch {
         // ignore
@@ -1393,7 +1459,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
     const addr = server.address() as any;
     const baseURL = `http://${CURSOR_PROXY_HOST}:${addr.port}/v1`;
-    g[key].baseURL = baseURL;
+    state.baseURL = baseURL;
+    state.baseURLByWorkspace![normalizedWorkspace] = baseURL;
     return baseURL;
   }
 }
@@ -1587,7 +1654,7 @@ function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string):
             );
             return await handler(normalizedArgs);
           } catch (error: any) {
-            log.warn("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });
+            log.debug("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });
             throw error;
           }
         },

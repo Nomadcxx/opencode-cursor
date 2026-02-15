@@ -56,6 +56,7 @@ export interface ToolLoopGuardTermination {
   repeatCount: number;
   maxRepeat: number;
   errorClass: string;
+  silent?: boolean;
 }
 
 export interface ToolSchemaValidationTermination {
@@ -148,7 +149,7 @@ export async function handleToolLoopEventLegacy(
         toolSchemaMap,
       );
       if (reroutedWrite) {
-        log.info("Rerouting malformed edit call to write (legacy)", {
+        log.debug("Rerouting malformed edit call to write (legacy)", {
           path: reroutedWrite.path,
           missing: compat.validation.missing,
           typeErrors: compat.validation.typeErrors,
@@ -254,7 +255,7 @@ export async function handleToolLoopEventV1(
       ...(editDiag ? { editDiag } : {}),
     });
     if (compat.validation.hasSchema && !compat.validation.ok) {
-      log.warn("Tool schema compatibility validation failed", {
+      log.debug("Tool schema compatibility validation failed", {
         tool: interceptedToolCall.function.name,
         missing: compat.validation.missing,
         unexpected: compat.validation.unexpected,
@@ -280,7 +281,7 @@ export async function handleToolLoopEventV1(
         toolSchemaMap,
       );
       if (reroutedWrite) {
-        log.info("Rerouting malformed edit call to write", {
+        log.debug("Rerouting malformed edit call to write", {
           path: reroutedWrite.path,
           missing: compat.validation.missing,
           typeErrors: compat.validation.typeErrors,
@@ -439,7 +440,7 @@ function evaluateToolLoopGuard(
     return null;
   }
 
-  log.warn("Tool loop guard triggered", {
+  log.debug("Tool loop guard triggered", {
     tool: toolCall.function.name,
     fingerprint: decision.fingerprint,
     repeatCount: decision.repeatCount,
@@ -447,15 +448,26 @@ function evaluateToolLoopGuard(
     errorClass: decision.errorClass,
   });
 
+  // For success loops, terminate silently without emitting an error message to the user.
+  // The tool has already succeeded; we just need to stop the loop.
+  if (decision.errorClass === "success") {
+    return {
+      reason: "loop_guard",
+      message: "",
+      tool: toolCall.function.name,
+      fingerprint: decision.fingerprint,
+      repeatCount: decision.repeatCount,
+      maxRepeat: decision.maxRepeat,
+      errorClass: decision.errorClass,
+      silent: true,
+    };
+  }
+
   return {
     reason: "loop_guard",
-    message: decision.errorClass === "success"
-      ? `Tool loop guard stopped repeated successful calls to "${toolCall.function.name}" `
-        + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
-        + "This likely indicates a model/tool-call loop; adjust prompt or tool strategy and retry."
-      : `Tool loop guard stopped repeated failing calls to "${toolCall.function.name}" `
-        + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
-        + "Adjust tool arguments and retry.",
+    message: `Tool loop guard stopped repeated failing calls to "${toolCall.function.name}" `
+      + `after ${decision.repeatCount} attempts (limit ${decision.maxRepeat}). `
+      + "Adjust tool arguments and retry.",
     tool: toolCall.function.name,
     fingerprint: decision.fingerprint,
     repeatCount: decision.repeatCount,

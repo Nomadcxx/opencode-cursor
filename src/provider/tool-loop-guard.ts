@@ -11,6 +11,7 @@ type ToolLoopErrorClass =
 
 const UNKNOWN_AS_SUCCESS_TOOLS = new Set([
   "bash",
+  "shell",
   "read",
   "write",
   "edit",
@@ -19,6 +20,8 @@ const UNKNOWN_AS_SUCCESS_TOOLS = new Set([
   "glob",
   "stat",
   "webfetch",
+  "mkdir",
+  "rm",
 ]);
 
 export interface ToolLoopGuardDecision {
@@ -40,11 +43,11 @@ export function parseToolLoopMaxRepeat(
   value: string | undefined,
 ): { value: number; valid: boolean } {
   if (value === undefined) {
-    return { value: 3, valid: true };
+    return { value: 2, valid: true };
   }
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 1) {
-    return { value: 3, valid: false };
+    return { value: 2, valid: false };
   }
   return { value: Math.floor(parsed), valid: true };
 }

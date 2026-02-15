@@ -149,4 +149,60 @@ describe("buildPromptFromMessages", () => {
     expect(result).not.toContain("Available tools:");
     expect(result).toBe("USER: Hi");
   });
+
+  it("appends continuation suffix after tool result messages", () => {
+    const messages = [
+      { role: "user", content: "Read the file" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", function: { name: "read", arguments: '{"path":"foo.txt"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "file contents here" },
+    ];
+    const result = buildPromptFromMessages(messages, []);
+
+    expect(result).toContain("TOOL_RESULT (call_id: call_1): file contents here");
+    expect(result).toContain(
+      "The above tool calls have been executed. Continue your response based on these results."
+    );
+  });
+
+  it("does not append continuation suffix when no tool results present", () => {
+    const messages = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "Hi there" },
+    ];
+    const result = buildPromptFromMessages(messages, []);
+
+    expect(result).not.toContain("The above tool calls have been executed");
+  });
+
+  it("appends continuation suffix once after multiple tool results", () => {
+    const messages = [
+      { role: "user", content: "Read both files" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          { id: "call_1", function: { name: "read", arguments: '{"path":"a.txt"}' } },
+          { id: "call_2", function: { name: "read", arguments: '{"path":"b.txt"}' } },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: "contents of a" },
+      { role: "tool", tool_call_id: "call_2", content: "contents of b" },
+    ];
+    const result = buildPromptFromMessages(messages, []);
+
+    expect(result).toContain("TOOL_RESULT (call_id: call_1): contents of a");
+    expect(result).toContain("TOOL_RESULT (call_id: call_2): contents of b");
+
+    // Suffix appears exactly once
+    const suffixCount = result.split(
+      "The above tool calls have been executed"
+    ).length - 1;
+    expect(suffixCount).toBe(1);
+  });
 });

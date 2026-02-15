@@ -6,10 +6,10 @@ import {
 
 describe("tool loop guard", () => {
   it("parses max repeat env with default fallback", () => {
-    expect(parseToolLoopMaxRepeat(undefined)).toEqual({ value: 3, valid: true });
+    expect(parseToolLoopMaxRepeat(undefined)).toEqual({ value: 2, valid: true });
     expect(parseToolLoopMaxRepeat("4")).toEqual({ value: 4, valid: true });
-    expect(parseToolLoopMaxRepeat("0")).toEqual({ value: 3, valid: false });
-    expect(parseToolLoopMaxRepeat("abc")).toEqual({ value: 3, valid: false });
+    expect(parseToolLoopMaxRepeat("0")).toEqual({ value: 2, valid: false });
+    expect(parseToolLoopMaxRepeat("abc")).toEqual({ value: 2, valid: false });
   });
 
   it("tracks repeated failures using fingerprint and triggers after threshold", () => {
