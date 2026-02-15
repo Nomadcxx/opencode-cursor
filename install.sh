@@ -29,7 +29,12 @@ if command -v npm &>/dev/null; then
     echo "npm detected; installing via npm package (${NPM_PKG})..."
     echo ""
 
-    npm install -g "${NPM_PKG}"
+    if ! npm install -g "${NPM_PKG}"; then
+        echo "Error: npm install failed for ${NPM_PKG}"
+        echo "Check your network connection and npm permissions."
+        echo "Try: sudo npm install -g ${NPM_PKG}"
+        exit 1
+    fi
 
     OPEN_CURSOR_BIN="$(command -v open-cursor || true)"
     if [ -z "$OPEN_CURSOR_BIN" ]; then
@@ -68,13 +73,22 @@ if command -v go &>/dev/null; then
 
     echo "Downloading opencode-cursor..."
     if [ -d ".git" ]; then
-        git pull origin main
+        if ! git pull origin main; then
+            echo "Error: git pull failed. Check your network connection."
+            exit 1
+        fi
     else
-        git clone --depth 1 https://github.com/Nomadcxx/opencode-cursor.git .
+        if ! git clone --depth 1 https://github.com/Nomadcxx/opencode-cursor.git .; then
+            echo "Error: git clone failed. Check your network connection and GitHub access."
+            exit 1
+        fi
     fi
 
     echo "Building installer..."
-    go build -o ./installer ./cmd/installer
+    if ! go build -o ./installer ./cmd/installer; then
+        echo "Error: Go build failed. Check Go compiler and dependencies."
+        exit 1
+    fi
 
     echo ""
     echo "Running installer..."
@@ -94,18 +108,31 @@ else
     echo "Installing AI SDK in OpenCode..."
     mkdir -p "${CONFIG_HOME}/opencode"
     if command -v bun &>/dev/null; then
-        (cd "${CONFIG_HOME}/opencode" && bun install "@ai-sdk/openai-compatible")
+        if ! (cd "${CONFIG_HOME}/opencode" && bun install "@ai-sdk/openai-compatible"); then
+            echo "Error: bun install failed for @ai-sdk/openai-compatible."
+            exit 1
+        fi
+    elif command -v npm &>/dev/null; then
+        if ! (cd "${CONFIG_HOME}/opencode" && npm install "@ai-sdk/openai-compatible"); then
+            echo "Error: npm install failed for @ai-sdk/openai-compatible."
+            exit 1
+        fi
     else
-        echo "Warning: bun not found. The AI SDK (@ai-sdk/openai-compatible) must be installed manually."
-        echo "Install bun from https://bun.sh and run: cd ${CONFIG_HOME}/opencode && bun install @ai-sdk/openai-compatible"
+        echo "Error: Neither bun nor npm found. Cannot install @ai-sdk/openai-compatible."
+        echo "Install bun from https://bun.sh or npm from https://nodejs.org"
+        exit 1
     fi
 
     echo "Updating config..."
     NPM_PLUGIN="@rama_nigg/open-cursor@latest"
     if [ -f "$CONFIG_PATH" ]; then
         CONFIG_BACKUP="${CONFIG_PATH}.bak.$(date +%Y%m%d-%H%M%S)"
-        cp "$CONFIG_PATH" "$CONFIG_BACKUP"
-        echo "Config backup written to $CONFIG_BACKUP"
+        if ! cp "$CONFIG_PATH" "$CONFIG_BACKUP"; then
+            echo "Warning: Failed to create config backup at $CONFIG_BACKUP"
+            echo "Continuing without backup..."
+        else
+            echo "Config backup written to $CONFIG_BACKUP"
+        fi
     fi
 
     if [ ! -f "$CONFIG_PATH" ]; then
@@ -113,22 +140,25 @@ else
         echo '{"plugin":[],"provider":{}}' > "$CONFIG_PATH"
     fi
 
-    NPM_PLUGIN="@rama_nigg/open-cursor@latest"
     if command -v jq &>/dev/null; then
         UPDATED=$(jq --arg npmPlugin "$NPM_PLUGIN" '
             .provider["cursor-acp"] = ((.provider["cursor-acp"] // {}) | . + {
                 name: "Cursor",
                 npm: "@ai-sdk/openai-compatible",
                 options: { baseURL: "http://127.0.0.1:32124/v1" }
-            }) | .plugin = ((.plugin // []) | 
-                if index("cursor-acp") then 
-                    . 
-                elif map(select(startswith("@rama_nigg/open-cursor"))) | length > 0 then 
-                    . 
-                else 
-                    . + [$npmPlugin] 
+            }) | .plugin = ((.plugin // []) |
+                if index("cursor-acp") then
+                    .
+                elif map(select(startswith("@rama_nigg/open-cursor"))) | length > 0 then
+                    .
+                else
+                    . + [$npmPlugin]
                 end)
         ' "$CONFIG_PATH")
+        if ! echo "$UPDATED" | jq empty 2>/dev/null; then
+            echo "Error: jq produced invalid JSON. Config not modified."
+            exit 1
+        fi
         echo "$UPDATED" > "$CONFIG_PATH"
     else
         bun -e "
@@ -136,7 +166,11 @@ else
         const p=process.argv[1];
         const npmPlugin=process.argv[2];
         let c={};
-        try{c=JSON.parse(fs.readFileSync(p,'utf8'));}catch(_){}
+        try{c=JSON.parse(fs.readFileSync(p,'utf8'));}catch(e){
+            console.error('Error: Failed to parse opencode.json:', e.message);
+            console.error('Please fix or backup and remove the config file, then try again.');
+            process.exit(1);
+        }
         c.plugin=c.plugin||[];
         const hasCursorAcp=c.plugin.includes('cursor-acp');
         const hasNpmPlugin=c.plugin.some(x=>typeof x==='string'&&x.startsWith('@rama_nigg/open-cursor'));

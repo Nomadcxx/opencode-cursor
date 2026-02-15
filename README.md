@@ -31,9 +31,11 @@ The simplest approach—just add the npm package to your OpenCode config:
 }
 ```
 
+> **Note:** The model identifiers shown above are examples. Run `cursor-agent models` after authentication to see the full list of models available for your account.
+
 After authenticating with `cursor-agent login`, run `cursor-agent models` to see the full model list, or use one of the automated installers below to auto-discover models.
 
-**Prerequisites:** Only OpenCode required. OpenCode's Bun runtime resolves the npm package automatically.
+**Prerequisites:** OpenCode and cursor-agent required. Install cursor-agent with: `curl -fsSL https://cursor.com/install | bash && cursor-agent login`. OpenCode's Bun runtime resolves the npm package automatically.
 
 **Option B — One-line installer (curl)**
 
@@ -43,18 +45,22 @@ curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/insta
 
 This automated installer detects your environment and chooses the best installation method.
 
-**Option C — npm global install + CLI**
+**Option C — npm global install + CLI symlink**
+
+Installs globally via npm and creates a symlink in the OpenCode plugin directory:
 
 ```bash
 npm install -g @rama_nigg/open-cursor
 open-cursor install
 ```
 
+The `open-cursor install` command creates a symlink at `~/.config/opencode/plugin/cursor-acp.js` pointing to the npm package's entry file.
+
 Upgrade later with:
 
 ```bash
 npm update -g @rama_nigg/open-cursor
-open-cursor install
+# Symlink automatically uses updated files
 ```
 
 **Option D — Go TUI installer**
@@ -261,7 +267,7 @@ Detailed architecture: [docs/architecture/runtime-tool-loop.md](docs/architectur
 
 ## Prerequisites
 
-**For Option A (npm-direct):** Only [OpenCode](https://opencode.ai/) required.
+**For Option A (npm-direct):** [OpenCode](https://opencode.ai/) and [cursor-agent](https://cursor.com/) required. The npm package is resolved by OpenCode's Bun runtime, but cursor-agent handles the actual API communication.
 
 **For Options B-F:**
 - [Bun](https://bun.sh/)

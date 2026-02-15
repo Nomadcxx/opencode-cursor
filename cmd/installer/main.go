@@ -13,6 +13,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+type installMode int
+
+const (
+	modeQuickInstall installMode = iota
+	modeBuildFromSource
+)
+
 func newModel(debugMode, noRollback bool, logFile *os.File) model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(Secondary)
@@ -35,6 +42,7 @@ func newModel(debugMode, noRollback bool, logFile *os.File) model {
 		spinner:       s,
 		errors:        []string{},
 		warnings:      []string{},
+		mode:          modeQuickInstall,
 		debugMode:     debugMode,
 		noRollback:    noRollback,
 		logFile:       logFile,

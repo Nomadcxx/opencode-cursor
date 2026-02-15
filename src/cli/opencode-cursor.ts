@@ -37,6 +37,7 @@ type CheckResult = {
 };
 
 type StatusResult = {
+  installMethod: "symlink" | "npm-direct" | "none";
   plugin: {
     path: string;
     type: "symlink" | "file" | "missing";
@@ -110,9 +111,23 @@ function checkOpenCode(): CheckResult {
   }
 }
 
-function checkPluginFile(pluginPath: string): CheckResult {
+function isNpmDirectInstalled(config: unknown): boolean {
+  if (!config || typeof config !== "object") return false;
+  const plugins = (config as Record<string, unknown>).plugin;
+  if (!Array.isArray(plugins)) return false;
+  return plugins.some((p) => typeof p === "string" && p.startsWith(NPM_PACKAGE_PREFIX));
+}
+
+function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
   try {
     if (!existsSync(pluginPath)) {
+      if (isNpmDirectInstalled(config)) {
+        return {
+          name: "Plugin file",
+          passed: true,
+          message: "Installed via npm package (no symlink needed)",
+        };
+      }
       return {
         name: "Plugin file",
         passed: false,
@@ -185,12 +200,18 @@ function checkAiSdk(opencodeDir: string): CheckResult {
 
 export function runDoctorChecks(configPath: string, pluginPath: string): CheckResult[] {
   const opencodeDir = dirname(configPath);
+  let config: unknown;
+  try {
+    config = readConfig(configPath);
+  } catch {
+    config = undefined;
+  }
   return [
     checkBun(),
     checkCursorAgent(),
     checkCursorAgentLogin(),
     checkOpenCode(),
-    checkPluginFile(pluginPath),
+    checkPluginFile(pluginPath, config),
     checkProviderConfig(configPath),
     checkAiSdk(opencodeDir),
   ];
@@ -209,6 +230,7 @@ type Options = {
 };
 
 const PROVIDER_ID = "cursor-acp";
+const NPM_PACKAGE_PREFIX = "@rama_nigg/open-cursor";
 const DEFAULT_BASE_URL = "http://127.0.0.1:32124/v1";
 
 function printHelp() {
@@ -443,6 +465,8 @@ function commandSyncModels(options: Options) {
   console.log(`Config path: ${configPath}`);
 }
 
+const NPM_PACKAGE = "@rama_nigg/open-cursor";
+
 function commandUninstall(options: Options) {
   const { configPath, pluginPath } = resolvePaths(options);
   rmSync(pluginPath, { force: true });
@@ -450,7 +474,12 @@ function commandUninstall(options: Options) {
   if (existsSync(configPath)) {
     const config = readConfig(configPath);
     if (Array.isArray(config.plugin)) {
-      config.plugin = config.plugin.filter((name: string) => name !== PROVIDER_ID);
+      // Remove both cursor-acp (symlink) and @rama_nigg/open-cursor (npm-direct) entries
+      config.plugin = config.plugin.filter((name: string) => {
+        if (name === PROVIDER_ID) return false;
+        if (typeof name === "string" && name.startsWith(NPM_PACKAGE)) return false;
+        return true;
+      });
     }
     if (config.provider && typeof config.provider === "object") {
       delete config.provider[PROVIDER_ID];
@@ -487,17 +516,20 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   }
 
   // Provider
+  let config: any;
   let providerEnabled = false;
   let baseUrl = "http://127.0.0.1:32124/v1";
   let modelCount = 0;
   if (existsSync(configPath)) {
-    const config = readConfig(configPath);
+    config = readConfig(configPath);
     const provider = config.provider?.["cursor-acp"];
     providerEnabled = !!provider;
     if (provider?.options?.baseURL) {
       baseUrl = provider.options.baseURL;
     }
     modelCount = Object.keys(provider?.models || {}).length;
+  } else {
+    config = undefined;
   }
 
   // AI SDK
@@ -505,7 +537,15 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
   const aiSdkInstalled = existsSync(sdkPath);
 
+  let installMethod: "symlink" | "npm-direct" | "none" = "none";
+  if (pluginType !== "missing") {
+    installMethod = "symlink";
+  } else if (isNpmDirectInstalled(config)) {
+    installMethod = "npm-direct";
+  }
+
   return {
+    installMethod,
     plugin: {
       path: pluginPath,
       type: pluginType,
@@ -543,6 +583,7 @@ function commandStatus(options: Options) {
   } else {
     console.log(`  Type: missing`);
   }
+  console.log(`  Install method: ${result.installMethod}`);
 
   console.log("");
   console.log("Provider");

@@ -15,6 +15,7 @@ type installStep int
 
 const (
 	stepWelcome installStep = iota
+	stepSelectMode
 	stepInstalling
 	stepUninstalling
 	stepComplete
@@ -58,6 +59,7 @@ type checkResult struct {
 // Main model
 type model struct {
 	step             installStep
+	mode             installMode
 	tasks            []installTask
 	currentTaskIndex int
 	width            int
