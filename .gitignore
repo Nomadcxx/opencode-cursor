@@ -24,3 +24,6 @@ UNINSTALL_STEPS.md
 # Session logs and plans
 *-cd-*.txt
 docs/plans/
+
+# Agent configuration (local only)
+AGENTS.md

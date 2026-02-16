@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.3] - 2026-02-16
+
+### Fixed
+- Plugin loading crash caused by OpenCode loader calling class constructors without `new`. Entry point now isolated to single default export in `plugin-entry.ts`.
+
+### Added
+- MCP tool pass-through: unknown tools (e.g. Playwright via cursor-agent) are tracked instead of dropped, with toast notifications summarizing activity at response end.
+- `PassThroughTracker` for tracking forwarded tool calls and errors.
+- `ToastService` for OpenCode TUI toast integration with graceful degradation.
+- `extractOpenAiToolCall` now returns structured result with `action` field (intercept/passthrough/skip).
+
+### Changed
+- Removed stale implementation docs (`docs/implementation/`).
+
 ## [2.1.7] - 2026-02-13
 
 ### Fixed
