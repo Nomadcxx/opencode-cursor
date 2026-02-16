@@ -52,10 +52,16 @@ export function parseToolLoopMaxRepeat(
   return { value: Math.floor(parsed), valid: true };
 }
 
+// Coarse fingerprint (tool|errorClass without args) uses a higher multiplier
+// to allow legitimate exploration across different files/targets while still
+// catching spray-and-pray patterns.
+const COARSE_LIMIT_MULTIPLIER = 3;
+
 export function createToolLoopGuard(
   messages: Array<unknown>,
   maxRepeat: number,
 ): ToolLoopGuard {
+  const coarseMaxRepeat = maxRepeat * COARSE_LIMIT_MULTIPLIER;
   const {
     byCallId,
     latest,
@@ -125,6 +131,7 @@ export function createToolLoopGuard(
         counts,
         coarseCounts,
         maxRepeat,
+        coarseMaxRepeat,
       );
     },
 
@@ -139,6 +146,7 @@ export function createToolLoopGuard(
         validationCounts,
         validationCoarseCounts,
         maxRepeat,
+        coarseMaxRepeat,
       );
     },
 
@@ -454,6 +462,7 @@ function evaluateWithFingerprints(
   strictCounts: Map<string, number>,
   coarseCounts: Map<string, number>,
   maxRepeat: number,
+  coarseMaxRepeat: number,
 ): ToolLoopGuardDecision {
   if (errorClass === "success") {
     return {
@@ -471,12 +480,12 @@ function evaluateWithFingerprints(
   const coarseRepeatCount = (coarseCounts.get(coarseFingerprint) ?? 0) + 1;
   coarseCounts.set(coarseFingerprint, coarseRepeatCount);
   const strictTriggered = strictRepeatCount > maxRepeat;
-  const coarseTriggered = coarseRepeatCount > maxRepeat;
+  const coarseTriggered = coarseRepeatCount > coarseMaxRepeat;
   const preferCoarseFingerprint = coarseTriggered && !strictTriggered;
   return {
     fingerprint: preferCoarseFingerprint ? coarseFingerprint : strictFingerprint,
     repeatCount: preferCoarseFingerprint ? coarseRepeatCount : strictRepeatCount,
-    maxRepeat,
+    maxRepeat: preferCoarseFingerprint ? coarseMaxRepeat : maxRepeat,
     errorClass,
     triggered: strictTriggered || coarseTriggered,
     tracked: true,

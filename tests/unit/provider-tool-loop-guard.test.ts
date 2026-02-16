@@ -43,48 +43,39 @@ describe("tool loop guard", () => {
     expect(third.repeatCount).toBe(3);
   });
 
-  it("triggers on repeated failures even when argument shapes vary", () => {
-    const guard = createToolLoopGuard(
-      [
+  it("triggers on repeated failures even when argument shapes vary (coarse fingerprint)", () => {
+    // maxRepeat=2 means coarse limit = 2 * 3 = 6, triggers when count > 6
+    const guard = createToolLoopGuard([], 2);
+
+    // 7 evaluateValidation calls with different schema signatures
+    // Each increments coarse fingerprint edit|validation
+    const signatures = [
+      "missing: path",
+      "missing: old_string",
+      "unsupported: content",
+      "missing: new_string",
+      "type: path must be string",
+      "missing: path, old_string",
+      "unsupported: streamContent",
+    ];
+    const calls = signatures.map((sig, i) =>
+      guard.evaluateValidation(
         {
-          role: "tool",
-          tool_call_id: "seed",
-          content: "Invalid arguments: missing required field path",
+          id: `c${i + 1}`,
+          type: "function",
+          function: { name: "edit", arguments: "{}" },
         },
-      ],
-      2,
+        sig,
+      ),
     );
 
-    const first = guard.evaluate({
-      id: "c2",
-      type: "function",
-      function: {
-        name: "edit",
-        arguments: JSON.stringify({ path: "TODO.md", content: "rewrite" }),
-      },
-    });
-    const second = guard.evaluate({
-      id: "c3",
-      type: "function",
-      function: {
-        name: "edit",
-        arguments: JSON.stringify({ path: "TODO.md", old_string: "A", new_string: "B" }),
-      },
-    });
-    const third = guard.evaluate({
-      id: "c4",
-      type: "function",
-      function: {
-        name: "edit",
-        arguments: JSON.stringify({ path: "TODO.md", streamContent: "rewrite again" }),
-      },
-    });
-
-    expect(first.triggered).toBe(false);
-    expect(second.triggered).toBe(false);
-    expect(third.triggered).toBe(true);
-    expect(third.fingerprint).toBe("edit|validation");
-    expect(third.repeatCount).toBe(3);
+    // First 6 should not trigger (coarse count: 1,2,3,4,5,6)
+    expect(calls.slice(0, 6).every((r) => !r.triggered)).toBe(true);
+    // 7th call triggers (coarse count: 7 > coarseMaxRepeat 6)
+    expect(calls[6].triggered).toBe(true);
+    expect(calls[6].fingerprint).toBe("edit|validation");
+    expect(calls[6].repeatCount).toBe(7);
+    expect(calls[6].maxRepeat).toBe(6);
   });
 
   it("tracks repeated identical successful tool calls and triggers after threshold", () => {
