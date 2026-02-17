@@ -43,6 +43,7 @@ const EXPLORATION_TOOLS = new Set([
   "semsearch",
   "bash",
   "shell",
+  "webfetch",
 ]);
 
 export interface ToolLoopGuardDecision {
