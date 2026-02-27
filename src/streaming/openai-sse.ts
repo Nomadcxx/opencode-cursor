@@ -77,9 +77,12 @@ export class StreamToSseConverter {
     if (isAssistantText(event)) {
       const isPartial = typeof event.timestamp_ms === "number";
       if (isPartial) {
-        this.sawAssistantPartials = true;
         const text = extractText(event);
-        return text ? [this.chunkWith({ content: text })] : [];
+        if (text) {
+          this.sawAssistantPartials = true;
+          return [this.chunkWith({ content: text })];
+        }
+        return [];
       }
       if (this.sawAssistantPartials) {
         return [];
@@ -91,9 +94,12 @@ export class StreamToSseConverter {
     if (isThinking(event)) {
       const isPartial = typeof event.timestamp_ms === "number";
       if (isPartial) {
-        this.sawThinkingPartials = true;
         const text = extractThinking(event);
-        return text ? [this.chunkWith({ reasoning_content: text })] : [];
+        if (text) {
+          this.sawThinkingPartials = true;
+          return [this.chunkWith({ reasoning_content: text })];
+        }
+        return [];
       }
       if (this.sawThinkingPartials) {
         return [];

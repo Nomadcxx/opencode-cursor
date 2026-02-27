@@ -218,4 +218,30 @@ describe("ai-sdk stream parts", () => {
 
     expect(dup).toEqual([]);
   });
+
+  it("handles empty partial event followed by accumulated - does not skip accumulated", () => {
+    const converter = new StreamToAiSdkParts();
+
+    const emptyPartial = converter.handleEvent({
+      type: "assistant",
+      timestamp_ms: 1234567890,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+      },
+    });
+
+    expect(emptyPartial).toEqual([]);
+
+    const accumulated = converter.handleEvent({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+      },
+    });
+
+    expect(accumulated).toHaveLength(1);
+    expect(accumulated[0]).toEqual({ type: "text-delta", textDelta: "Hello world" });
+  });
 });

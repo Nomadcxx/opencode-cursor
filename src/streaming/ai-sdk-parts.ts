@@ -44,9 +44,12 @@ export class StreamToAiSdkParts {
     if (isAssistantText(event)) {
       const isPartial = typeof event.timestamp_ms === "number";
       if (isPartial) {
-        this.sawAssistantPartials = true;
         const text = extractText(event);
-        return text ? [{ type: "text-delta", textDelta: text }] : [];
+        if (text) {
+          this.sawAssistantPartials = true;
+          return [{ type: "text-delta", textDelta: text }];
+        }
+        return [];
       }
       if (this.sawAssistantPartials) {
         return [];
@@ -58,9 +61,12 @@ export class StreamToAiSdkParts {
     if (isThinking(event)) {
       const isPartial = typeof event.timestamp_ms === "number";
       if (isPartial) {
-        this.sawThinkingPartials = true;
         const text = extractThinking(event);
-        return text ? [{ type: "text-delta", textDelta: text }] : [];
+        if (text) {
+          this.sawThinkingPartials = true;
+          return [{ type: "text-delta", textDelta: text }];
+        }
+        return [];
       }
       if (this.sawThinkingPartials) {
         return [];

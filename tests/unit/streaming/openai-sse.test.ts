@@ -232,4 +232,37 @@ describe("openai-sse", () => {
 
     expect(dup).toEqual([]);
   });
+
+  it("handles empty partial event followed by accumulated - does not skip accumulated", () => {
+    const converter = new StreamToSseConverter("test-model", {
+      id: "chunk-id",
+      created: 123,
+    });
+
+    // Empty partial event (with timestamp_ms but no content)
+    const emptyPartial = converter.handleEvent({
+      type: "assistant",
+      timestamp_ms: 1234567890,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+      },
+    });
+
+    // Empty partial should produce no output and NOT set sawAssistantPartials
+    expect(emptyPartial).toEqual([]);
+
+    // Accumulated event (no timestamp_ms) should still work via DeltaTracker
+    const accumulated = converter.handleEvent({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Hello world" }],
+      },
+    });
+
+    // Should NOT be skipped - the empty partial didn't set the flag
+    expect(accumulated).toHaveLength(1);
+    expect(parseChunk(accumulated[0]).choices[0].delta.content).toBe("Hello world");
+  });
 });
