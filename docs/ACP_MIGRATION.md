@@ -1,5 +1,7 @@
 # ACP Implementation Migration Guide
 
+> Historical note: this document describes an earlier ACP-first implementation attempt. The current `open-cursor` production path is the OpenCode-specific bridge architecture, while the preferred long-term direction remains deferred `OpenCode -> Cursor ACP -> MCP`. See [docs/architecture/cursor-acp-mcp-future.md](docs/architecture/cursor-acp-mcp-future.md).
+
 ## What Changed
 
 The plugin now uses **Agent Client Protocol (ACP)** via @agentclientprotocol/sdk. This provides:

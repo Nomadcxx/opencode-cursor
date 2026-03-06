@@ -19,6 +19,8 @@
 
 ## v2.0.0 - ACP Implementation
 
+> Historical note: this release reflects an earlier ACP-first direction and should not be read as the current main architecture of `open-cursor`. For the current bridge architecture and deferred future ACP + MCP direction, see [docs/architecture/cursor-acp-mcp-future.md](docs/architecture/cursor-acp-mcp-future.md).
+
 ### New Features
 
 - ✅ Full Agent Client Protocol (ACP) compliance
