@@ -27,7 +27,7 @@ import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
 import { readMcpConfigs } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
-import { buildMcpToolHookEntries } from "./mcp/tool-bridge.js";
+import { buildMcpToolHookEntries, buildMcpToolDefinitions } from "./mcp/tool-bridge.js";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
 import { LocalExecutor } from "./tools/executors/local.js";
@@ -78,6 +78,22 @@ function debugLogToFile(message: string, data: any): void {
   } catch {
     // Ignore errors
   }
+}
+
+export function buildAvailableToolsSystemMessage(
+  lastToolNames: string[],
+  lastToolMap: Array<{ id: string; name: string }>,
+  mcpToolDefs: any[],
+): string | null {
+  const mcpToolNames = mcpToolDefs
+    .map((t: any) => t?.function?.name ?? t?.name)
+    .filter((name: unknown): name is string => typeof name === "string" && name.length > 0);
+  const combinedToolNames = Array.from(new Set([...lastToolNames, ...mcpToolNames]));
+  if (combinedToolNames.length === 0) return null;
+
+  const names = combinedToolNames.join(", ");
+  const mapping = lastToolMap.map((m) => `${m.id} -> ${m.name}`).join("; ");
+  return `Available OpenCode tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`;
 }
 
 export async function ensurePluginDirectory(): Promise<void> {
@@ -1746,6 +1762,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   // We await init so tools are available before the plugin returns its tool hook.
   const mcpManager = new McpClientManager();
   let mcpToolEntries: Record<string, any> = {};
+  let mcpToolDefs: any[] = [];
   const mcpEnabled = process.env.CURSOR_ACP_MCP_BRIDGE !== "false"; // default ON
 
   if (mcpEnabled) {
@@ -1763,6 +1780,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           log.debug("MCP bridge: no tools discovered");
         } else {
           mcpToolEntries = buildMcpToolHookEntries(tools, mcpManager);
+          mcpToolDefs = buildMcpToolDefinitions(tools);
           log.info("MCP bridge: registered tools", {
             servers: mcpManager.connectedServers.length,
             tools: Object.keys(mcpToolEntries).length,
@@ -1970,16 +1988,32 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           log.debug("Failed to refresh tools", { error: String(err) });
         }
       }
+
+      // Append MCP bridge tool definitions so the model can call them
+      if (mcpToolDefs.length > 0) {
+        const beforeTools = Array.isArray(output.options.tools) ? output.options.tools : [];
+        if (Array.isArray(output.options.tools)) {
+          output.options.tools = [...output.options.tools, ...mcpToolDefs];
+        } else {
+          output.options.tools = mcpToolDefs;
+        }
+        const afterTools = Array.isArray(output.options.tools) ? output.options.tools : [];
+        log.debug("Injected MCP tool definitions into chat.params", {
+          injectedCount: mcpToolDefs.length,
+          beforeCount: beforeTools.length,
+          afterCount: afterTools.length,
+          mcpNames: mcpToolDefs.slice(0, 10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
+          tailNames: afterTools.slice(-10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
+        });
+      }
     },
 
     async "experimental.chat.system.transform"(input: any, output: { system: string[] }) {
-      if (!toolsEnabled || lastToolNames.length === 0) return;
-      const names = lastToolNames.join(", ");
-      const mapping = lastToolMap.map((m) => `${m.id} -> ${m.name}`).join("; ");
+      if (!toolsEnabled) return;
+      const systemMessage = buildAvailableToolsSystemMessage(lastToolNames, lastToolMap, mcpToolDefs);
+      if (!systemMessage) return;
       output.system = output.system || [];
-      output.system.push(
-        `Available OpenCode tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`
-      );
+      output.system.push(systemMessage);
     },
   };
 };

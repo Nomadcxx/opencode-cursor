@@ -54,6 +54,28 @@ export function buildMcpToolHookEntries(
   return entries;
 }
 
+/**
+ * Build OpenAI-format tool definitions for discovered MCP tools.
+ * These are injected into chat.params so the model sees the tools.
+ */
+export function buildMcpToolDefinitions(tools: DiscoveredMcpTool[]): any[] {
+  const defs: any[] = [];
+
+  for (const t of tools) {
+    const name = namespaceMcpTool(t.serverName, t.name);
+    defs.push({
+      type: "function",
+      function: {
+        name,
+        description: t.description || `MCP tool: ${t.name} (server: ${t.serverName})`,
+        parameters: t.inputSchema ?? { type: "object", properties: {} },
+      },
+    });
+  }
+
+  return defs;
+}
+
 function namespaceMcpTool(serverName: string, toolName: string): string {
   const sanitizedServer = serverName.replace(/[^a-zA-Z0-9]/g, "_");
   const sanitizedTool = toolName.replace(/[^a-zA-Z0-9]/g, "_");
