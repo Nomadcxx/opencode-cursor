@@ -125,9 +125,17 @@ export async function handleToolLoopEventLegacy(
       ? extractOpenAiToolCall(event as any, allowedToolNames)
       : { action: "skip" as const, skipReason: "tool_loop_mode_not_opencode" };
 
-  // Handle pass-through: unknown tools go to cursor-agent
+  // Handle pass-through: in opencode mode, unknown tools (e.g. Cursor-internal
+  // tools like webSearch) have no handler in OpenCode, so skip them silently.
+  // In proxy-exec mode this branch is unreachable (extraction is always "skip").
   if (extraction.action === "passthrough") {
     passThroughTracker?.trackTool(extraction.passthroughName!);
+    if (toolLoopMode === "opencode") {
+      log.debug("Suppressing Cursor-internal tool in opencode mode", {
+        tool: extraction.passthroughName,
+      });
+      return { intercepted: false, skipConverter: true };
+    }
     log.debug("MCP tool passed through to cursor-agent (legacy)", {
       tool: extraction.passthroughName,
     });
@@ -276,10 +284,11 @@ export async function handleToolLoopEventV1(
     throw new ToolBoundaryExtractionError("Boundary tool extraction failed", error);
   }
 
-  // Handle pass-through: unknown tools go to cursor-agent
+  // Pass-through: unreachable in opencode mode (boundary converts to skip),
+  // but reachable in other modes for Cursor-internal tools.
   if (extraction.action === "passthrough") {
     passThroughTracker?.trackTool(extraction.passthroughName!);
-    log.debug("MCP tool passed through to cursor-agent (v1)", {
+    log.debug("Tool passed through to cursor-agent (v1)", {
       tool: extraction.passthroughName,
     });
     return { intercepted: false, skipConverter: false };
@@ -287,6 +296,12 @@ export async function handleToolLoopEventV1(
 
   // Handle skip: no tool to intercept
   if (extraction.action === "skip" || !extraction.toolCall) {
+    // Cursor-internal tools (e.g. webSearch) have no handler in OpenCode;
+    // suppress them so they don't surface as "invalid tool" errors.
+    if (extraction.skipReason === "cursor_internal_tool") {
+      return { intercepted: false, skipConverter: true };
+    }
+
     const updates = await toolMapper.mapCursorEventToAcp(
       event,
       event.session_id ?? toolSessionId,

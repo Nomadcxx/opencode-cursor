@@ -1,5 +1,4 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
 import { appendFileSync, existsSync, mkdirSync, realpathSync } from "fs";
 import { mkdir } from "fs/promises";
@@ -25,9 +24,7 @@ import { ToolRouter } from "./tools/router.js";
 import { SkillLoader } from "./tools/skills/loader.js";
 import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
-import { readMcpConfigs } from "./mcp/config.js";
-import { McpClientManager } from "./mcp/client-manager.js";
-import { buildMcpToolHookEntries, buildMcpToolDefinitions } from "./mcp/tool-bridge.js";
+
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
 import { LocalExecutor } from "./tools/executors/local.js";
@@ -80,59 +77,17 @@ function debugLogToFile(message: string, data: any): void {
   }
 }
 
-interface McpToolSummary {
-  serverName: string;
-  toolName: string;
-  description?: string;
-  params?: string[];
-}
-
 export function buildAvailableToolsSystemMessage(
   lastToolNames: string[],
   lastToolMap: Array<{ id: string; name: string }>,
-  mcpToolDefs: any[],
-  mcpToolSummaries?: McpToolSummary[],
 ): string | null {
-  const parts: string[] = [];
-
-  if (lastToolNames.length > 0 || lastToolMap.length > 0) {
-    const names = lastToolNames.join(", ");
-    const mapping = lastToolMap.map((m) => `${m.id} -> ${m.name}`).join("; ");
-    parts.push(`Available OpenCode tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`);
+  if (lastToolNames.length === 0 && lastToolMap.length === 0) {
+    return null;
   }
 
-  if (mcpToolSummaries && mcpToolSummaries.length > 0) {
-    const servers = new Map<string, McpToolSummary[]>();
-    for (const s of mcpToolSummaries) {
-      const list = servers.get(s.serverName) ?? [];
-      list.push(s);
-      servers.set(s.serverName, list);
-    }
-
-    const lines: string[] = [
-      "MCP TOOLS — Use via Shell with the `mcptool` CLI.",
-      "Syntax: mcptool call <server> <tool> [json-args]",
-      "",
-    ];
-
-    for (const [server, tools] of servers) {
-      lines.push(`Server: ${server}`);
-      for (const t of tools) {
-        const paramHint = t.params?.length ? ` (params: ${t.params.join(", ")})` : "";
-        lines.push(`  - ${t.toolName}${paramHint}${t.description ? " — " + t.description : ""}`);
-      }
-      if (tools.length > 0) {
-        const ex = tools[0];
-        const exArgs = ex.params?.length ? ` '{"${ex.params[0]}":"..."}'` : "";
-        lines.push(`  Example: mcptool call ${server} ${ex.toolName}${exArgs}`);
-      }
-      lines.push("");
-    }
-
-    parts.push(lines.join("\n"));
-  }
-
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  const names = lastToolNames.join(", ");
+  const mapping = lastToolMap.map((m) => `${m.id} -> ${m.name}`).join("; ");
+  return `Available OpenCode tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`;
 }
 
 export async function ensurePluginDirectory(): Promise<void> {
@@ -211,8 +166,6 @@ function isNonConfigPath(pathValue: string): boolean {
   }
   return !isWithinPath(getOpenCodeConfigPrefix(), pathValue);
 }
-
-const SESSION_WORKSPACE_CACHE_LIMIT = 200;
 
 function resolveWorkspaceDirectory(worktree: string | undefined, directory: string | undefined): string {
   const envWorkspace = process.env.CURSOR_ACP_WORKSPACE?.trim();
@@ -1551,211 +1504,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
   }
 }
 
-/**
- * Convert JSON Schema parameters to Zod schemas for plugin tool hook
- */
-function jsonSchemaToZod(jsonSchema: any): any {
-  const z = tool.schema;
-  const properties = jsonSchema.properties || {};
-  const required = jsonSchema.required || [];
-
-  const zodShape: any = {};
-
-  for (const [key, prop] of Object.entries(properties)) {
-    const p = prop as any;
-    let zodType: any;
-
-    switch (p.type) {
-      case "string":
-        zodType = z.string();
-        if (p.description) {
-          zodType = zodType.describe(p.description);
-        }
-        break;
-      case "number":
-        zodType = z.number();
-        if (p.description) {
-          zodType = zodType.describe(p.description);
-        }
-        break;
-      case "boolean":
-        zodType = z.boolean();
-        if (p.description) {
-          zodType = zodType.describe(p.description);
-        }
-        break;
-      case "object":
-        zodType = z.record(z.any());
-        if (p.description) {
-          zodType = zodType.describe(p.description);
-        }
-        break;
-      case "array":
-        zodType = z.array(z.any());
-        if (p.description) {
-          zodType = zodType.describe(p.description);
-        }
-        break;
-      default:
-        zodType = z.any();
-        break;
-    }
-
-    // Make optional if not in required array
-    if (!required.includes(key)) {
-      zodType = zodType.optional();
-    }
-
-    zodShape[key] = zodType;
-  }
-
-  return zodShape;
-}
-
-function resolveToolContextBaseDirWithSession(
-  context: any,
-  fallbackBaseDir?: string,
-  sessionWorkspaceBySession?: Map<string, string>,
-): string | null {
-  const sessionID = typeof context?.sessionID === "string" && context.sessionID.trim().length > 0
-    ? context.sessionID.trim()
-    : "";
-
-  const worktree = resolveCandidate(typeof context?.worktree === "string" ? context.worktree : undefined);
-  const directory = resolveCandidate(typeof context?.directory === "string" ? context.directory : undefined);
-  const fallback = resolveCandidate(fallbackBaseDir);
-  const pinned = sessionID && sessionWorkspaceBySession
-    ? resolveCandidate(sessionWorkspaceBySession.get(sessionID))
-    : "";
-
-  const pinSession = (candidate: string) => {
-    if (sessionID && sessionWorkspaceBySession && isNonConfigPath(candidate)) {
-      if (!sessionWorkspaceBySession.has(sessionID) && sessionWorkspaceBySession.size >= SESSION_WORKSPACE_CACHE_LIMIT) {
-        const oldestSession = sessionWorkspaceBySession.keys().next().value;
-        if (typeof oldestSession === "string") {
-          sessionWorkspaceBySession.delete(oldestSession);
-        }
-      }
-      sessionWorkspaceBySession.set(sessionID, candidate);
-    }
-  };
-
-  if (isNonConfigPath(worktree)) {
-    pinSession(worktree);
-    return worktree;
-  }
-
-  if (isNonConfigPath(pinned)) {
-    return pinned;
-  }
-
-  if (isNonConfigPath(directory)) {
-    pinSession(directory);
-    return directory;
-  }
-
-  if (isNonConfigPath(fallback)) {
-    pinSession(fallback);
-    return fallback;
-  }
-
-  return null;
-}
-
-function toAbsoluteWithBase(value: unknown, baseDir: string): unknown {
-  if (typeof value !== "string") {
-    return value;
-  }
-  const trimmed = value.trim();
-  if (trimmed.length === 0 || isAbsolute(trimmed)) {
-    return value;
-  }
-  return resolve(baseDir, trimmed);
-}
-
-function applyToolContextDefaults(
-  toolName: string,
-  rawArgs: Record<string, unknown>,
-  context: any,
-  fallbackBaseDir?: string,
-  sessionWorkspaceBySession?: Map<string, string>,
-): Record<string, unknown> {
-  const baseDir = resolveToolContextBaseDirWithSession(context, fallbackBaseDir, sessionWorkspaceBySession);
-  if (!baseDir) {
-    return rawArgs;
-  }
-
-  const args: Record<string, unknown> = { ...rawArgs };
-
-  for (const key of [
-    "path",
-    "filePath",
-    "targetPath",
-    "directory",
-    "dir",
-    "folder",
-    "targetDirectory",
-    "targetFile",
-    "cwd",
-    "workdir",
-  ]) {
-    args[key] = toAbsoluteWithBase(args[key], baseDir);
-  }
-
-  if ((toolName === "bash" || toolName === "shell") && args.cwd === undefined && args.workdir === undefined) {
-    args.cwd = baseDir;
-  }
-
-  if ((toolName === "grep" || toolName === "glob" || toolName === "ls") && args.path === undefined) {
-    args.path = baseDir;
-  }
-
-  return args;
-}
-
-/**
- * Build tool hook entries from local registry
- */
-function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string): Record<string, any> {
-  const entries: Record<string, any> = {};
-  const sessionWorkspaceBySession = new Map<string, string>();
-  const tools = registry.list();
-  for (const t of tools) {
-    const handler = registry.getHandler(t.name);
-    if (!handler) continue;
-
-    const zodArgs = jsonSchemaToZod(t.parameters);
-    const createEntry = (toolName: string) =>
-      tool({
-        description: t.description,
-        args: zodArgs,
-        async execute(args: any, context: any) {
-          try {
-            const normalizedArgs = applyToolContextDefaults(
-              toolName,
-              args,
-              context,
-              fallbackBaseDir,
-              sessionWorkspaceBySession,
-            );
-            return await handler(normalizedArgs);
-          } catch (error: any) {
-            log.debug("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });
-            throw error;
-          }
-        },
-      });
-
-    entries[t.name] = createEntry(t.name);
-
-    // Some agent variants emit "shell" instead of "bash".
-    if (t.name === "bash" && !entries.shell) {
-      entries.shell = createEntry("shell");
-    }
-  }
-
-  return entries;
-}
 
 /**
  * OpenCode plugin for Cursor Agent
@@ -1797,50 +1545,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   // Auto-refresh model list from cursor-agent (non-blocking, fire-and-forget)
   autoRefreshModels().catch(() => {});
 
-  // MCP tool bridge: connect to MCP servers and register their tools.
-  // We await init so tools are available before the plugin returns its tool hook.
-  const mcpManager = new McpClientManager();
-  let mcpToolEntries: Record<string, any> = {};
-  let mcpToolDefs: any[] = [];
-  let mcpToolSummaries: McpToolSummary[] = [];
-  const mcpEnabled = process.env.CURSOR_ACP_MCP_BRIDGE !== "false"; // default ON
-
-  if (mcpEnabled) {
-    try {
-      const configs = readMcpConfigs();
-      if (configs.length === 0) {
-        log.debug("No MCP servers configured, skipping MCP bridge");
-      } else {
-        log.debug("MCP bridge: connecting to servers", { count: configs.length });
-
-        await Promise.allSettled(configs.map((c) => mcpManager.connectServer(c)));
-
-        const tools = mcpManager.listTools();
-        if (tools.length === 0) {
-          log.debug("MCP bridge: no tools discovered");
-        } else {
-          mcpToolEntries = buildMcpToolHookEntries(tools, mcpManager);
-          mcpToolDefs = buildMcpToolDefinitions(tools);
-          mcpToolSummaries = tools.map((t) => ({
-            serverName: t.serverName,
-            toolName: t.name,
-            description: t.description,
-            params: t.inputSchema
-              ? Object.keys((t.inputSchema as any).properties ?? {})
-              : undefined,
-          }));
-          log.info("MCP bridge: registered tools", {
-            servers: mcpManager.connectedServers.length,
-            tools: Object.keys(mcpToolEntries).length,
-          });
-        }
-      }
-    } catch (err) {
-      log.debug("MCP bridge init failed", { error: String(err) });
-    }
-  }
-
-  // Initialize toast service for MCP pass-through notifications
+  // Initialize toast service for notifications
   toastService.setClient(client);
 
   // Tools (skills) discovery/execution wiring
@@ -1959,11 +1664,8 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory, router);
   log.debug("Proxy server started", { baseURL: proxyBaseURL });
 
-  // Build tool hook entries from local registry
-  const toolHookEntries = buildToolHookEntries(localRegistry, workspaceDirectory);
-
   return {
-    tool: { ...toolHookEntries, ...mcpToolEntries },
+    tool: {},
     auth: {
       provider: CURSOR_PROVIDER_ID,
       async loader(_getAuth: () => Promise<Auth>) {
@@ -2037,28 +1739,12 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
         }
       }
 
-      // Append MCP bridge tool definitions so the model can call them
-      if (mcpToolDefs.length > 0) {
-        const beforeTools = Array.isArray(output.options.tools) ? output.options.tools : [];
-        if (Array.isArray(output.options.tools)) {
-          output.options.tools = [...output.options.tools, ...mcpToolDefs];
-        } else {
-          output.options.tools = mcpToolDefs;
-        }
-        const afterTools = Array.isArray(output.options.tools) ? output.options.tools : [];
-        log.debug("Injected MCP tool definitions into chat.params", {
-          injectedCount: mcpToolDefs.length,
-          beforeCount: beforeTools.length,
-          afterCount: afterTools.length,
-          mcpNames: mcpToolDefs.slice(0, 10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
-          tailNames: afterTools.slice(-10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
-        });
-      }
+
     },
 
     async "experimental.chat.system.transform"(input: any, output: { system: string[] }) {
       if (!toolsEnabled) return;
-      const systemMessage = buildAvailableToolsSystemMessage(lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries);
+      const systemMessage = buildAvailableToolsSystemMessage(lastToolNames, lastToolMap);
       if (!systemMessage) return;
       output.system = output.system || [];
       output.system.push(systemMessage);

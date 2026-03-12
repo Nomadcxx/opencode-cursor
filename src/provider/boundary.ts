@@ -147,7 +147,14 @@ function createSharedBoundary(
       if (toolLoopMode !== "opencode") {
         return { action: "skip" as const, skipReason: "tool_loop_mode_not_opencode" };
       }
-      return extractOpenAiToolCall(event, allowedToolNames);
+      const result = extractOpenAiToolCall(event, allowedToolNames);
+      // In opencode mode, passthrough is meaningless since OpenCode only
+      // knows its own tools.  Suppress unknown (Cursor-internal) tool calls
+      // so they don't surface as "invalid tool" errors in OpenCode.
+      if (result.action === "passthrough") {
+        return { action: "skip" as const, skipReason: "cursor_internal_tool" };
+      }
+      return result;
     },
 
     createNonStreamToolCallResponse(meta, toolCall) {
