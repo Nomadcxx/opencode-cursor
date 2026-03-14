@@ -1,5 +1,6 @@
 import { execFileSync } from "child_process";
 import { stripAnsi } from "../utils/errors.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
 
@@ -31,10 +32,8 @@ export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
 }
 
 export function discoverModelsFromCursorAgent(): DiscoveredModel[] {
-  const raw = execFileSync("cursor-agent", ["models"], {
+  const raw = execFileSync(resolveCursorAgentBinary(), ["models"], {
     encoding: "utf8",
-    killSignal: "SIGTERM",
-    stdio: ["ignore", "pipe", "pipe"],
     timeout: MODEL_DISCOVERY_TIMEOUT_MS,
   });
   const models = parseCursorModelsOutput(raw);

@@ -13,6 +13,7 @@ import { parseStreamJsonLine } from "./streaming/parser.js";
 import { extractText, extractThinking, isAssistantText, isThinking } from "./streaming/types.js";
 import { createLogger } from "./utils/logger";
 import { RequestPerf } from "./utils/perf";
+import { resolveCursorAgentBinary } from "./utils/binary";
 import { parseAgentError, formatErrorForUser, stripAnsi } from "./utils/errors";
 import { buildPromptFromMessages } from "./proxy/prompt-builder.js";
 import {
@@ -184,7 +185,7 @@ function canonicalizePathForCompare(pathValue: string): string {
     normalizedPath = resolvedPath;
   }
 
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin" || process.platform === "win32") {
     return normalizedPath.toLowerCase();
   }
 
@@ -258,11 +259,7 @@ export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: s
   if (!payload || payload.ok !== true) {
     return false;
   }
-  if (typeof payload.workspaceDirectory !== "string" || payload.workspaceDirectory.length === 0) {
-    // Legacy proxies that do not expose workspace cannot be safely reused.
-    return false;
-  }
-  return normalizeWorkspaceForCompare(payload.workspaceDirectory) === normalizeWorkspaceForCompare(workspaceDirectory);
+  return true;
 }
 
 const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
@@ -563,7 +560,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
           const bunAny = globalThis as any;
-          const proc = bunAny.Bun.spawn(["cursor-agent", "models"], {
+          const proc = bunAny.Bun.spawn([resolveCursorAgentBinary(), "models"], {
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -655,14 +652,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         });
       }
 
+      const requestWorkspace = req.headers.get("x-cursor-acp-workspace") || workspaceDirectory;
       const cmd = [
-        "cursor-agent",
+        resolveCursorAgentBinary(),
         "--print",
         "--output-format",
         "stream-json",
         "--stream-partial-output",
         "--workspace",
-        workspaceDirectory,
+        requestWorkspace,
         "--model",
         model,
       ];
@@ -1047,7 +1045,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
           const { execSync } = await import("child_process");
-          const output = execSync("cursor-agent models", { encoding: "utf-8", timeout: 30000 });
+          const output = execSync(resolveCursorAgentBinary() + " models", { encoding: "utf-8", timeout: 30000 });
           const clean = stripAnsi(output);
           const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
           for (const line of clean.split("\n")) {
@@ -1113,14 +1111,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         msgRoles: msgSummary.join(","),
       });
 
+      const requestWorkspace = req.headers["x-cursor-acp-workspace"] || workspaceDirectory;
       const cmd = [
-        "cursor-agent",
+        resolveCursorAgentBinary(),
         "--print",
         "--output-format",
         "stream-json",
         "--stream-partial-output",
         "--workspace",
-        workspaceDirectory,
+        requestWorkspace,
         "--model",
         model,
       ];
@@ -1128,7 +1127,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         cmd.push("--force");
       }
 
-      const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(cmd[0], cmd.slice(1), { 
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32" 
+      });
 
       // Write prompt to stdin to avoid E2BIG error
       child.stdin.write(prompt);
@@ -1963,6 +1965,11 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   const toolHookEntries = buildToolHookEntries(localRegistry, workspaceDirectory);
 
   return {
+    "chat.headers": async (input: any, output: any) => {
+      if (input.model?.providerID === "cursor-acp") {
+        output.headers["x-cursor-acp-workspace"] = workspaceDirectory;
+      }
+    },
     tool: { ...toolHookEntries, ...mcpToolEntries },
     auth: {
       provider: CURSOR_PROVIDER_ID,
@@ -2008,7 +2015,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           output,
           proxyBaseURL,
           CURSOR_PROXY_DEFAULT_BASE_URL,
-          "cursor-agent",
+          resolveCursorAgentBinary(),
         ),
       );
 

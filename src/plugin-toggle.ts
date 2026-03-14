@@ -33,6 +33,12 @@ export function isCursorPluginEnabledInConfig(config: unknown): boolean {
 
   const configObject = config as { plugin?: unknown; provider?: unknown };
 
+  if (configObject.provider && typeof configObject.provider === "object") {
+    if (CURSOR_PROVIDER_ID in (configObject.provider as Record<string, unknown>)) {
+      return true;
+    }
+  }
+
   if (Array.isArray(configObject.plugin)) {
     return configObject.plugin.some((entry) => matchesPlugin(entry));
   }

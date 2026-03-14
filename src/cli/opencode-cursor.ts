@@ -18,6 +18,7 @@ import {
   discoverModelsFromCursorAgent,
   fallbackModels,
 } from "./model-discovery.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
 
 const BRANDING_HEADER = `
  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄  ▄▄      ▄▄▄  ▄▄ ▄▄ ▄▄▄▄   ▄▄▄▄   ▄▄▄   ▄▄▄▄
@@ -70,12 +71,12 @@ export function checkBun(): CheckResult {
 
 export function checkCursorAgent(): CheckResult {
   try {
-    const output = execFileSync("cursor-agent", ["--version"], { encoding: "utf8" }).trim();
+    const output = execFileSync(resolveCursorAgentBinary(), ["--version"], { encoding: "utf8" }).trim();
     const version = output.split("\n")[0] || "installed";
-    return { name: "cursor-agent", passed: true, message: version };
+    return { name: resolveCursorAgentBinary(), passed: true, message: version };
   } catch {
     return {
-      name: "cursor-agent",
+      name: resolveCursorAgentBinary(),
       passed: false,
       message: "not found - install with: curl -fsS https://cursor.com/install | bash",
     };
@@ -86,7 +87,7 @@ export function checkCursorAgentLogin(): CheckResult {
   try {
     // cursor-agent stores credentials in ~/.cursor-agent or similar
     // Try running a command that requires auth
-    execFileSync("cursor-agent", ["models"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync(resolveCursorAgentBinary(), ["models"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     return { name: "cursor-agent login", passed: true, message: "logged in" };
   } catch {
     return {

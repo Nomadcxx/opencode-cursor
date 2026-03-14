@@ -40,7 +40,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
 
     return new Promise<string>((resolve, reject) => {
       const proc = spawn(command, {
-        shell: process.env.SHELL || "/bin/bash",
+        shell: process.env.SHELL || (process.platform === "win32" ? "cmd.exe" : "/bin/bash"),
         cwd,
       });
 
@@ -265,6 +265,8 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     const path = args.path as string;
     const include = args.include as string | undefined;
 
+    if (process.platform === "win32") { return await nodeFallbackGrep(pattern, path, include); }
+
     const grepArgs = ["-r", "-n"];
     if (include) {
       grepArgs.push(`--include=${include}`);
@@ -374,6 +376,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     const path = resolvePathArg(args, "glob");
     const cwd = path || ".";
     const normalizedPattern = pattern.replace(/\\/g, "/");
+    if (process.platform === "win32") { return await nodeFallbackGlob(normalizedPattern, cwd); }
     const isPathPattern = normalizedPattern.includes("/");
     const findArgs = [cwd, "-type", "f"];
     if (isPathPattern) {
@@ -702,4 +705,140 @@ function coerceToString(value: unknown): string | null {
  */
 export function getDefaultToolNames(): string[] {
   return ["bash", "read", "write", "edit", "grep", "ls", "glob", "mkdir", "rm", "stat"];
+}
+
+async function nodeFallbackGrep(pattern: string, searchPath: string, include?: string): Promise<string> {
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  
+  const results: string[] = [];
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern);
+  } catch (e) {
+    try {
+      regex = new RegExp(pattern.replace(/[.*+?^\\$\\{}()|[\\]\\\\]/g, '\\\\$&'));
+    } catch {
+      return "Invalid regex pattern";
+    }
+  }
+
+  let includeRegex: RegExp | undefined;
+  if (include) {
+    const incPattern = include.replace(/\\./g, '\\\\.').replace(/\\*/g, '.*');
+    includeRegex = new RegExp(`^${incPattern}$`);
+  }
+
+  async function walk(dir: string) {
+    if (results.length >= 100) return;
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= 100) return;
+        
+        const fullPath = path.join(dir, entry.name);
+        
+        if (entry.isDirectory()) {
+          if (!['node_modules', '.git', 'dist', 'build'].includes(entry.name)) {
+            await walk(fullPath);
+          }
+        } else if (entry.isFile()) {
+          if (includeRegex && !includeRegex.test(entry.name)) {
+            continue;
+          }
+          
+          try {
+            const content = await fs.readFile(fullPath, 'utf-8');
+            const lines = content.split('\\n');
+            for (let i = 0; i < lines.length; i++) {
+              if (regex.test(lines[i])) {
+                results.push(`${fullPath}:${i + 1}:${lines[i]}`);
+                if (results.length >= 100) break;
+              }
+            }
+          } catch {
+            // ignore unreadable files
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const stat = await fs.stat(searchPath);
+    if (stat.isFile()) {
+      try {
+        const content = await fs.readFile(searchPath, 'utf-8');
+        const lines = content.split('\\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            results.push(`${searchPath}:${i + 1}:${lines[i]}`);
+            if (results.length >= 100) break;
+          }
+        }
+      } catch {}
+    } else {
+      await walk(searchPath);
+    }
+  } catch {
+    return "Path not found";
+  }
+
+  return results.join('\\n') || "No matches found";
+}
+
+async function nodeFallbackGlob(pattern: string, searchPath: string): Promise<string> {
+  const fs = await import("fs/promises");
+  const path = await import("path");
+  
+  const results: string[] = [];
+  
+  const isPathPattern = pattern.includes("/");
+  let regexPattern = pattern
+    .replace(/\\./g, '\\\\.')
+    .replace(/\\*\\*/g, '.*')
+    .replace(/\\*/g, '[^/]*');
+    
+  if (!isPathPattern) {
+    regexPattern = `^${regexPattern}$`;
+  } else if (!regexPattern.startsWith('.*')) {
+    regexPattern = `.*${regexPattern}$`;
+  }
+  
+  let regex: RegExp;
+  try {
+    regex = new RegExp(regexPattern);
+  } catch {
+    return "Invalid pattern";
+  }
+
+  async function walk(dir: string) {
+    if (results.length >= 50) return;
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= 50) return;
+        
+        const fullPath = path.join(dir, entry.name);
+        
+        if (entry.isDirectory()) {
+          if (!['node_modules', '.git', 'dist', 'build'].includes(entry.name)) {
+            await walk(fullPath);
+          }
+        } else if (entry.isFile()) {
+          const matchTarget = isPathPattern ? fullPath.replace(/\\\\/g, '/') : entry.name;
+          if (regex.test(matchTarget)) {
+            results.push(fullPath);
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  await walk(searchPath);
+  return results.join('\\n') || "No files found";
 }
