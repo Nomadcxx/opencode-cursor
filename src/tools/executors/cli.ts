@@ -16,6 +16,7 @@ export class CliExecutor implements IToolExecutor {
       const { spawn } = await import("node:child_process");
       const child = spawn("opencode", ["tool", "run", toolId, "--json", JSON.stringify(args)], {
         stdio: ["ignore", "pipe", "pipe"],
+        shell: process.platform === "win32"
       });
 
       const stdoutChunks: Buffer[] = [];
