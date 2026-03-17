@@ -52,6 +52,7 @@ import {
   parseToolLoopMaxRepeat,
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
+import { resolveCursorAgentBinary } from "./utils/binary.js";
 
 const log = createLogger("plugin");
 
@@ -191,7 +192,7 @@ function canonicalizePathForCompare(pathValue: string): string {
     normalizedPath = resolvedPath;
   }
 
-  if (process.platform === "darwin") {
+  if (process.platform === "darwin" || process.platform === "win32") {
     return normalizedPath.toLowerCase();
   }
 
@@ -258,7 +259,11 @@ type ProxyRuntimeState = {
 };
 
 export function normalizeWorkspaceForCompare(pathValue: string): string {
-  return resolve(pathValue);
+  const resolved = resolve(pathValue);
+  if (process.platform === "darwin" || process.platform === "win32") {
+    return resolved.toLowerCase();
+  }
+  return resolved;
 }
 
 export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string): boolean {
@@ -570,7 +575,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
           const bunAny = globalThis as any;
-          const proc = bunAny.Bun.spawn(["cursor-agent", "models"], {
+          const proc = bunAny.Bun.spawn([resolveCursorAgentBinary(), "models"], {
             stdout: "pipe",
             stderr: "pipe",
           });
@@ -664,7 +669,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       }
 
       const cmd = [
-        "cursor-agent",
+        resolveCursorAgentBinary(),
         "--print",
         "--output-format",
         "stream-json",
@@ -1054,8 +1059,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       // Dynamic model discovery via cursor-agent models (Node.js handler)
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
-          const { execSync } = await import("child_process");
-          const output = execSync("cursor-agent models", { encoding: "utf-8", timeout: 30000 });
+          const { execFileSync } = await import("child_process");
+          const output = execFileSync(resolveCursorAgentBinary(), ["models"], { encoding: "utf-8", timeout: 30000 });
           const clean = stripAnsi(output);
           const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
           for (const line of clean.split("\n")) {
@@ -1123,7 +1128,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       });
 
       const cmd = [
-        "cursor-agent",
+        resolveCursorAgentBinary(),
         "--print",
         "--output-format",
         "stream-json",
@@ -1137,7 +1142,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         cmd.push("--force");
       }
 
-      const child = spawn(cmd[0], cmd.slice(1), { stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn(cmd[0], cmd.slice(1), {
+        stdio: ["pipe", "pipe", "pipe"],
+        shell: process.platform === "win32",
+      });
 
       // Write prompt to stdin to avoid E2BIG error
       child.stdin.write(prompt);

@@ -1,4 +1,5 @@
 import type { ToolRegistry } from "./core/registry.js";
+import { createLogger } from "../utils/logger.js";
 
 /**
  * Register default OpenCode tools in the registry
@@ -265,6 +266,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     const path = args.path as string;
     const include = args.include as string | undefined;
 
+    if (process.platform === "win32") {
+      return nodeFallbackGrep(pattern, path, include);
+    }
+
     const grepArgs = ["-r", "-n"];
     if (include) {
       grepArgs.push(`--include=${include}`);
@@ -374,6 +379,11 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     const path = resolvePathArg(args, "glob");
     const cwd = path || ".";
     const normalizedPattern = pattern.replace(/\\/g, "/");
+
+    if (process.platform === "win32") {
+      return nodeFallbackGlob(normalizedPattern, cwd);
+    }
+
     const isPathPattern = normalizedPattern.includes("/");
     const findArgs = [cwd, "-type", "f"];
     if (isPathPattern) {
@@ -702,4 +712,160 @@ function coerceToString(value: unknown): string | null {
  */
 export function getDefaultToolNames(): string[] {
   return ["bash", "read", "write", "edit", "grep", "ls", "glob", "mkdir", "rm", "stat"];
+}
+
+const FALLBACK_SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
+const fallbackLog = createLogger("tools:fallback");
+
+export async function nodeFallbackGrep(
+  pattern: string,
+  searchPath: string,
+  include?: string,
+): Promise<string> {
+  const fs = await import("fs/promises");
+  const path = await import("path");
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern);
+  } catch {
+    return "Invalid regex pattern";
+  }
+
+  let includeRegex: RegExp | undefined;
+  if (include) {
+    const incPattern = include.replace(/\./g, "\\.").replace(/\?/g, ".").replace(/\*/g, ".*");
+    includeRegex = new RegExp(`^${incPattern}$`);
+  }
+
+  const results: string[] = [];
+
+  async function walk(dir: string): Promise<void> {
+    if (results.length >= 100) return;
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err: any) {
+      if (err?.code !== "ENOENT" && err?.code !== "EACCES") {
+        fallbackLog.error("Unexpected error reading directory", { dir, code: err?.code, message: err?.message });
+      }
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= 100) return;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!FALLBACK_SKIP_DIRS.has(entry.name)) {
+          await walk(fullPath);
+        }
+      } else if (entry.isFile()) {
+        if (includeRegex && !includeRegex.test(entry.name)) continue;
+        let content: string;
+        try {
+          content = await fs.readFile(fullPath, "utf-8");
+        } catch (err: any) {
+          if (err?.code !== "ENOENT" && err?.code !== "EACCES") {
+            fallbackLog.error("Unexpected error reading file", { path: fullPath, code: err?.code, message: err?.message });
+          }
+          continue;
+        }
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          if (regex.test(lines[i])) {
+            results.push(`${fullPath}:${i + 1}:${lines[i]}`);
+            if (results.length >= 100) break;
+          }
+        }
+      }
+    }
+  }
+
+  let stat;
+  try {
+    stat = await fs.stat(searchPath);
+  } catch {
+    return "Path not found";
+  }
+
+  if (stat.isFile()) {
+    let content: string;
+    try {
+      content = await fs.readFile(searchPath, "utf-8");
+    } catch (err: any) {
+      if (err?.code !== "ENOENT" && err?.code !== "EACCES") {
+        fallbackLog.error("Unexpected error reading file", { path: searchPath, code: err?.code, message: err?.message });
+      }
+      return "Path not found";
+    }
+    const lines = content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (regex.test(lines[i])) {
+        results.push(`${searchPath}:${i + 1}:${lines[i]}`);
+        if (results.length >= 100) break;
+      }
+    }
+  } else {
+    await walk(searchPath);
+  }
+
+  return results.join("\n") || "No matches found";
+}
+
+export async function nodeFallbackGlob(
+  pattern: string,
+  searchPath: string,
+): Promise<string> {
+  const fs = await import("fs/promises");
+  const path = await import("path");
+
+  const results: string[] = [];
+  const isPathPattern = pattern.includes("/");
+
+  // Handle ** before * so double-star → .* and single-star → [^/]*
+  let regexPattern = pattern
+    .replace(/\./g, "\\.")
+    .replace(/\*\*/g, "\x00") // placeholder for **
+    .replace(/\*/g, "[^/]*")
+    .replace(/\x00/g, ".*"); // restore ** as .*
+
+  let regex: RegExp;
+  try {
+    regex = isPathPattern
+      ? new RegExp(`${regexPattern}$`)
+      : new RegExp(`^${regexPattern}$`);
+  } catch {
+    return "No files found";
+  }
+
+  async function walk(dir: string): Promise<void> {
+    if (results.length >= 50) return;
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err: any) {
+      if (err?.code !== "ENOENT" && err?.code !== "EACCES") {
+        fallbackLog.error("Unexpected error reading directory", { dir, code: err?.code, message: err?.message });
+      }
+      return;
+    }
+    for (const entry of entries) {
+      if (results.length >= 50) return;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!FALLBACK_SKIP_DIRS.has(entry.name)) {
+          await walk(fullPath);
+        }
+      } else if (entry.isFile()) {
+        const matchTarget = isPathPattern
+          ? fullPath.replace(/\\/g, "/")
+          : entry.name;
+        if (regex.test(matchTarget)) {
+          results.push(fullPath);
+        }
+      }
+    }
+  }
+
+  await walk(searchPath);
+  return results.join("\n") || "No files found";
 }

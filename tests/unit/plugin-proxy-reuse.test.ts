@@ -32,4 +32,24 @@ describe("proxy health reuse guard", () => {
     expect(normalized.length).toBeGreaterThan(0);
   });
 
+  test("normalizeWorkspaceForCompare produces consistent results for the same input", () => {
+    // The win32 toLowerCase() branch cannot be exercised from Linux CI (process.platform !== "win32").
+    // This test validates the cross-platform contract: same path → same normalized form.
+    const workspace = process.cwd();
+    const a = normalizeWorkspaceForCompare(workspace);
+    const b = normalizeWorkspaceForCompare(workspace);
+    expect(a).toBe(b);
+    expect(typeof a).toBe("string");
+    expect(a.length).toBeGreaterThan(0);
+  });
+
+  test("rejects workspace mismatch after normalisation", () => {
+    expect(
+      isReusableProxyHealthPayload(
+        { ok: true, workspaceDirectory: "/tmp/project-a" },
+        "/tmp/project-b",
+      ),
+    ).toBe(false);
+  });
+
 });

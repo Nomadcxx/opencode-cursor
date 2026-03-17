@@ -7,6 +7,7 @@ import {
   type StreamJsonEvent,
 } from '../streaming/types.js';
 import { createLogger } from '../utils/logger.js';
+import { resolveCursorAgentBinary } from '../utils/binary.js';
 
 export interface CursorClientConfig {
   timeout?: number;
@@ -30,7 +31,7 @@ export class SimpleCursorClient {
       timeout: 30000,
       maxRetries: 3,
       streamOutput: true,
-      cursorAgentPath: process.env.CURSOR_AGENT_EXECUTABLE || 'cursor-agent',
+      cursorAgentPath: resolveCursorAgentBinary(),
       ...config
     };
 
@@ -78,7 +79,8 @@ export class SimpleCursorClient {
 
     const child = spawn(this.config.cursorAgentPath, args, {
       cwd,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
     });
 
     if (prompt) {
@@ -189,7 +191,8 @@ export class SimpleCursorClient {
     return new Promise((resolve, reject) => {
       const child = spawn(this.config.cursorAgentPath, args, {
         cwd,
-        stdio: ['pipe', 'pipe', 'pipe']
+        stdio: ['pipe', 'pipe', 'pipe'],
+        shell: process.platform === 'win32',
       });
 
       let stdoutBuffer = '';
