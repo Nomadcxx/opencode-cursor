@@ -259,7 +259,11 @@ type ProxyRuntimeState = {
 };
 
 export function normalizeWorkspaceForCompare(pathValue: string): string {
-  return resolve(pathValue);
+  const resolved = resolve(pathValue);
+  if (process.platform === "darwin" || process.platform === "win32") {
+    return resolved.toLowerCase();
+  }
+  return resolved;
 }
 
 export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string): boolean {
