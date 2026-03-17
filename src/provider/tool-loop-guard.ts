@@ -44,6 +44,7 @@ const EXPLORATION_TOOLS = new Set([
   "bash",
   "shell",
   "webfetch",
+  "task",
 ]);
 
 export interface ToolLoopGuardDecision {
@@ -511,16 +512,20 @@ function evaluateWithFingerprints(
     };
   }
 
+  const isExplorationTool = EXPLORATION_TOOLS.has(toolName.toLowerCase());
+  const effectiveMaxRepeat = isExplorationTool
+    ? maxRepeat * EXPLORATION_LIMIT_MULTIPLIER
+    : maxRepeat;
+
   const strictRepeatCount = (strictCounts.get(strictFingerprint) ?? 0) + 1;
   strictCounts.set(strictFingerprint, strictRepeatCount);
-  const strictTriggered = strictRepeatCount > maxRepeat;
+  const strictTriggered = strictRepeatCount > effectiveMaxRepeat;
 
-  const isExplorationTool = EXPLORATION_TOOLS.has(toolName.toLowerCase());
   if (isExplorationTool) {
     return {
       fingerprint: strictFingerprint,
       repeatCount: strictRepeatCount,
-      maxRepeat,
+      maxRepeat: effectiveMaxRepeat,
       errorClass,
       triggered: strictTriggered,
       tracked: true,

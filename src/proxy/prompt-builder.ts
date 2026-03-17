@@ -36,7 +36,7 @@ function debugLogToFile(message: string, data: any): void {
  * Handles role:"tool" result messages and assistant tool_calls that
  * plain text flattening would silently drop.
  */
-export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>): string {
+export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>, subagentNames: string[] = []): string {
   // DEBUG: Log incoming message structure to file for root cause analysis
   const messageSummary = messages.map((m: any, i: number) => {
     const role = m?.role ?? "?";
@@ -98,6 +98,15 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>)
       `SYSTEM: You have access to the following tools. When you need to use one, respond with a tool_call in the standard OpenAI format.\n` +
         `Tool guidance: prefer write/edit for file changes; use bash mainly to run commands/tests.\n\nAvailable tools:\n${toolDescs}`,
     );
+    const hasTaskTool = tools.some((t: any) => {
+      const name = (t?.function?.name ?? t?.name ?? "").toLowerCase();
+      return name === "task";
+    });
+    if (hasTaskTool && subagentNames.length > 0) {
+      lines.push(
+        `When calling the task tool, set subagent_type to one of: ${subagentNames.join(", ")}. Do not omit this parameter.`
+      );
+    }
   }
 
   for (const message of messages) {

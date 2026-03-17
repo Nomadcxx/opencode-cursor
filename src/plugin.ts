@@ -25,7 +25,7 @@ import { ToolRouter } from "./tools/router.js";
 import { SkillLoader } from "./tools/skills/loader.js";
 import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
-import { readMcpConfigs } from "./mcp/config.js";
+import { readMcpConfigs, readSubagentNames } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
 import { buildMcpToolHookEntries, buildMcpToolDefinitions } from "./mcp/tool-bridge.js";
 import { createOpencodeClient } from "@opencode-ai/sdk";
@@ -92,6 +92,7 @@ export function buildAvailableToolsSystemMessage(
   lastToolMap: Array<{ id: string; name: string }>,
   mcpToolDefs: any[],
   mcpToolSummaries?: McpToolSummary[],
+  subagentNames: string[] = [],
 ): string | null {
   const parts: string[] = [];
 
@@ -130,6 +131,12 @@ export function buildAvailableToolsSystemMessage(
     }
 
     parts.push(lines.join("\n"));
+  }
+
+  if (subagentNames.length > 0) {
+    parts.push(
+      `When calling the task tool, set subagent_type to one of: ${subagentNames.join(", ")}. Do not omit this parameter.`
+    );
   }
 
   return parts.length > 0 ? parts.join("\n\n") : null;
@@ -628,7 +635,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("bun-handler");
 
-      const prompt = buildPromptFromMessages(messages, tools);
+      const subagentNames = readSubagentNames();
+      const prompt = buildPromptFromMessages(messages, tools, subagentNames);
       const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
         boundary.normalizeRuntimeModel(body?.model),
       );
@@ -1092,7 +1100,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
 
-      const prompt = buildPromptFromMessages(messages, tools);
+      const subagentNames = readSubagentNames();
+      const prompt = buildPromptFromMessages(messages, tools, subagentNames);
       const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
         boundary.normalizeRuntimeModel(bodyData?.model),
       );
@@ -2058,7 +2067,11 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
 
     async "experimental.chat.system.transform"(input: any, output: { system: string[] }) {
       if (!toolsEnabled) return;
-      const systemMessage = buildAvailableToolsSystemMessage(lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries);
+      const subagentNames = readSubagentNames();
+      const systemMessage = buildAvailableToolsSystemMessage(
+        lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries,
+        subagentNames,
+      );
       if (!systemMessage) return;
       output.system = output.system || [];
       output.system.push(systemMessage);

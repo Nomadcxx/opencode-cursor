@@ -524,17 +524,15 @@ describe("provider runtime interception fallback", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid schema: missing path" }],
       1,
     );
-    // Two pre-evaluations: count=2 is soft (first trigger), count=3 at runtime is hard
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
+    // "read" is an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Six pre-evaluations bring count=6 (soft trigger at 6). Runtime call = count=7 (hard, not first trigger).
+    for (let i = 0; i < 6; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+      });
+    }
 
     const result = await handleToolLoopEventWithFallback({
       ...createBaseOptions({
@@ -556,17 +554,15 @@ describe("provider runtime interception fallback", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid schema: missing path" }],
       1,
     );
-    // Two pre-evaluations to push past soft threshold
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
+    // "read" is an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Six pre-evaluations push past soft threshold. Runtime call = count=7 (hard terminate).
+    for (let i = 0; i < 6; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+      });
+    }
 
     const result = await handleToolLoopEventWithFallback({
       ...createBaseOptions({
@@ -731,17 +727,15 @@ describe("provider runtime interception fallback", () => {
       [{ role: "tool", tool_call_id: "c1", content: "timeout while running tool" }],
       1,
     );
-    // Two pre-evaluations to push past soft threshold
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
-    });
+    // "read" is an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Six pre-evaluations push past soft threshold. Runtime call = count=7 (hard terminate → fallback).
+    for (let i = 0; i < 6; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "read", arguments: "{\"path\":\"foo.txt\"}" },
+      });
+    }
 
     const result = await handleToolLoopEventWithFallback({
       ...createBaseOptions({
@@ -770,11 +764,15 @@ describe("graduated response (soft/hard termination)", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid arguments" }],
       1,
     );
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "task", arguments: '{"prompt":"analyze"}' },
-    });
+    // "task" is now an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Five pre-evaluations: count=5, not yet triggered. Runtime call = count=6 = effectiveMaxRepeat+1 → first (soft) trigger.
+    for (let i = 0; i < 5; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "task", arguments: '{"prompt":"analyze"}' },
+      });
+    }
 
     const toolResults: any[] = [];
     const result = await handleToolLoopEventWithFallback({
@@ -813,16 +811,16 @@ describe("graduated response (soft/hard termination)", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid arguments" }],
       1,
     );
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "task", arguments: '{"prompt":"analyze"}' },
-    });
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "task", arguments: '{"prompt":"analyze"}' },
-    });
+    // "task" is now an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Six pre-evaluations: count=6 = effectiveMaxRepeat+1 (soft trigger, but discarded by test).
+    // Runtime call = count=7, 7 != effectiveMaxRepeat+1 (6) → NOT first trigger → hard termination.
+    for (let i = 0; i < 6; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "task", arguments: '{"prompt":"analyze"}' },
+      });
+    }
 
     const result = await handleToolLoopEventWithFallback({
       ...createBaseOptions({
@@ -945,11 +943,15 @@ describe("graduated response (soft/hard termination)", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid arguments" }],
       1,
     );
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "task", arguments: '{"prompt":"analyze"}' },
-    });
+    // "task" is now an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Five pre-evaluations: count=5. Runtime call = count=6 = effectiveMaxRepeat+1 → soft block.
+    for (let i = 0; i < 5; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "task", arguments: '{"prompt":"analyze"}' },
+      });
+    }
 
     const toolResults: any[] = [];
     const result = await handleToolLoopEventLegacy(
@@ -985,11 +987,15 @@ describe("graduated response (soft/hard termination)", () => {
       [{ role: "tool", tool_call_id: "c1", content: "invalid arguments" }],
       1,
     );
-    guard.evaluate({
-      id: "c1",
-      type: "function",
-      function: { name: "task", arguments: '{"prompt":"analyze"}' },
-    });
+    // "task" is now an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5.
+    // Five pre-evaluations: count=5. Runtime call = count=6 = effectiveMaxRepeat+1 → soft block.
+    for (let i = 0; i < 5; i++) {
+      guard.evaluate({
+        id: "c1",
+        type: "function",
+        function: { name: "task", arguments: '{"prompt":"analyze"}' },
+      });
+    }
 
     const toolResults: any[] = [];
     const result = await handleToolLoopEventWithFallback({

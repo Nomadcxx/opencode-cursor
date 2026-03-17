@@ -93,6 +93,55 @@ export function readMcpConfigs(deps: ReadMcpConfigsDeps = {}): McpServerConfig[]
   return configs;
 }
 
+interface ReadSubagentNamesDeps {
+  configJson?: string;
+  existsSync?: (path: string) => boolean;
+  readFileSync?: (path: string, enc: BufferEncoding) => string;
+  env?: NodeJS.ProcessEnv;
+}
+
+export function readSubagentNames(deps: ReadSubagentNamesDeps = {}): string[] {
+  let raw: string;
+
+  if (deps.configJson != null) {
+    raw = deps.configJson;
+  } else {
+    const exists = deps.existsSync ?? nodeExistsSync;
+    const readFile = deps.readFileSync ?? nodeReadFileSync;
+    const configPath = resolveOpenCodeConfigPath(deps.env ?? process.env);
+    if (!exists(configPath)) return ["general-purpose"];
+    try {
+      raw = readFile(configPath, "utf8");
+    } catch {
+      return ["general-purpose"];
+    }
+  }
+
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return ["general-purpose"];
+  }
+
+  const agentSection = parsed.agent;
+  if (!agentSection || typeof agentSection !== "object" || Array.isArray(agentSection)) {
+    return ["general-purpose"];
+  }
+
+  const agents = agentSection as Record<string, unknown>;
+  const names = Object.keys(agents);
+  if (names.length === 0) return ["general-purpose"];
+
+  const subagentNames = names.filter((name) => {
+    const entry = agents[name];
+    return entry && typeof entry === "object" && !Array.isArray(entry)
+      && (entry as Record<string, unknown>).mode === "subagent";
+  });
+
+  return subagentNames.length > 0 ? subagentNames : names;
+}
+
 function isStringRecord(v: unknown): v is Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }

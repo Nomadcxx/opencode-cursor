@@ -37,10 +37,14 @@ describe("tool loop guard", () => {
     const second = guard.evaluate(call);
     const third = guard.evaluate(call);
 
+    // "read" is an EXPLORATION_TOOL: effectiveMaxRepeat = 2 * 5 = 10
+    // History only has a tool result (no assistant message), so no count is seeded.
+    // evaluate calls bring count to 1, 2, 3 — all < 10, none trigger.
     expect(first.triggered).toBe(false);
     expect(second.triggered).toBe(false);
-    expect(third.triggered).toBe(true);
+    expect(third.triggered).toBe(false);
     expect(third.repeatCount).toBe(3);
+    expect(third.maxRepeat).toBe(10);
   });
 
   it("triggers on repeated failures even when argument shapes vary (coarse fingerprint)", () => {
@@ -591,8 +595,11 @@ describe("tool loop guard", () => {
         arguments: JSON.stringify({ path: "missing.txt" }),
       },
     });
+    // "read" is an EXPLORATION_TOOL: effectiveMaxRepeat = 1 * 5 = 5
+    // seeded count = 1 (from history), evaluate brings count to 2
+    // 2 > 5? No — not triggered
     expect(readDecision.errorClass).toBe("not_found");
-    expect(readDecision.triggered).toBe(true);
+    expect(readDecision.triggered).toBe(false);
   });
 });
 
@@ -660,44 +667,137 @@ describe("tool loop guard", () => {
     expect(decision.maxRepeat).toBe(10);   // 2 * 5 (EXPLORATION_LIMIT_MULTIPLIER)
   });
 
-  it("ISSUE_51: task tool validation errors trigger guard aggressively", () => {
-    // Simulate: cursor-agent calls "task" with subagent_type: undefined
-    // OpenCode returns validation error containing "invalid"
-    // Guard triggers after 3 attempts (maxRepeat=2, strict limit)
-    const guard = createToolLoopGuard(
-      [
-        {
-          role: "tool",
-          tool_call_id: "task-1",
-          content:
-            'The task tool was called with invalid arguments: [{"expected":"string","code":"invalid_type","path":["subagent_type"],"message":"Invalid input: expected string, received undefined"}]',
-        },
-      ],
-      2,
-    );
+  it("ISSUE_51: task tool validation errors should not trigger guard for small batches", () => {
+  // After fix: task is in EXPLORATION_TOOLS, strict threshold = maxRepeat * 5 = 10
+  // Use empty history — seeded count from constructor would offset all assertions
+  const guard = createToolLoopGuard([], 2);
 
-    const taskCall = {
-      id: "task-1",
-      type: "function" as const,
-      function: {
-        name: "task",
-        arguments: JSON.stringify({ subagent_type: undefined, prompt: "analyze repo" }),
-      },
-    };
+  const taskCall = {
+    id: "task-1",
+    type: "function" as const,
+    function: {
+      name: "task",
+      arguments: JSON.stringify({ subagent_type: undefined, prompt: "analyze repo" }),
+    },
+  };
 
-    const d1 = guard.evaluate(taskCall);
-    const d2 = guard.evaluate(taskCall);
-    const d3 = guard.evaluate(taskCall);
+  // 10 identical calls: count=10 is NOT > effectiveMaxRepeat(10), no trigger
+  let last!: ReturnType<typeof guard.evaluate>;
+  for (let i = 0; i < 10; i++) {
+    last = guard.evaluate(taskCall);
+    expect(last.triggered).toBe(false);
+  }
+  expect(last.repeatCount).toBe(10);
+  expect(last.maxRepeat).toBe(10); // effectiveMaxRepeat = 2 * EXPLORATION_LIMIT_MULTIPLIER(5)
+  // Empty history → no prior tool response → errorClass resolves to "unknown"
+  // (task is not in UNKNOWN_AS_SUCCESS_TOOLS, so it stays "unknown" not "success")
+  expect(last.errorClass).toBe("unknown");
 
-    // "task" is NOT in UNKNOWN_AS_SUCCESS_TOOLS, error contains "invalid" → "validation"
-    expect(d1.errorClass).toBe("validation");
-    expect(d1.triggered).toBe(false);
+  // 11th call: count=11 > 10, first trigger
+  const d11 = guard.evaluate(taskCall);
+  expect(d11.triggered).toBe(true);
+  expect(d11.repeatCount).toBe(11);
+  expect(d11.maxRepeat).toBe(10);
+});
 
-    // "task" is NOT in EXPLORATION_TOOLS → gets both strict AND coarse tracking
-    expect(d2.triggered).toBe(false);
-
-    // Strict fingerprint triggers at repeatCount > maxRepeat (3 > 2)
-    expect(d3.triggered).toBe(true);
-    expect(d3.repeatCount).toBe(3);
-    expect(d3.maxRepeat).toBe(2);
+describe("EXPLORATION_TOOLS error-path threshold", () => {
+  it("task: 5 identical validation failures do not trigger", () => {
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "t1", type: "function" as const, function: { name: "task", arguments: '{"prompt":"x"}' } };
+    for (let i = 0; i < 5; i++) {
+      const d = guard.evaluate(call);
+      expect(d.triggered).toBe(false);
+      expect(d.maxRepeat).toBe(10); // effectiveMaxRepeat returned in decision
+    }
   });
+
+  it("task: 11 identical validation failures trigger (first trigger)", () => {
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "t1", type: "function" as const, function: { name: "task", arguments: '{"prompt":"x"}' } };
+    for (let i = 0; i < 10; i++) guard.evaluate(call);
+    const d11 = guard.evaluate(call);
+    expect(d11.triggered).toBe(true);
+    expect(d11.repeatCount).toBe(11);
+    expect(d11.maxRepeat).toBe(10); // MUST be effectiveMaxRepeat, not raw 2
+  });
+
+  it("task: 12 identical validation failures trigger (hard kill — second trigger)", () => {
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "t1", type: "function" as const, function: { name: "task", arguments: '{"prompt":"x"}' } };
+    for (let i = 0; i < 11; i++) guard.evaluate(call);
+    const d12 = guard.evaluate(call);
+    expect(d12.triggered).toBe(true);
+    expect(d12.repeatCount).toBe(12);
+    expect(d12.maxRepeat).toBe(10);
+  });
+
+  it("read (existing EXPLORATION_TOOL): 5 tool_error failures do not trigger (error-path parity)", () => {
+    // Before this fix: only success path got 5x. After: error path also gets 5x.
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "r1", type: "function" as const, function: { name: "read", arguments: '{"path":"foo.ts"}' } };
+    for (let i = 0; i < 5; i++) {
+      const d = guard.evaluate(call);
+      expect(d.triggered).toBe(false);
+      expect(d.maxRepeat).toBe(10);
+    }
+  });
+
+  it("edit (non-exploration tool): 3 identical failures trigger (unchanged)", () => {
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "e1", type: "function" as const, function: { name: "edit", arguments: '{"path":"f.ts"}' } };
+    guard.evaluate(call);
+    guard.evaluate(call);
+    const d3 = guard.evaluate(call);
+    expect(d3.triggered).toBe(true);
+    expect(d3.maxRepeat).toBe(2); // raw maxRepeat, no multiplier
+  });
+
+  it("evaluateValidation for task: 11 failures trigger (fix applies to validation path too)", () => {
+    // evaluateValidation calls evaluateWithFingerprints — same fix applies
+    const guard = createToolLoopGuard([], 2);
+    const call = { id: "t1", type: "function" as const, function: { name: "task", arguments: '{}' } };
+    const sig = "path:subagent_type|invalid_type";
+    for (let i = 0; i < 10; i++) {
+      const d = guard.evaluateValidation(call, sig);
+      expect(d.triggered).toBe(false);
+    }
+    const d11 = guard.evaluateValidation(call, sig);
+    expect(d11.triggered).toBe(true);
+    expect(d11.maxRepeat).toBe(10);
+  });
+});
+
+describe("EXPLORATION_TOOLS coarse tracking", () => {
+  it("task: 5 calls with DIFFERENT arg shapes same error class do not trigger (coarse disabled)", () => {
+    // Key: each call has a unique prompt → unique strict fingerprint → strict count=1 each
+    // Coarse fingerprint would be "task|validation" for all 5 — but coarse is disabled for task
+    const guard = createToolLoopGuard([], 2);
+    for (let i = 0; i < 5; i++) {
+      const call = {
+        id: `t${i}`,
+        type: "function" as const,
+        function: { name: "task", arguments: JSON.stringify({ prompt: `unique prompt ${i}` }) },
+      };
+      const d = guard.evaluate(call);
+      expect(d.triggered).toBe(false);
+    }
+  });
+
+  it("edit (non-exploration tool): 7 different-path calls with validation errors trigger via coarse", () => {
+    // coarseMaxRepeat = maxRepeat(2) * COARSE_LIMIT_MULTIPLIER(3) = 6
+    // Need > 6 to trigger coarse. Use 7 evaluateValidation calls with distinct signatures.
+    // evaluateValidation always uses "validation" errorClass (bypasses UNKNOWN_AS_SUCCESS_TOOLS).
+    const guard = createToolLoopGuard([], 2);
+    let last!: ReturnType<typeof guard.evaluate>;
+    for (let i = 0; i < 7; i++) {
+      const call = {
+        id: `e${i}`,
+        type: "function" as const,
+        function: { name: "edit", arguments: JSON.stringify({ path: `file${i}.ts`, old_string: `old${i}`, new_string: "new" }) },
+      };
+      // Use unique validation signature per call so strict count stays at 1 each
+      last = guard.evaluateValidation(call, `missing:field_${i}`);
+    }
+    expect(last.triggered).toBe(true); // coarse: count=7 > coarseMax=6
+  });
+});
