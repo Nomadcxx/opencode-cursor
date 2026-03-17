@@ -734,7 +734,7 @@ export async function nodeFallbackGrep(
 
   let includeRegex: RegExp | undefined;
   if (include) {
-    const incPattern = include.replace(/\./g, "\\.").replace(/\*/g, ".*");
+    const incPattern = include.replace(/\./g, "\\.").replace(/\?/g, ".").replace(/\*/g, ".*");
     includeRegex = new RegExp(`^${incPattern}$`);
   }
 
@@ -792,7 +792,9 @@ export async function nodeFallbackGrep(
     try {
       content = await fs.readFile(searchPath, "utf-8");
     } catch (err: any) {
-      fallbackLog.error("Unexpected error reading file", { path: searchPath, code: err?.code, message: err?.message });
+      if (err?.code !== "ENOENT" && err?.code !== "EACCES") {
+        fallbackLog.error("Unexpected error reading file", { path: searchPath, code: err?.code, message: err?.message });
+      }
       return "Path not found";
     }
     const lines = content.split("\n");
