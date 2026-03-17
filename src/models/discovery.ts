@@ -1,4 +1,5 @@
 import type { ModelInfo, DiscoveryConfig } from "./types.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
 
 interface CacheEntry {
   models: ModelInfo[];
@@ -51,7 +52,7 @@ export class ModelDiscoveryService {
   private async queryViaCLI(): Promise<ModelInfo[]> {
     try {
       const bunAny = (globalThis as any).Bun;
-      const proc = bunAny.spawn(["cursor-agent", "models", "--json"], {
+      const proc = bunAny.spawn([resolveCursorAgentBinary(), "models", "--json"], {
         timeout: 5000,
         stdout: "pipe",
         stderr: "pipe"
@@ -78,7 +79,7 @@ export class ModelDiscoveryService {
   private async queryViaHelp(): Promise<ModelInfo[]> {
     try {
       const bunAny = (globalThis as any).Bun;
-      const proc = bunAny.spawn(["cursor-agent", "--help"], {
+      const proc = bunAny.spawn([resolveCursorAgentBinary(), "--help"], {
         timeout: 5000,
         stdout: "pipe",
         stderr: "pipe"
