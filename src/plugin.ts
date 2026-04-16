@@ -219,37 +219,76 @@ function isNonConfigPath(pathValue: string): boolean {
   return !isWithinPath(getOpenCodeConfigPrefix(), pathValue);
 }
 
+// Filesystem roots are never a meaningful workspace: accepting "/" (or a bare
+// Windows drive root like "C:\") makes every tool treat the whole machine as
+// the project, which is both unsafe and a common symptom of a daemon that
+// was launched without a real cwd (e.g. systemd unit without WorkingDirectory).
+export function isRootPath(pathValue: string): boolean {
+  if (!pathValue) {
+    return false;
+  }
+  const resolved = resolve(pathValue);
+  if (resolved === "/") {
+    return true;
+  }
+  return /^[A-Za-z]:[\\/]?$/.test(resolved);
+}
+
+function isAcceptableWorkspace(pathValue: string, configPrefix: string): boolean {
+  if (!pathValue) {
+    return false;
+  }
+  if (isRootPath(pathValue)) {
+    return false;
+  }
+  if (isWithinPath(configPrefix, pathValue)) {
+    return false;
+  }
+  return true;
+}
+
 const SESSION_WORKSPACE_CACHE_LIMIT = 200;
 
-function resolveWorkspaceDirectory(worktree: string | undefined, directory: string | undefined): string {
-  const envWorkspace = process.env.CURSOR_ACP_WORKSPACE?.trim();
-  if (envWorkspace) {
-    return resolve(envWorkspace);
-  }
-
-  const envProjectDir = process.env.OPENCODE_CURSOR_PROJECT_DIR?.trim();
-  if (envProjectDir) {
-    return resolve(envProjectDir);
-  }
-
+export function resolveWorkspaceDirectory(
+  worktree: string | undefined,
+  directory: string | undefined,
+): string {
   const configPrefix = getOpenCodeConfigPrefix();
 
+  const envWorkspace = resolveCandidate(process.env.CURSOR_ACP_WORKSPACE);
+  if (envWorkspace && !isRootPath(envWorkspace)) {
+    return envWorkspace;
+  }
+
+  const envProjectDir = resolveCandidate(process.env.OPENCODE_CURSOR_PROJECT_DIR);
+  if (envProjectDir && !isRootPath(envProjectDir)) {
+    return envProjectDir;
+  }
+
   const worktreeCandidate = resolveCandidate(worktree);
-  if (worktreeCandidate && !isWithinPath(configPrefix, worktreeCandidate)) {
+  if (isAcceptableWorkspace(worktreeCandidate, configPrefix)) {
     return worktreeCandidate;
   }
 
   const dirCandidate = resolveCandidate(directory);
-  if (dirCandidate && !isWithinPath(configPrefix, dirCandidate)) {
+  if (isAcceptableWorkspace(dirCandidate, configPrefix)) {
     return dirCandidate;
   }
 
   const cwd = resolve(process.cwd());
-  if (cwd && !isWithinPath(configPrefix, cwd)) {
+  if (isAcceptableWorkspace(cwd, configPrefix)) {
     return cwd;
   }
 
-  return dirCandidate || cwd || configPrefix;
+  // Fall back to the user's home directory rather than "/" when every other
+  // signal is unusable. $HOME is always writable for the current user and
+  // keeps tool scopes sane even when the daemon was spawned from root.
+  const home = resolveCandidate(homedir());
+  if (home && !isRootPath(home)) {
+    return home;
+  }
+
+  return configPrefix;
 }
 
 type ProxyRuntimeState = {
