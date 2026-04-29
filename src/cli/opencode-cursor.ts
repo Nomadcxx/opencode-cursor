@@ -18,6 +18,7 @@ import {
   discoverModelsFromCursorAgent,
   fallbackModels,
 } from "./model-discovery.js";
+import { mergeCursorModelEntries } from "../models/variants.js";
 
 const BRANDING_HEADER = `
  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄  ▄▄      ▄▄▄  ▄▄ ▄▄ ▄▄▄▄   ▄▄▄▄   ▄▄▄   ▄▄▄▄
@@ -226,6 +227,8 @@ type Options = {
   copy?: boolean;
   skipModels?: boolean;
   noBackup?: boolean;
+  variants?: boolean;
+  compact?: boolean;
   json?: boolean;
 };
 
@@ -252,6 +255,8 @@ Options:
   --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
   --copy                Copy plugin instead of symlink
   --skip-models         Skip model sync during install
+  --variants            Generate compact OpenCode model variants from Cursor models
+  --compact             With --variants, remove raw grouped Cursor model entries
   --no-backup           Don't create config backup
   --json                Output in JSON format (status command only)
 `);
@@ -268,6 +273,10 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
       options.copy = true;
     } else if (arg === "--skip-models") {
       options.skipModels = true;
+    } else if (arg === "--variants") {
+      options.variants = true;
+    } else if (arg === "--compact") {
+      options.compact = true;
     } else if (arg === "--no-backup") {
       options.noBackup = true;
     } else if (arg === "--config" && rest[i + 1]) {
@@ -411,6 +420,25 @@ function discoverModelsSafe() {
   }
 }
 
+function syncModelsIntoProvider(config: any, options: Options) {
+  if (options.compact && !options.variants) {
+    throw new Error("--compact requires --variants");
+  }
+
+  const discoveredModels = discoverModelsSafe();
+  const provider = config.provider[PROVIDER_ID];
+  const existingModels = provider.models && typeof provider.models === "object"
+    ? provider.models
+    : {};
+  const result = mergeCursorModelEntries(existingModels, discoveredModels, {
+    variants: options.variants === true,
+    compact: options.compact === true,
+  });
+
+  provider.models = result.models;
+  return result;
+}
+
 function installAiSdk(opencodeDir: string) {
   try {
     execFileSync("bun", ["install", "@ai-sdk/openai-compatible"], {
@@ -435,11 +463,14 @@ function commandInstall(options: Options) {
   ensureProvider(config, baseUrl);
 
   if (!options.skipModels) {
-    const models = discoverModelsSafe();
-    for (const model of models) {
-      config.provider[PROVIDER_ID].models[model.id] = { name: model.name };
+    const result = syncModelsIntoProvider(config, options);
+    console.log(`Models synced: ${result.syncedCount}`);
+    if (options.variants) {
+      console.log(`Grouped Cursor models: ${result.groupedCount}`);
     }
-    console.log(`Models synced: ${models.length}`);
+    if (result.removedCount > 0) {
+      console.log(`Raw grouped models removed: ${result.removedCount}`);
+    }
   }
 
   writeConfig(configPath, config, options.noBackup === true);
@@ -455,13 +486,16 @@ function commandSyncModels(options: Options) {
   const config = readConfig(configPath);
   ensureProvider(config, options.baseUrl || DEFAULT_BASE_URL);
 
-  const models = discoverModelsSafe();
-  for (const model of models) {
-    config.provider[PROVIDER_ID].models[model.id] = { name: model.name };
-  }
+  const result = syncModelsIntoProvider(config, options);
 
   writeConfig(configPath, config, options.noBackup === true);
-  console.log(`Models synced: ${models.length}`);
+  console.log(`Models synced: ${result.syncedCount}`);
+  if (options.variants) {
+    console.log(`Grouped Cursor models: ${result.groupedCount}`);
+  }
+  if (result.removedCount > 0) {
+    console.log(`Raw grouped models removed: ${result.removedCount}`);
+  }
   console.log(`Config path: ${configPath}`);
 }
 
