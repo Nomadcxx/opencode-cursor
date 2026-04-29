@@ -33,7 +33,7 @@ describe("models/variants", () => {
   it("keeps ambiguous product models direct", () => {
     const result = groupCursorModels([
       { id: "auto", name: "Auto" },
-      { id: "composer-2-fast", name: "Composer 2 Fast" },
+      { id: "composer-1.5", name: "Composer 1.5" },
       { id: "gemini-3-flash", name: "Gemini 3 Flash" },
       { id: "gpt-5-mini", name: "GPT-5 Mini" },
       { id: "kimi-k2.5", name: "Kimi K2.5" },
@@ -42,11 +42,30 @@ describe("models/variants", () => {
     expect(result.groups).toEqual([]);
     expect(result.direct.map(model => model.id)).toEqual([
       "auto",
-      "composer-2-fast",
+      "composer-1.5",
       "gemini-3-flash",
       "gpt-5-mini",
       "kimi-k2.5",
     ]);
+  });
+
+  it("groups Composer 2 fast under Composer 2 when the base exists", () => {
+    const result = groupCursorModels([
+      { id: "composer-2", name: "Composer 2" },
+      { id: "composer-2-fast", name: "Composer 2 Fast" },
+      { id: "composer-1.5", name: "Composer 1.5" },
+    ]);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      baseId: "composer-2",
+      name: "Composer 2",
+      defaultCursorModelId: "composer-2",
+      variants: {
+        fast: "composer-2-fast",
+      },
+    });
+    expect(result.direct.map(model => model.id)).toEqual(["composer-1.5"]);
   });
 
   it("uses conservative base names for mini, nano, and preview families", () => {

@@ -45,8 +45,6 @@ export type CursorModelMergeResult = {
 
 const DIRECT_MODEL_IDS = new Set([
   "auto",
-  "composer-2-fast",
-  "composer-2",
   "composer-1.5",
   "kimi-k2.5",
   "gemini-3.1-pro",
