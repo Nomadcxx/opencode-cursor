@@ -67,6 +67,10 @@ This lets a compact OpenCode model such as `cursor-acp/gpt-5.3-codex` call a con
 
 Use `--dry-run` to preview the model sync without writing the config. Sync output includes added, updated, removed, priced, and skipped counts so repeated syncs are easy to audit before applying them.
 
+Use `open-cursor sync-models --json` when automation needs the same sync summary as structured output. Use `open-cursor models --explain` to inspect the generated model families, default Cursor targets, variant mappings, and direct models without modifying the config.
+
+Use `open-cursor doctor --deep` after install or sync to check Cursor model discovery, provider model config, compact variant presence, and whether configured `cursorModel` targets still exist in the current `cursor-agent models` output.
+
 ## Loop Safety and Error Handling
 
 `v1` loop safety is driven by two mechanisms:

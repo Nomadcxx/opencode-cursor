@@ -18,7 +18,8 @@ import {
   discoverModelsFromCursorAgent,
   fallbackModels,
 } from "./model-discovery.js";
-import { mergeCursorModelEntries } from "../models/variants.js";
+import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
+import type { DiscoveredModel } from "./model-discovery.js";
 
 const BRANDING_HEADER = `
  ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄  ▄▄      ▄▄▄  ▄▄ ▄▄ ▄▄▄▄   ▄▄▄▄   ▄▄▄   ▄▄▄▄
@@ -56,6 +57,20 @@ type StatusResult = {
   };
 };
 
+type ModelExplanation = {
+  modelCount: number;
+  groupedCount: number;
+  directCount: number;
+  groups: Array<{
+    id: string;
+    name: string;
+    defaultCursorModel: string;
+    memberCount: number;
+    variants: Record<string, string>;
+  }>;
+  direct: string[];
+};
+
 export function checkBun(): CheckResult {
   try {
     const version = execFileSync("bun", ["--version"], { encoding: "utf8" }).trim();
@@ -87,7 +102,11 @@ export function checkCursorAgentLogin(): CheckResult {
   try {
     // cursor-agent stores credentials in ~/.cursor-agent or similar
     // Try running a command that requires auth
-    execFileSync("cursor-agent", ["models"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync("cursor-agent", ["models"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3000,
+    });
     return { name: "cursor-agent login", passed: true, message: "logged in" };
   } catch {
     return {
@@ -218,7 +237,7 @@ export function runDoctorChecks(configPath: string, pluginPath: string): CheckRe
   ];
 }
 
-type Command = "install" | "sync-models" | "uninstall" | "status" | "doctor" | "help";
+type Command = "install" | "sync-models" | "models" | "uninstall" | "status" | "doctor" | "help";
 
 type Options = {
   config?: string;
@@ -230,6 +249,8 @@ type Options = {
   variants?: boolean;
   compact?: boolean;
   dryRun?: boolean;
+  deep?: boolean;
+  explain?: boolean;
   json?: boolean;
 };
 
@@ -248,6 +269,13 @@ type SyncModelsResult = {
   summary: SyncSummary;
 };
 
+type SyncModelsJsonResult = SyncModelsResult & {
+  configPath: string;
+  dryRun: boolean;
+  variants: boolean;
+  compact: boolean;
+};
+
 const PROVIDER_ID = "cursor-acp";
 const NPM_PACKAGE_PREFIX = "@rama_nigg/open-cursor";
 const DEFAULT_BASE_URL = "http://127.0.0.1:32124/v1";
@@ -260,6 +288,7 @@ function printHelp() {
 Commands:
   install     Configure OpenCode for Cursor (idempotent, safe to re-run)
   sync-models Refresh model list from cursor-agent
+  models      Explain discovered Cursor model groups and variants
   status      Show current configuration state
   doctor      Diagnose common issues
   uninstall   Remove cursor-acp from OpenCode config
@@ -274,8 +303,10 @@ Options:
   --variants            Generate compact OpenCode model variants from Cursor models
   --compact             With --variants, remove raw grouped Cursor model entries
   --dry-run             Preview sync/install config changes without writing files
+  --deep                Run extra doctor checks for models and variant config
+  --explain             Show model grouping explanation (models command)
   --no-backup           Don't create config backup
-  --json                Output in JSON format (status command only)
+  --json                Output in JSON format where supported
 `);
 }
 
@@ -296,6 +327,10 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
       options.compact = true;
     } else if (arg === "--dry-run") {
       options.dryRun = true;
+    } else if (arg === "--deep") {
+      options.deep = true;
+    } else if (arg === "--explain") {
+      options.explain = true;
     } else if (arg === "--no-backup") {
       options.noBackup = true;
     } else if (arg === "--config" && rest[i + 1]) {
@@ -321,6 +356,7 @@ function normalizeCommand(value: string | undefined): Command {
   switch ((value || "help").toLowerCase()) {
     case "install":
     case "sync-models":
+    case "models":
     case "uninstall":
     case "status":
     case "doctor":
@@ -384,12 +420,14 @@ function readConfig(configPath: string): any {
   }
 }
 
-function writeConfig(configPath: string, config: any, noBackup: boolean) {
+function writeConfig(configPath: string, config: any, noBackup: boolean, silent = false) {
   mkdirSync(dirname(configPath), { recursive: true });
   if (!noBackup && existsSync(configPath)) {
     const backupPath = `${configPath}.bak.${new Date().toISOString().replace(/[:]/g, "-")}`;
     copyFileSync(configPath, backupPath);
-    console.log(`Backup written: ${backupPath}`);
+    if (!silent) {
+      console.log(`Backup written: ${backupPath}`);
+    }
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
@@ -461,6 +499,39 @@ function syncModelsIntoProvider(config: any, options: Options): SyncModelsResult
     groupedCount: result.groupedCount,
     removedCount: result.removedCount,
     summary: summarizeModelSync(beforeModels, result.models),
+  };
+}
+
+export function explainCursorModels(models: DiscoveredModel[]): ModelExplanation {
+  const grouped = groupCursorModels(models);
+  const groupedCount = grouped.groups.reduce((total, group) => total + group.members.length, 0);
+
+  return {
+    modelCount: models.length,
+    groupedCount,
+    directCount: grouped.direct.length,
+    groups: grouped.groups.map(group => ({
+      id: group.baseId,
+      name: group.name,
+      defaultCursorModel: group.defaultCursorModelId,
+      memberCount: group.members.length,
+      variants: group.variants,
+    })),
+    direct: grouped.direct.map(model => model.id),
+  };
+}
+
+function createSyncJsonResult(
+  result: SyncModelsResult,
+  options: Options,
+  configPath: string,
+): SyncModelsJsonResult {
+  return {
+    ...result,
+    configPath,
+    dryRun: options.dryRun === true,
+    variants: options.variants === true,
+    compact: options.compact === true,
   };
 }
 
@@ -577,7 +648,12 @@ function commandSyncModels(options: Options) {
   const result = syncModelsIntoProvider(config, options);
 
   if (!options.dryRun) {
-    writeConfig(configPath, config, options.noBackup === true);
+    writeConfig(configPath, config, options.noBackup === true, options.json === true);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(createSyncJsonResult(result, options, configPath), null, 2));
+    return;
   }
 
   printSyncResult(result, options);
@@ -585,6 +661,46 @@ function commandSyncModels(options: Options) {
     console.log("Dry run: no changes written.");
   }
   console.log(`Config path: ${configPath}`);
+}
+
+function commandModels(options: Options) {
+  const models = discoverModelsSafe();
+  const explanation = explainCursorModels(models);
+
+  if (options.json) {
+    console.log(JSON.stringify(explanation, null, 2));
+    return;
+  }
+
+  console.log(`Cursor models discovered: ${explanation.modelCount}`);
+  console.log(`Grouped Cursor models: ${explanation.groupedCount}`);
+  console.log(`Direct models: ${explanation.directCount}`);
+
+  if (!options.explain) {
+    return;
+  }
+
+  console.log("");
+  console.log("Model groups:");
+  for (const group of explanation.groups) {
+    console.log(`  ${group.id}`);
+    console.log(`    Default: ${group.defaultCursorModel}`);
+    const variants = Object.entries(group.variants);
+    if (variants.length === 0) {
+      console.log("    Variants: none");
+      continue;
+    }
+    console.log("    Variants:");
+    for (const [variant, cursorModel] of variants) {
+      console.log(`      ${variant}: ${cursorModel}`);
+    }
+  }
+
+  console.log("");
+  console.log("Direct models:");
+  for (const modelId of explanation.direct) {
+    console.log(`  ${modelId}`);
+  }
 }
 
 function printSyncResult(result: SyncModelsResult, options: Options) {
@@ -703,6 +819,115 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   };
 }
 
+export function runDeepDoctorChecks(configPath: string): CheckResult[] {
+  const checks: CheckResult[] = [];
+  let config: any;
+
+  try {
+    config = readConfig(configPath);
+  } catch (error) {
+    return [{
+      name: "Deep config read",
+      passed: false,
+      message: error instanceof Error ? error.message : String(error),
+    }];
+  }
+
+  const provider = config.provider?.[PROVIDER_ID];
+  const models = isRecord(provider?.models) ? provider.models : {};
+  const baseUrl = typeof provider?.options?.baseURL === "string" ? provider.options.baseURL : "";
+
+  checks.push({
+    name: "Provider base URL",
+    passed: baseUrl.startsWith("http://") || baseUrl.startsWith("https://"),
+    message: baseUrl || "missing - run: open-cursor install",
+  });
+
+  checks.push({
+    name: "Provider models",
+    passed: Object.keys(models).length > 0,
+    message: `${Object.keys(models).length} configured model(s)`,
+  });
+
+  const variantEntryCount = countVariantModelEntries(models);
+  checks.push({
+    name: "Compact variants",
+    passed: variantEntryCount > 0,
+    warning: variantEntryCount === 0,
+    message: variantEntryCount > 0
+      ? `${variantEntryCount} model entr${variantEntryCount === 1 ? "y" : "ies"} with variants`
+      : "no compact variants found - run: open-cursor sync-models --variants --compact",
+  });
+
+  let discoveredModels: DiscoveredModel[];
+  try {
+    discoveredModels = discoverModelsFromCursorAgent();
+    checks.push({
+      name: "Cursor model discovery",
+      passed: true,
+      message: `${discoveredModels.length} model(s) from cursor-agent`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "Cursor model discovery",
+      passed: false,
+      message: error instanceof Error ? error.message : String(error),
+      warning: true,
+    });
+    return checks;
+  }
+
+  const knownModelIds = new Set(discoveredModels.map(model => model.id));
+  const unknownTargets = collectConfiguredCursorModels(models)
+    .filter(modelId => !knownModelIds.has(modelId));
+  checks.push({
+    name: "Configured Cursor model targets",
+    passed: unknownTargets.length === 0,
+    warning: unknownTargets.length > 0,
+    message: unknownTargets.length === 0
+      ? "all configured targets exist in cursor-agent models"
+      : `${unknownTargets.length} target(s) not found: ${unknownTargets.slice(0, 5).join(", ")}`,
+  });
+
+  return checks;
+}
+
+function countVariantModelEntries(models: Record<string, unknown>): number {
+  return Object.values(models).filter(entry => {
+    return isRecord(entry) && isRecord(entry.variants) && Object.keys(entry.variants).length > 0;
+  }).length;
+}
+
+function collectConfiguredCursorModels(models: Record<string, unknown>): string[] {
+  const targets: string[] = [];
+
+  for (const [modelId, entry] of Object.entries(models)) {
+    if (!isRecord(entry)) {
+      targets.push(modelId);
+      continue;
+    }
+
+    const optionTarget = readCursorModel(entry.options);
+    targets.push(optionTarget || modelId);
+
+    if (!isRecord(entry.variants)) continue;
+    for (const variantEntry of Object.values(entry.variants)) {
+      const variantTarget = readCursorModel(variantEntry);
+      if (variantTarget) targets.push(variantTarget);
+    }
+  }
+
+  return [...new Set(targets)];
+}
+
+function readCursorModel(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const cursorModel = value.cursorModel;
+  return typeof cursorModel === "string" && cursorModel.trim().length > 0
+    ? cursorModel.trim()
+    : undefined;
+}
+
 function commandStatus(options: Options) {
   const { configPath, pluginPath } = resolvePaths(options);
   const result = getStatusResult(configPath, pluginPath);
@@ -739,7 +964,16 @@ function commandStatus(options: Options) {
 
 function commandDoctor(options: Options) {
   const { configPath, pluginPath } = resolvePaths(options);
-  const checks = runDoctorChecks(configPath, pluginPath);
+  const checks = [
+    ...runDoctorChecks(configPath, pluginPath),
+    ...(options.deep ? runDeepDoctorChecks(configPath) : []),
+  ];
+
+  if (options.json) {
+    const failed = checks.filter(c => !c.passed && !c.warning);
+    console.log(JSON.stringify({ deep: options.deep === true, checks, failed: failed.length }, null, 2));
+    return;
+  }
 
   console.log("");
   for (const check of checks) {
@@ -776,6 +1010,9 @@ function main() {
         return;
       case "sync-models":
         commandSyncModels(parsed.options);
+        return;
+      case "models":
+        commandModels(parsed.options);
         return;
       case "uninstall":
         commandUninstall(parsed.options);
