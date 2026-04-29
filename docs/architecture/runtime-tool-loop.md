@@ -65,6 +65,8 @@ This lets a compact OpenCode model such as `cursor-acp/gpt-5.3-codex` call a con
 
 `open-cursor sync-models --variants` generates those compact entries from `cursor-agent models`. The default `sync-models` command still writes direct raw Cursor model IDs. Add `--compact` with `--variants` to remove raw model entries that were folded into generated variant groups while preserving custom and unknown entries.
 
+Use `--dry-run` to preview the model sync without writing the config. Sync output includes added, updated, removed, priced, and skipped counts so repeated syncs are easy to audit before applying them.
+
 ## Loop Safety and Error Handling
 
 `v1` loop safety is driven by two mechanisms:

@@ -229,7 +229,23 @@ type Options = {
   noBackup?: boolean;
   variants?: boolean;
   compact?: boolean;
+  dryRun?: boolean;
   json?: boolean;
+};
+
+type SyncSummary = {
+  added: number;
+  updated: number;
+  removed: number;
+  priced: number;
+  skipped: number;
+};
+
+type SyncModelsResult = {
+  syncedCount: number;
+  groupedCount: number;
+  removedCount: number;
+  summary: SyncSummary;
 };
 
 const PROVIDER_ID = "cursor-acp";
@@ -257,6 +273,7 @@ Options:
   --skip-models         Skip model sync during install
   --variants            Generate compact OpenCode model variants from Cursor models
   --compact             With --variants, remove raw grouped Cursor model entries
+  --dry-run             Preview sync/install config changes without writing files
   --no-backup           Don't create config backup
   --json                Output in JSON format (status command only)
 `);
@@ -277,6 +294,8 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
       options.variants = true;
     } else if (arg === "--compact") {
       options.compact = true;
+    } else if (arg === "--dry-run") {
+      options.dryRun = true;
     } else if (arg === "--no-backup") {
       options.noBackup = true;
     } else if (arg === "--config" && rest[i + 1]) {
@@ -420,7 +439,7 @@ function discoverModelsSafe() {
   }
 }
 
-function syncModelsIntoProvider(config: any, options: Options) {
+function syncModelsIntoProvider(config: any, options: Options): SyncModelsResult {
   if (options.compact && !options.variants) {
     throw new Error("--compact requires --variants");
   }
@@ -430,13 +449,82 @@ function syncModelsIntoProvider(config: any, options: Options) {
   const existingModels = provider.models && typeof provider.models === "object"
     ? provider.models
     : {};
+  const beforeModels = snapshotModels(existingModels);
   const result = mergeCursorModelEntries(existingModels, discoveredModels, {
     variants: options.variants === true,
     compact: options.compact === true,
   });
 
   provider.models = result.models;
-  return result;
+  return {
+    syncedCount: result.syncedCount,
+    groupedCount: result.groupedCount,
+    removedCount: result.removedCount,
+    summary: summarizeModelSync(beforeModels, result.models),
+  };
+}
+
+function snapshotModels(models: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(models));
+}
+
+export function summarizeModelSync(
+  beforeModels: Record<string, unknown>,
+  afterModels: Record<string, unknown>,
+): SyncSummary {
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+  let skipped = 0;
+
+  for (const [modelId, afterEntry] of Object.entries(afterModels)) {
+    if (!Object.prototype.hasOwnProperty.call(beforeModels, modelId)) {
+      added++;
+      continue;
+    }
+
+    if (JSON.stringify(beforeModels[modelId]) === JSON.stringify(afterEntry)) {
+      skipped++;
+    } else {
+      updated++;
+    }
+  }
+
+  for (const modelId of Object.keys(beforeModels)) {
+    if (!Object.prototype.hasOwnProperty.call(afterModels, modelId)) {
+      removed++;
+    }
+  }
+
+  return {
+    added,
+    updated,
+    removed,
+    priced: countPricedModelEntries(afterModels),
+    skipped,
+  };
+}
+
+function countPricedModelEntries(models: Record<string, unknown>): number {
+  let priced = 0;
+
+  for (const entry of Object.values(models)) {
+    if (!isRecord(entry)) continue;
+    if (isRecord(entry.cost)) priced++;
+
+    if (!isRecord(entry.variants)) continue;
+    for (const variantEntry of Object.values(entry.variants)) {
+      if (isRecord(variantEntry) && isRecord(variantEntry.cost)) {
+        priced++;
+      }
+    }
+  }
+
+  return priced;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function installAiSdk(opencodeDir: string) {
@@ -457,26 +545,26 @@ function commandInstall(options: Options) {
   const copyMode = options.copy === true;
   const pluginSource = resolvePluginSource();
 
-  mkdirSync(opencodeDir, { recursive: true });
-  ensurePluginLink(pluginSource, pluginPath, copyMode);
+  if (!options.dryRun) {
+    mkdirSync(opencodeDir, { recursive: true });
+    ensurePluginLink(pluginSource, pluginPath, copyMode);
+  }
   const config = readConfig(configPath);
   ensureProvider(config, baseUrl);
 
   if (!options.skipModels) {
     const result = syncModelsIntoProvider(config, options);
-    console.log(`Models synced: ${result.syncedCount}`);
-    if (options.variants) {
-      console.log(`Grouped Cursor models: ${result.groupedCount}`);
-    }
-    if (result.removedCount > 0) {
-      console.log(`Raw grouped models removed: ${result.removedCount}`);
-    }
+    printSyncResult(result, options);
   }
 
-  writeConfig(configPath, config, options.noBackup === true);
-  installAiSdk(opencodeDir);
+  if (options.dryRun) {
+    console.log("Dry run: no files changed.");
+  } else {
+    writeConfig(configPath, config, options.noBackup === true);
+    installAiSdk(opencodeDir);
+  }
 
-  console.log(`Installed ${PROVIDER_ID}`);
+  console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);
   console.log(`Plugin path: ${pluginPath}${copyMode ? " (copy)" : " (symlink)"}`);
   console.log(`Config path: ${configPath}`);
 }
@@ -488,7 +576,18 @@ function commandSyncModels(options: Options) {
 
   const result = syncModelsIntoProvider(config, options);
 
-  writeConfig(configPath, config, options.noBackup === true);
+  if (!options.dryRun) {
+    writeConfig(configPath, config, options.noBackup === true);
+  }
+
+  printSyncResult(result, options);
+  if (options.dryRun) {
+    console.log("Dry run: no changes written.");
+  }
+  console.log(`Config path: ${configPath}`);
+}
+
+function printSyncResult(result: SyncModelsResult, options: Options) {
   console.log(`Models synced: ${result.syncedCount}`);
   if (options.variants) {
     console.log(`Grouped Cursor models: ${result.groupedCount}`);
@@ -496,7 +595,13 @@ function commandSyncModels(options: Options) {
   if (result.removedCount > 0) {
     console.log(`Raw grouped models removed: ${result.removedCount}`);
   }
-  console.log(`Config path: ${configPath}`);
+
+  console.log("Sync summary:");
+  console.log(`  Added: ${result.summary.added}`);
+  console.log(`  Updated: ${result.summary.updated}`);
+  console.log(`  Removed: ${result.summary.removed}`);
+  console.log(`  Priced: ${result.summary.priced}`);
+  console.log(`  Skipped: ${result.summary.skipped}`);
 }
 
 const NPM_PACKAGE = "@rama_nigg/open-cursor";
@@ -692,4 +797,6 @@ function main() {
   }
 }
 
-main();
+if (process.env.NODE_ENV !== "test" && fileURLToPath(import.meta.url) === resolve(process.argv[1] || "")) {
+  main();
+}

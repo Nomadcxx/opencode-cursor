@@ -7,6 +7,7 @@ import {
   checkCursorAgentLogin,
   runDoctorChecks,
   getStatusResult,
+  summarizeModelSync,
 } from "../../../src/cli/opencode-cursor.js";
 
 describe("cli/opencode-cursor branding", () => {
@@ -56,5 +57,34 @@ describe("cli/opencode-cursor status", () => {
     expect(result).toHaveProperty("plugin");
     expect(result).toHaveProperty("provider");
     expect(result).toHaveProperty("aiSdk");
+  });
+});
+
+describe("cli/opencode-cursor sync summary", () => {
+  it("reports added, updated, removed, priced, and skipped entries", () => {
+    const before = {
+      unchanged: { name: "Unchanged" },
+      changed: { name: "Old" },
+      removed: { name: "Removed" },
+    };
+    const after = {
+      unchanged: { name: "Unchanged" },
+      changed: { name: "New" },
+      added: { name: "Added", cost: { input: 1, output: 2 } },
+      variants: {
+        name: "Variants",
+        variants: {
+          high: { cursorModel: "variants-high", cost: { input: 1, output: 2 } },
+        },
+      },
+    };
+
+    expect(summarizeModelSync(before, after)).toEqual({
+      added: 2,
+      updated: 1,
+      removed: 1,
+      priced: 2,
+      skipped: 1,
+    });
   });
 });
