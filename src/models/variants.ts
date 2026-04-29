@@ -81,6 +81,10 @@ const VARIANT_SUFFIXES = [
   "fast",
 ];
 
+const QUALIFIED_VARIANT_PREFIXES = [
+  "spark-preview",
+];
+
 const DEFAULT_VARIANT_ORDER = [
   null,
   "medium",
@@ -95,6 +99,7 @@ const VARIANT_DISPLAY_ORDER = [
   "none",
   "low",
   "low-fast",
+  "fast",
   "medium",
   "medium-fast",
   "medium-thinking",
@@ -107,7 +112,6 @@ const VARIANT_DISPLAY_ORDER = [
   "max",
   "max-thinking",
   "max-thinking-fast",
-  "fast",
   "thinking",
   "thinking-low",
   "thinking-medium",
@@ -116,20 +120,69 @@ const VARIANT_DISPLAY_ORDER = [
   "thinking-xhigh",
   "thinking-max",
   "extra-high",
+  "spark-preview",
+  "spark-preview-low",
+  "spark-preview-medium",
+  "spark-preview-high",
+  "spark-preview-xhigh",
 ];
 
-function parseVariant(modelId: string): { baseId: string; variant: string } | null {
+function parseVariant(
+  modelId: string,
+  knownModelIds: Set<string>,
+): { baseId: string; variant: string } | null {
+  const qualifiedVariant = parseQualifiedVariant(modelId, knownModelIds);
+  if (qualifiedVariant) return qualifiedVariant;
+
   for (const variant of VARIANT_SUFFIXES) {
     const suffix = `-${variant}`;
     if (!modelId.endsWith(suffix)) continue;
 
     const baseId = modelId.slice(0, -suffix.length);
     if (isSafeBaseId(baseId)) {
-      return { baseId, variant };
+      return resolveQualifiedBaseVariant(baseId, variant, knownModelIds);
     }
   }
 
   return null;
+}
+
+function parseQualifiedVariant(
+  modelId: string,
+  knownModelIds: Set<string>,
+): { baseId: string; variant: string } | null {
+  for (const qualifier of QUALIFIED_VARIANT_PREFIXES) {
+    const suffix = `-${qualifier}`;
+    if (!modelId.endsWith(suffix)) continue;
+
+    const baseId = modelId.slice(0, -suffix.length);
+    if (knownModelIds.has(baseId) && isSafeBaseId(baseId)) {
+      return { baseId, variant: qualifier };
+    }
+  }
+
+  return null;
+}
+
+function resolveQualifiedBaseVariant(
+  baseId: string,
+  variant: string,
+  knownModelIds: Set<string>,
+): { baseId: string; variant: string } {
+  for (const qualifier of QUALIFIED_VARIANT_PREFIXES) {
+    const suffix = `-${qualifier}`;
+    if (!baseId.endsWith(suffix)) continue;
+
+    const parentBaseId = baseId.slice(0, -suffix.length);
+    if (knownModelIds.has(parentBaseId) && isSafeBaseId(parentBaseId)) {
+      return {
+        baseId: parentBaseId,
+        variant: `${qualifier}-${variant}`,
+      };
+    }
+  }
+
+  return { baseId, variant };
 }
 
 function isSafeBaseId(baseId: string): boolean {
@@ -193,6 +246,7 @@ function createGroup(baseId: string, members: CursorModelVariant[]): CursorModel
 
 export function groupCursorModels(models: DiscoveredCursorModel[]): CursorModelGroups {
   const byId = new Map(models.map(model => [model.id, model]));
+  const knownModelIds = new Set(byId.keys());
   const candidates = new Map<string, CursorModelVariant[]>();
   const direct: DiscoveredCursorModel[] = [];
 
@@ -202,7 +256,7 @@ export function groupCursorModels(models: DiscoveredCursorModel[]): CursorModelG
       continue;
     }
 
-    const parsed = parseVariant(model.id);
+    const parsed = parseVariant(model.id, knownModelIds);
     if (!parsed) {
       continue;
     }

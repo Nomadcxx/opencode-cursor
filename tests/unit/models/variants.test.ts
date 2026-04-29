@@ -70,6 +70,33 @@ describe("models/variants", () => {
     });
   });
 
+  it("folds spark preview models into the parent family when the parent exists", () => {
+    const result = groupCursorModels([
+      { id: "gpt-5.3-codex-low", name: "GPT-5.3 Codex Low" },
+      { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
+      { id: "gpt-5.3-codex-high", name: "GPT-5.3 Codex High" },
+      { id: "gpt-5.3-codex-spark-preview-low", name: "GPT-5.3 Codex Spark Preview Low" },
+      { id: "gpt-5.3-codex-spark-preview", name: "GPT-5.3 Codex Spark Preview" },
+      { id: "gpt-5.3-codex-spark-preview-high", name: "GPT-5.3 Codex Spark Preview High" },
+      { id: "gpt-5.3-codex-spark-preview-xhigh", name: "GPT-5.3 Codex Spark Preview XHigh" },
+    ]);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.direct).toEqual([]);
+    expect(result.groups[0]).toMatchObject({
+      baseId: "gpt-5.3-codex",
+      defaultCursorModelId: "gpt-5.3-codex",
+      variants: {
+        low: "gpt-5.3-codex-low",
+        high: "gpt-5.3-codex-high",
+        "spark-preview": "gpt-5.3-codex-spark-preview",
+        "spark-preview-low": "gpt-5.3-codex-spark-preview-low",
+        "spark-preview-high": "gpt-5.3-codex-spark-preview-high",
+        "spark-preview-xhigh": "gpt-5.3-codex-spark-preview-xhigh",
+      },
+    });
+  });
+
   it("groups thinking variants under the non-thinking family", () => {
     const result = groupCursorModels([
       { id: "claude-opus-4-7-low", name: "Claude Opus 4.7 Low" },
