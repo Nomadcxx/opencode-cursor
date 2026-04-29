@@ -56,7 +56,9 @@ const DIRECT_MODEL_IDS = new Set([
 
 const VARIANT_SUFFIXES = [
   "max-thinking-fast",
+  "high-thinking-fast",
   "thinking-high-fast",
+  "medium-thinking",
   "high-thinking",
   "max-thinking",
   "low-fast",
@@ -87,6 +89,33 @@ const DEFAULT_VARIANT_ORDER = [
   "none",
   "xhigh",
   "max",
+];
+
+const VARIANT_DISPLAY_ORDER = [
+  "none",
+  "low",
+  "low-fast",
+  "medium",
+  "medium-fast",
+  "medium-thinking",
+  "high",
+  "high-fast",
+  "high-thinking",
+  "high-thinking-fast",
+  "xhigh",
+  "xhigh-fast",
+  "max",
+  "max-thinking",
+  "max-thinking-fast",
+  "fast",
+  "thinking",
+  "thinking-low",
+  "thinking-medium",
+  "thinking-high",
+  "thinking-high-fast",
+  "thinking-xhigh",
+  "thinking-max",
+  "extra-high",
 ];
 
 function parseVariant(modelId: string): { baseId: string; variant: string } | null {
@@ -130,11 +159,24 @@ function formatModelName(modelId: string): string {
     .join(" ");
 }
 
+function compareVariants(a: CursorModelVariant, b: CursorModelVariant): number {
+  if (a.variant === null) return -1;
+  if (b.variant === null) return 1;
+
+  const aIndex = VARIANT_DISPLAY_ORDER.indexOf(a.variant);
+  const bIndex = VARIANT_DISPLAY_ORDER.indexOf(b.variant);
+
+  if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
+  if (aIndex !== -1) return -1;
+  if (bIndex !== -1) return 1;
+  return a.variant.localeCompare(b.variant);
+}
+
 function createGroup(baseId: string, members: CursorModelVariant[]): CursorModelGroup {
   const defaultMember = getDefaultMember(members);
   const variants: Record<string, string> = {};
 
-  for (const member of members) {
+  for (const member of [...members].sort(compareVariants)) {
     if (member.variant) {
       variants[member.variant] = member.cursorModelId;
     }

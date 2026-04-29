@@ -88,6 +88,48 @@ describe("models/variants", () => {
     });
   });
 
+  it("groups Claude 4.6 Opus thinking variants under one family", () => {
+    const result = groupCursorModels([
+      { id: "claude-4.6-opus-high", name: "Opus 4.6 1M" },
+      { id: "claude-4.6-opus-max", name: "Opus 4.6 1M Max" },
+      { id: "claude-4.6-opus-high-thinking", name: "Opus 4.6 1M Thinking" },
+      { id: "claude-4.6-opus-high-thinking-fast", name: "Opus 4.6 1M Thinking Fast" },
+      { id: "claude-4.6-opus-max-thinking", name: "Opus 4.6 1M Max Thinking" },
+      { id: "claude-4.6-opus-max-thinking-fast", name: "Opus 4.6 1M Max Thinking Fast" },
+    ]);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      baseId: "claude-4.6-opus",
+      defaultCursorModelId: "claude-4.6-opus-high",
+      variants: {
+        high: "claude-4.6-opus-high",
+        max: "claude-4.6-opus-max",
+        "high-thinking": "claude-4.6-opus-high-thinking",
+        "high-thinking-fast": "claude-4.6-opus-high-thinking-fast",
+        "max-thinking": "claude-4.6-opus-max-thinking",
+        "max-thinking-fast": "claude-4.6-opus-max-thinking-fast",
+      },
+    });
+  });
+
+  it("groups Claude 4.6 Sonnet thinking variants under one family", () => {
+    const result = groupCursorModels([
+      { id: "claude-4.6-sonnet-medium", name: "Sonnet 4.6 1M" },
+      { id: "claude-4.6-sonnet-medium-thinking", name: "Sonnet 4.6 1M Thinking" },
+    ]);
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.groups[0]).toMatchObject({
+      baseId: "claude-4.6-sonnet",
+      defaultCursorModelId: "claude-4.6-sonnet-medium",
+      variants: {
+        medium: "claude-4.6-sonnet-medium",
+        "medium-thinking": "claude-4.6-sonnet-medium-thinking",
+      },
+    });
+  });
+
   it("creates OpenCode model entries with cursorModel options and variants", () => {
     const { entries } = createVariantModelEntries([
       { id: "gpt-5.5-medium", name: "GPT-5.5 Medium" },
