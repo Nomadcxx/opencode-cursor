@@ -621,6 +621,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       // DEBUG: Log raw request structure for tool-loop investigation
       debugLogToFile("raw_request_body", {
         model: body?.model,
+        cursorModel: body?.cursorModel,
         stream,
         toolCount: tools.length,
         toolNames: tools.map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
@@ -637,8 +638,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
       const subagentNames = readSubagentNames();
       const prompt = buildPromptFromMessages(messages, tools, subagentNames);
-      const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
-        boundary.normalizeRuntimeModel(body?.model),
+      const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
+        boundary.resolveRuntimeModel(body?.model, body?.cursorModel),
       );
       const msgSummaryBun = messages.map((m: any, i: number) => {
         const role = m?.role ?? "?";
@@ -1102,8 +1103,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
       const subagentNames = readSubagentNames();
       const prompt = buildPromptFromMessages(messages, tools, subagentNames);
-      const model = boundaryContext.run("normalizeRuntimeModel", (boundary) =>
-        boundary.normalizeRuntimeModel(bodyData?.model),
+      const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
+        boundary.resolveRuntimeModel(bodyData?.model, bodyData?.cursorModel),
       );
       const msgSummary = messages.map((m: any, i: number) => {
         const role = m?.role ?? "?";

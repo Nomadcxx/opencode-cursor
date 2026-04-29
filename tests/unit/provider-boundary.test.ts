@@ -67,6 +67,24 @@ describe("provider boundary", () => {
     expect(boundary.normalizeRuntimeModel("   ")).toBe("auto");
   });
 
+  it("prefers merged cursorModel when resolving runtime models", () => {
+    const boundary = createProviderBoundary("v1", "cursor-acp");
+
+    expect(
+      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "gpt-5.3-codex-high"),
+    ).toBe("gpt-5.3-codex-high");
+    expect(
+      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "cursor-acp/gpt-5.3-codex-high-fast"),
+    ).toBe("gpt-5.3-codex-high-fast");
+    expect(
+      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "   "),
+    ).toBe("gpt-5.3-codex");
+    expect(
+      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", undefined),
+    ).toBe("gpt-5.3-codex");
+    expect(boundary.resolveRuntimeModel(undefined, undefined)).toBe("auto");
+  });
+
   it("matches provider across providerID/providerId/provider keys", () => {
     const boundary = createProviderBoundary("v1", "cursor-acp");
     expect(boundary.matchesProvider({ providerID: "cursor-acp" })).toBe(true);

@@ -51,6 +51,18 @@ The boundary abstraction is implemented in `src/provider/boundary.ts` and runtim
 - Tool-loop guard with fingerprinting (`src/provider/tool-loop-guard.ts`)
 - Guarded fallback to `legacy` when enabled and specific termination/error conditions are met
 
+## Model Variant Resolution
+
+OpenCode sends custom model option fields in the provider request body. When a model variant defines `cursorModel`, OpenCode merges the selected variant value into `body.cursorModel` before the request reaches `cursor-acp`.
+
+The provider boundary resolves the runtime Cursor model in this order:
+
+1. Use `body.cursorModel` when it is a non-empty string.
+2. Otherwise normalize `body.model` by stripping the `cursor-acp/` provider prefix.
+3. Fall back to `auto` when no model is available.
+
+This lets a compact OpenCode model such as `cursor-acp/gpt-5.3-codex` call a concrete Cursor model like `gpt-5.3-codex-high` when the selected variant provides that mapping.
+
 ## Loop Safety and Error Handling
 
 `v1` loop safety is driven by two mechanisms:

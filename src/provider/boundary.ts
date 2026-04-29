@@ -36,6 +36,7 @@ export interface ProviderBoundary {
   ): ToolLoopFlags;
   matchesProvider(inputModel: any): boolean;
   normalizeRuntimeModel(model: unknown): string;
+  resolveRuntimeModel(model: unknown, cursorModel: unknown): string;
   applyChatParamDefaults(
     output: any,
     proxyBaseURL: string | undefined,
@@ -135,6 +136,15 @@ function createSharedBoundary(
       }
 
       return raw;
+    },
+
+    resolveRuntimeModel(model, cursorModel) {
+      const rawCursorModel = typeof cursorModel === "string" ? cursorModel.trim() : "";
+      if (rawCursorModel.length > 0) {
+        return this.normalizeRuntimeModel(rawCursorModel);
+      }
+
+      return this.normalizeRuntimeModel(model);
     },
 
     applyChatParamDefaults(output, proxyBaseURL, defaultBaseURL, defaultApiKey) {
