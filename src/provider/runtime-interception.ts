@@ -815,45 +815,11 @@ function tryRerouteEditToWrite(
   allowedToolNames: Set<string>,
   toolSchemaMap: Map<string, unknown>,
 ): { path: string; toolCall: OpenAiToolCall } | null {
-  if (toolCall.function.name.toLowerCase() !== "edit") {
-    return null;
-  }
-  if (!allowedToolNames.has("write") || !toolSchemaMap.has("write")) {
-    return null;
-  }
-
-  const path = typeof normalizedArgs.path === "string" && normalizedArgs.path.length > 0
-    ? normalizedArgs.path
-    : null;
-  if (!path) {
-    return null;
-  }
-
-  const content =
-    typeof normalizedArgs.new_string === "string"
-      ? normalizedArgs.new_string
-      : typeof normalizedArgs.content === "string"
-        ? normalizedArgs.content
-        : null;
-  if (content === null) {
-    return null;
-  }
-
-  const oldString = normalizedArgs.old_string;
-  if (typeof oldString === "string" && oldString.length > 0) {
-    return null;
-  }
-
-  return {
-    path,
-    toolCall: {
-      ...toolCall,
-      function: {
-        name: "write",
-        arguments: JSON.stringify({ path, content }),
-      },
-    },
-  };
+  // NOTE: Do NOT reroute edit to write based on empty old_string.
+  // OpenCode's edit tool interprets oldString === "" as "overwrite entire file",
+  // and rerouting to write also overwrites. Both are catastrophic.
+  // Let schema validation fail and return an error to the model instead.
+  return null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

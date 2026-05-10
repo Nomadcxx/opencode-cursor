@@ -261,8 +261,14 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
   if (!hasStringNew && typeof content === "string") {
     repaired.new_string = content;
   }
-  if (typeof repaired.new_string === "string" && !hasStringOld) {
-    repaired.old_string = "";
+  // NOTE: Do NOT default old_string to "" here. OpenCode's edit tool interprets
+  // oldString === "" as "overwrite entire file with newString", which is catastrophic.
+  // If old_string is truly missing, let schema validation fail and the caller
+  // will reroute to write or return an error — never silently destroy a file.
+  // If old_string is explicitly sent as "", this is likely a confused model call —
+  // delete it so schema validation properly fails rather than silently destroying.
+  if (hasStringOld && repaired.old_string === "") {
+    delete repaired.old_string;
   }
 
   return repaired;
