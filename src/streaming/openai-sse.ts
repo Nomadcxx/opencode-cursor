@@ -8,7 +8,6 @@ import {
   type StreamJsonEvent,
   type StreamJsonToolCallEvent,
 } from "./types.js";
-import { DeltaTracker } from "./delta-tracker.js";
 
 type OpenAiToolCall = {
   index: number;
@@ -60,12 +59,8 @@ export class StreamToSseConverter {
   private readonly id: string;
   private readonly created: number;
   private readonly model: string;
-  private readonly tracker = new DeltaTracker();
-  // Events with timestamp_ms carry delta text; events without carry accumulated text.
-  // DeltaTracker handles accumulated text only. When partials (delta) were seen,
-  // the final accumulated event must be skipped to prevent 2x duplication.
-  private sawAssistantPartials = false;
-  private sawThinkingPartials = false;
+  private emittedText = "";
+  private emittedThinking = "";
 
   constructor(model: string, options?: { id?: string; created?: number }) {
     this.model = model;
@@ -75,36 +70,16 @@ export class StreamToSseConverter {
 
   handleEvent(event: StreamJsonEvent): string[] {
     if (isAssistantText(event)) {
-      const isPartial = typeof event.timestamp_ms === "number";
-      if (isPartial) {
-        const text = extractText(event);
-        if (text) {
-          this.sawAssistantPartials = true;
-          return [this.chunkWith({ content: text })];
-        }
-        return [];
-      }
-      if (this.sawAssistantPartials) {
-        return [];
-      }
-      const delta = this.tracker.nextText(extractText(event));
+      const text = extractText(event);
+      if (!text) return [];
+      const delta = this.nextDelta(text, "text");
       return delta ? [this.chunkWith({ content: delta })] : [];
     }
 
     if (isThinking(event)) {
-      const isPartial = typeof event.timestamp_ms === "number";
-      if (isPartial) {
-        const text = extractThinking(event);
-        if (text) {
-          this.sawThinkingPartials = true;
-          return [this.chunkWith({ reasoning_content: text })];
-        }
-        return [];
-      }
-      if (this.sawThinkingPartials) {
-        return [];
-      }
-      const delta = this.tracker.nextThinking(extractThinking(event));
+      const text = extractThinking(event);
+      if (!text) return [];
+      const delta = this.nextDelta(text, "thinking");
       return delta ? [this.chunkWith({ reasoning_content: delta })] : [];
     }
 
@@ -113,6 +88,35 @@ export class StreamToSseConverter {
     }
 
     return [];
+  }
+
+  /**
+   * Computes the actual new delta, correctly handling both delta-style and
+   * accumulated-style partial events from cursor-agent.
+   */
+  private nextDelta(text: string, channel: "text" | "thinking"): string {
+    const emitted = channel === "text" ? this.emittedText : this.emittedThinking;
+
+    if (!emitted) {
+      if (channel === "text") this.emittedText = text;
+      else this.emittedThinking = text;
+      return text;
+    }
+
+    if (text.startsWith(emitted)) {
+      const delta = text.slice(emitted.length);
+      if (channel === "text") this.emittedText = text;
+      else this.emittedThinking = text;
+      return delta;
+    }
+
+    if (emitted.startsWith(text)) {
+      return "";
+    }
+
+    if (channel === "text") this.emittedText += text;
+    else this.emittedThinking += text;
+    return text;
   }
 
   private chunkWith(delta: OpenAiDelta): string {

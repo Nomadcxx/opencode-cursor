@@ -8,7 +8,6 @@ import {
   type StreamJsonEvent,
   type StreamJsonToolCallEvent,
 } from "./types.js";
-import { DeltaTracker } from "./delta-tracker.js";
 
 export type AiSdkStreamPart =
   | {
@@ -34,44 +33,23 @@ export type AiSdkStreamPart =
     };
 
 export class StreamToAiSdkParts {
-  private readonly tracker = new DeltaTracker();
   private readonly toolArgsById = new Map<string, string>();
   private readonly startedToolIds = new Set<string>();
-  private sawAssistantPartials = false;
-  private sawThinkingPartials = false;
+  private emittedText = "";
+  private emittedThinking = "";
 
   handleEvent(event: StreamJsonEvent): AiSdkStreamPart[] {
     if (isAssistantText(event)) {
-      const isPartial = typeof event.timestamp_ms === "number";
-      if (isPartial) {
-        const text = extractText(event);
-        if (text) {
-          this.sawAssistantPartials = true;
-          return [{ type: "text-delta", textDelta: text }];
-        }
-        return [];
-      }
-      if (this.sawAssistantPartials) {
-        return [];
-      }
-      const delta = this.tracker.nextText(extractText(event));
+      const text = extractText(event);
+      if (!text) return [];
+      const delta = this.nextDelta(text, "text");
       return delta ? [{ type: "text-delta", textDelta: delta }] : [];
     }
 
     if (isThinking(event)) {
-      const isPartial = typeof event.timestamp_ms === "number";
-      if (isPartial) {
-        const text = extractThinking(event);
-        if (text) {
-          this.sawThinkingPartials = true;
-          return [{ type: "text-delta", textDelta: text }];
-        }
-        return [];
-      }
-      if (this.sawThinkingPartials) {
-        return [];
-      }
-      const delta = this.tracker.nextThinking(extractThinking(event));
+      const text = extractThinking(event);
+      if (!text) return [];
+      const delta = this.nextDelta(text, "thinking");
       return delta ? [{ type: "text-delta", textDelta: delta }] : [];
     }
 
@@ -80,6 +58,35 @@ export class StreamToAiSdkParts {
     }
 
     return [];
+  }
+
+  /**
+   * Computes the actual new delta, correctly handling both delta-style and
+   * accumulated-style partial events from cursor-agent.
+   */
+  private nextDelta(text: string, channel: "text" | "thinking"): string {
+    const emitted = channel === "text" ? this.emittedText : this.emittedThinking;
+
+    if (!emitted) {
+      if (channel === "text") this.emittedText = text;
+      else this.emittedThinking = text;
+      return text;
+    }
+
+    if (text.startsWith(emitted)) {
+      const delta = text.slice(emitted.length);
+      if (channel === "text") this.emittedText = text;
+      else this.emittedThinking = text;
+      return delta;
+    }
+
+    if (emitted.startsWith(text)) {
+      return "";
+    }
+
+    if (channel === "text") this.emittedText += text;
+    else this.emittedThinking += text;
+    return text;
   }
 
   private handleToolCall(event: StreamJsonToolCallEvent): AiSdkStreamPart[] {
