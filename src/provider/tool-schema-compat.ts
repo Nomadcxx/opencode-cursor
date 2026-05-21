@@ -242,6 +242,8 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
     return args;
   }
 
+  const hadOldStringProperty = hasOwn(args, "old_string");
+
   const repaired: JsonRecord = { ...args };
   const hasStringNew = typeof repaired.new_string === "string";
   const hasStringOld = typeof repaired.old_string === "string";
@@ -263,6 +265,19 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
   }
   if (hasStringOld && repaired.old_string === "") {
     delete repaired.old_string;
+  }
+
+  // Executor (`resolveEditArguments`) treats missing old_string + new bodies as full-file
+  // replace. Schema requires old_string unless we synthesize empty here. Do not synthesize when
+  // the model explicitly sent old_string (including ""); those are stripped above on purpose.
+  if (
+    !hadOldStringProperty
+    && typeof repaired.path === "string"
+    && repaired.path.trim().length > 0
+    && typeof repaired.new_string === "string"
+    && repaired.old_string === undefined
+  ) {
+    repaired.old_string = "";
   }
 
   return repaired;

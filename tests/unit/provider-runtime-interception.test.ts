@@ -278,8 +278,8 @@ describe("provider runtime interception fallback", () => {
     expect(interceptedArgs).toContain("\"content\":\"hello\"");
   });
 
-  it("emits a non-fatal hint for edit content payloads without old_string in v1", async () => {
-    let interceptedCount = 0;
+  it("intercepts edit content payloads without old_string in v1 after schema-compat repair", async () => {
+    const interceptedArgs: string[] = [];
     const toolResults: any[] = [];
     const result = await handleToolLoopEventV1({
       ...createBaseOptions({
@@ -311,18 +311,20 @@ describe("provider runtime interception fallback", () => {
         onToolResult: async (toolResult) => {
           toolResults.push(toolResult);
         },
-        onInterceptedToolCall: async () => {
-          interceptedCount += 1;
+        onInterceptedToolCall: async (toolCall) => {
+          interceptedArgs.push(toolCall.function.arguments);
         },
       }),
       boundary: createProviderBoundary("v1", "cursor-acp"),
     });
 
-    expect(result).toEqual({ intercepted: false, skipConverter: true });
-    expect(interceptedCount).toBe(0);
-    expect(toolResults).toHaveLength(1);
-    expect(toolResults[0]?.choices?.[0]?.delta?.content).toContain("Skipped malformed tool call");
-    expect(toolResults[0]?.choices?.[0]?.delta?.content).toContain("old_string");
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(toolResults).toHaveLength(0);
+    expect(interceptedArgs).toHaveLength(1);
+    const parsed = JSON.parse(interceptedArgs[0] ?? "{}");
+    expect(parsed.path).toBe("TODO.md");
+    expect(parsed.new_string).toBe("full rewrite");
+    expect(parsed.old_string).toBe("");
   });
 
   it("emits a non-fatal hint for explicit empty edit old_string in v1", async () => {

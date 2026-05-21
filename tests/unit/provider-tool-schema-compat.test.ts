@@ -272,7 +272,7 @@ describe("tool schema compatibility", () => {
     expect(todos[4].priority).toBe("medium");
   });
 
-  it("repairs edit content payloads into new_string without synthesizing empty old_string", () => {
+  it("repairs edit content payloads into new_string and synthesizes empty old_string for validation", () => {
     const result = applyToolSchemaCompat(
       {
         id: "c1",
@@ -304,11 +304,11 @@ describe("tool schema compatibility", () => {
 
     const args = JSON.parse(result.toolCall.function.arguments);
     expect(args.path).toBe("/tmp/todo.md");
-    expect(args.old_string).toBeUndefined();
+    expect(args.old_string).toBe("");
     expect(args.new_string).toBe("new full content");
     expect(args.content).toBeUndefined();
-    expect(result.validation.ok).toBe(false);
-    expect(result.validation.missing).toEqual(["old_string"]);
+    expect(result.validation.ok).toBe(true);
+    expect(result.validation.missing).toEqual([]);
     expect(result.validation.typeErrors).toEqual([]);
   });
 
@@ -415,10 +415,10 @@ describe("tool schema compatibility", () => {
 
     const args = JSON.parse(result.toolCall.function.arguments);
     expect(args.path).toBe("TODO.md");
-    expect(args.old_string).toBeUndefined();
+    expect(args.old_string).toBe("");
     expect(args.new_string).toBe("updated body");
-    expect(result.validation.ok).toBe(false);
-    expect(result.validation.missing).toEqual(["old_string"]);
+    expect(result.validation.ok).toBe(true);
+    expect(result.validation.missing).toEqual([]);
   });
 
   it("coerces array streamContent chunks into edit new_string", () => {
@@ -453,12 +453,12 @@ describe("tool schema compatibility", () => {
 
     const args = JSON.parse(result.toolCall.function.arguments);
     expect(args.path).toBe("TODO.md");
-    expect(args.old_string).toBeUndefined();
+    expect(args.old_string).toBe("");
     expect(args.new_string).toBe("# Travel Plan\n- Flight\n- Hotel\n");
     expect(args.streamContent).toBeUndefined();
     expect(args.content).toBeUndefined();
-    expect(result.validation.ok).toBe(false);
-    expect(result.validation.missing).toEqual(["old_string"]);
+    expect(result.validation.ok).toBe(true);
+    expect(result.validation.missing).toEqual([]);
   });
 
   it("coerces object-wrapped content into edit new_string", () => {
@@ -493,11 +493,11 @@ describe("tool schema compatibility", () => {
 
     const args = JSON.parse(result.toolCall.function.arguments);
     expect(args.path).toBe("SIMPLE_TEST.md");
-    expect(args.old_string).toBeUndefined();
+    expect(args.old_string).toBe("");
     expect(typeof args.new_string).toBe("string");
     expect(args.new_string.length).toBeGreaterThan(0);
-    expect(result.validation.ok).toBe(false);
-    expect(result.validation.missing).toEqual(["old_string"]);
+    expect(result.validation.ok).toBe(true);
+    expect(result.validation.missing).toEqual([]);
   });
 
   it("coerces nested array of {text} chunk objects into edit new_string", () => {
@@ -536,10 +536,10 @@ describe("tool schema compatibility", () => {
 
     const args = JSON.parse(result.toolCall.function.arguments);
     expect(args.path).toBe("TODO.md");
-    expect(args.old_string).toBeUndefined();
+    expect(args.old_string).toBe("");
     expect(args.new_string).toBe("# Plan\n- Step 1\n- Step 2\n");
-    expect(result.validation.ok).toBe(false);
-    expect(result.validation.missing).toEqual(["old_string"]);
+    expect(result.validation.ok).toBe(true);
+    expect(result.validation.missing).toEqual([]);
   });
 
   it("rejects explicit empty edit old_string instead of preserving a full-file replacement", () => {
@@ -579,6 +579,43 @@ describe("tool schema compatibility", () => {
     expect(args.new_string).toBe("-- test\nreturn {");
     expect(result.validation.ok).toBe(false);
     expect(result.validation.missing).toEqual(["old_string"]);
+  });
+
+  it("synthesizes empty old_string for edit with path and new_string only (no content key)", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "c_path_new_only",
+        type: "function",
+        function: {
+          name: "edit",
+          arguments: JSON.stringify({
+            path: "/tmp/out.txt",
+            new_string: "entire body",
+          }),
+        },
+      },
+      new Map([
+        [
+          "edit",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              old_string: { type: "string" },
+              new_string: { type: "string" },
+            },
+            required: ["path", "old_string", "new_string"],
+            additionalProperties: false,
+          },
+        ],
+      ]),
+    );
+
+    const args = JSON.parse(result.toolCall.function.arguments);
+    expect(args.path).toBe("/tmp/out.txt");
+    expect(args.old_string).toBe("");
+    expect(args.new_string).toBe("entire body");
+    expect(result.validation.ok).toBe(true);
   });
 
   it("preserves valid edit calls with explicit old/new strings", () => {
