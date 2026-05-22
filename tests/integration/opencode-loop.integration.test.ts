@@ -51,6 +51,23 @@ const EDIT_TOOL = {
   },
 };
 
+const WRITE_TOOL = {
+  type: "function",
+  function: {
+    name: "write",
+    description: "Write a file",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+      additionalProperties: false,
+    },
+  },
+};
+
 const MOCK_CURSOR_AGENT = `#!/usr/bin/env node
 const fs = require("fs");
 
@@ -397,24 +414,79 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
   });
 
-  it("accepts non-streaming edit with path+content (full rewrite) after schema-compat repair", async () => {
+  it("reroutes non-streaming edit content payloads to write when write is available", async () => {
     process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
     process.env.MOCK_CURSOR_PROMPT_FILE = "";
 
     const response = await requestCompletion(baseURL, {
       model: "auto",
       stream: false,
-      tools: [EDIT_TOOL],
+      tools: [EDIT_TOOL, WRITE_TOOL],
       messages: [{ role: "user", content: "Edit TODO.md" }],
     });
 
     const json: any = await response.json();
-    expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe("edit");
+    expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe("write");
     const args = JSON.parse(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ?? "{}");
     expect(args.path).toBe("TODO.md");
-    expect(args.new_string).toBe("full rewrite");
-    expect(args.old_string).toBe("");
+    expect(args.content).toBe("full rewrite");
     expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  it("reroutes streaming edit content payloads to write when write is available", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [EDIT_TOOL, WRITE_TOOL],
+      messages: [{ role: "user", content: "Edit TODO.md" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("write");
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments).toContain("TODO.md");
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments).toContain("full rewrite");
+
+    const finishReasons = chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean);
+    expect(finishReasons).toContain("tool_calls");
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain("Skipped malformed tool call");
+    expect(allContent).not.toContain("edit fallback text");
+  });
+
+  it("skips streaming edit when write tool is not offered", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [EDIT_TOOL],
+      messages: [{ role: "user", content: "Edit TODO.md" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    expect(toolDelta).toBeUndefined();
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).toContain("edit fallback text");
   });
 
   // TODO: Fix test isolation issue - this test passes alone but fails in full suite

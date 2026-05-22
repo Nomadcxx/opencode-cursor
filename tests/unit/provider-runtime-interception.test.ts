@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import type { OpenAiToolCall } from "../../src/proxy/tool-loop";
 import { createProviderBoundary } from "../../src/provider/boundary";
 import { createToolLoopGuard } from "../../src/provider/tool-loop-guard";
 import {
@@ -52,6 +53,52 @@ function createBaseOptions(overrides: Partial<EventOptions> = {}): EventOptions 
   return { ...base, ...overrides };
 }
 
+const EDIT_WRITE_SCHEMA_MAP = new Map([
+  [
+    "edit",
+    {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+      },
+      required: ["path", "old_string", "new_string"],
+      additionalProperties: false,
+    },
+  ],
+  [
+    "write",
+    {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+    },
+  ],
+]);
+
+function createEditPathContentRerouteOverrides(
+  overrides: Partial<EventOptions> = {},
+): Partial<EventOptions> {
+  return {
+    event: {
+      type: "tool_call",
+      call_id: "c_edit_reroute",
+      tool_call: {
+        editToolCall: {
+          args: { path: "TODO.md", content: "full rewrite" },
+        },
+      },
+    } as any,
+    allowedToolNames: new Set(["edit", "write"]),
+    toolSchemaMap: EDIT_WRITE_SCHEMA_MAP,
+    ...overrides,
+  };
+}
+
 describe("provider runtime interception parity", () => {
   it("produces equivalent interception results for legacy and v1 in opencode mode", async () => {
     const legacyOptions = createBaseOptions();
@@ -65,6 +112,42 @@ describe("provider runtime interception parity", () => {
 
     expect(legacyResult).toEqual({ intercepted: true, skipConverter: true });
     expect(v1Result).toEqual(legacyResult);
+  });
+
+  it("legacy and v1 agree on edit path+content reroute to write", async () => {
+    const interceptedLegacy: OpenAiToolCall[] = [];
+    const interceptedV1: OpenAiToolCall[] = [];
+    const rerouteOverrides = createEditPathContentRerouteOverrides();
+
+    const legacyResult = await handleToolLoopEventLegacy(
+      createBaseOptions({
+        ...rerouteOverrides,
+        onInterceptedToolCall: async (toolCall) => {
+          interceptedLegacy.push(toolCall);
+        },
+      }),
+    );
+    const v1Result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        ...rerouteOverrides,
+        onInterceptedToolCall: async (toolCall) => {
+          interceptedV1.push(toolCall);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(legacyResult).toEqual({ intercepted: true, skipConverter: true });
+    expect(v1Result).toEqual(legacyResult);
+    expect(interceptedLegacy).toHaveLength(1);
+    expect(interceptedV1).toHaveLength(1);
+    expect(interceptedLegacy[0]?.function.name).toBe("write");
+    expect(interceptedV1[0]?.function.name).toBe("write");
+    const legacyArgs = JSON.parse(interceptedLegacy[0]?.function.arguments ?? "{}");
+    const v1Args = JSON.parse(interceptedV1[0]?.function.arguments ?? "{}");
+    expect(legacyArgs).toEqual(v1Args);
+    expect(legacyArgs.path).toBe("TODO.md");
+    expect(legacyArgs.content).toBe("full rewrite");
   });
 
   it("produces equivalent proxy-exec passthrough behavior in legacy and v1", async () => {
@@ -278,41 +361,17 @@ describe("provider runtime interception fallback", () => {
     expect(interceptedArgs).toContain("\"content\":\"hello\"");
   });
 
-  it("intercepts edit content payloads without old_string in v1 after schema-compat repair", async () => {
-    const interceptedArgs: string[] = [];
+  it("reroutes path+content edit missing old_string to write in v1", async () => {
+    const intercepted: OpenAiToolCall[] = [];
     const toolResults: any[] = [];
     const result = await handleToolLoopEventV1({
       ...createBaseOptions({
-        event: {
-          type: "tool_call",
-          call_id: "c4",
-          tool_call: {
-            editToolCall: {
-              args: { path: "TODO.md", content: "full rewrite" },
-            },
-          },
-        } as any,
-        allowedToolNames: new Set(["edit"]),
-        toolSchemaMap: new Map([
-          [
-            "edit",
-            {
-              type: "object",
-              properties: {
-                path: { type: "string" },
-                old_string: { type: "string" },
-                new_string: { type: "string" },
-              },
-              required: ["path", "old_string", "new_string"],
-              additionalProperties: false,
-            },
-          ],
-        ]),
+        ...createEditPathContentRerouteOverrides(),
         onToolResult: async (toolResult) => {
           toolResults.push(toolResult);
         },
         onInterceptedToolCall: async (toolCall) => {
-          interceptedArgs.push(toolCall.function.arguments);
+          intercepted.push(toolCall);
         },
       }),
       boundary: createProviderBoundary("v1", "cursor-acp"),
@@ -320,11 +379,61 @@ describe("provider runtime interception fallback", () => {
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
     expect(toolResults).toHaveLength(0);
-    expect(interceptedArgs).toHaveLength(1);
-    const parsed = JSON.parse(interceptedArgs[0] ?? "{}");
-    expect(parsed.path).toBe("TODO.md");
-    expect(parsed.new_string).toBe("full rewrite");
-    expect(parsed.old_string).toBe("");
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("write");
+    const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
+    expect(args.path).toBe("TODO.md");
+    expect(args.content).toBe("full rewrite");
+  });
+
+  it("reroutes path+content edit missing old_string to write in legacy", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const toolResults: any[] = [];
+    const result = await handleToolLoopEventLegacy(
+      createBaseOptions({
+        ...createEditPathContentRerouteOverrides(),
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+      }),
+    );
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(toolResults).toHaveLength(0);
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("write");
+  });
+
+  it("falls back to hint when write unavailable for path+content edit", async () => {
+    const toolResults: any[] = [];
+    let interceptedCount = 0;
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        ...createEditPathContentRerouteOverrides({
+          allowedToolNames: new Set(["edit"]),
+        }),
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+        onInterceptedToolCall: async () => {
+          interceptedCount += 1;
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      schemaValidationFailureMode: "pass_through",
+    });
+
+    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    expect(interceptedCount).toBe(0);
+    expect(toolResults).toHaveLength(1);
+    const hint = toolResults[0]?.choices?.[0]?.delta?.content ?? "";
+    expect(hint).toContain("Skipped malformed tool call");
+    expect(hint).toContain("write");
+    expect(hint.match(/missing required: old_string/g)?.length).toBe(1);
+    expect(hint).not.toContain("missing required: old_string. missing required: old_string");
   });
 
   it("emits a non-fatal hint for explicit empty edit old_string in v1", async () => {

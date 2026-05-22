@@ -163,9 +163,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   registry.register({
     id: "edit",
     name: "edit",
-    description:
-      "Edit a file by replacing old text with new text. Use for targeted replacements; use write to overwrite an entire file. "
-      + "Some models send `content` instead of `new_string` for a full-file body; that is treated like an empty old_string (overwrite).",
+    description: "Edit a file by replacing old text with new text. Use for targeted replacements; use write to overwrite an entire file.",
     parameters: {
       type: "object",
       properties: {
@@ -533,10 +531,6 @@ function resolveEditArguments(args: Record<string, unknown>): {
     if (fallbackContent !== null) {
       newString = fallbackContent;
     }
-  }
-
-  if (oldString === undefined && newString !== undefined) {
-    oldString = "";
   }
 
   return {

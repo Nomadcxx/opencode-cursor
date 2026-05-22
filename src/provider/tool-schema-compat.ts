@@ -49,6 +49,7 @@ export interface ToolSchemaValidationResult {
 export interface ToolSchemaCompatResult {
   toolCall: OpenAiToolCall;
   normalizedArgs: JsonRecord;
+  originalArgs: JsonRecord;
   originalArgKeys: string[];
   normalizedArgKeys: string[];
   collisionKeys: string[];
@@ -89,6 +90,10 @@ export function applyToolSchemaCompat(
     sanitization.args,
     schema,
     sanitization.unexpected,
+    {
+      originalArgs: parsedArgs,
+      writeSchema: toolSchemaMap.get("write"),
+    },
   );
 
   const normalizedToolCall: OpenAiToolCall = {
@@ -102,10 +107,101 @@ export function applyToolSchemaCompat(
   return {
     toolCall: normalizedToolCall,
     normalizedArgs: sanitization.args,
+    originalArgs: parsedArgs,
     originalArgKeys,
     normalizedArgKeys: Object.keys(sanitization.args),
     collisionKeys,
     validation,
+  };
+}
+
+export function isFullFileShapedEditValidationFailure(
+  toolName: string,
+  args: JsonRecord,
+  validation: ToolSchemaValidationResult,
+  originalArgs: JsonRecord,
+  writeSchema?: unknown,
+): boolean {
+  if (toolName.toLowerCase() !== "edit" || validation.ok) {
+    return false;
+  }
+  return buildEditFullFileHint(args, validation.missing, validation.typeErrors, {
+    originalArgs,
+    writeSchema,
+  }) !== null;
+}
+
+function buildWriteArguments(
+  filePath: string,
+  content: string,
+  writeSchema: unknown,
+): JsonRecord {
+  if (!isRecord(writeSchema)) {
+    return { path: filePath, content };
+  }
+  const required = Array.isArray(writeSchema.required)
+    ? writeSchema.required.filter((value): value is string => typeof value === "string")
+    : [];
+  if (required.includes("filePath")) {
+    return { filePath, content };
+  }
+  return { path: filePath, content };
+}
+
+/** Malformed full-file edit (path + body, no old_string) → write tool call when write is available. */
+export function tryRerouteEditToWrite(
+  toolCall: OpenAiToolCall,
+  compat: ToolSchemaCompatResult,
+  allowedToolNames: Set<string>,
+  toolSchemaMap: Map<string, unknown>,
+): OpenAiToolCall | null {
+  if (toolCall.function.name.toLowerCase() !== "edit") {
+    return null;
+  }
+  if (!allowedToolNames.has("write") || !toolSchemaMap.has("write")) {
+    return null;
+  }
+
+  const writeSchema = toolSchemaMap.get("write");
+  if (
+    !isFullFileShapedEditValidationFailure(
+      toolCall.function.name,
+      compat.normalizedArgs,
+      compat.validation,
+      compat.originalArgs,
+      writeSchema,
+    )
+  ) {
+    return null;
+  }
+
+  const filePath = typeof compat.normalizedArgs.path === "string" && compat.normalizedArgs.path.length > 0
+    ? compat.normalizedArgs.path
+    : typeof compat.normalizedArgs.filePath === "string" && compat.normalizedArgs.filePath.length > 0
+      ? compat.normalizedArgs.filePath
+      : null;
+  if (!filePath) {
+    return null;
+  }
+
+  const content =
+    typeof compat.normalizedArgs.new_string === "string"
+      ? compat.normalizedArgs.new_string
+      : typeof compat.normalizedArgs.newString === "string"
+        ? compat.normalizedArgs.newString
+        : typeof compat.normalizedArgs.content === "string"
+          ? compat.normalizedArgs.content
+          : null;
+  if (content === null) {
+    return null;
+  }
+
+  return {
+    ...toolCall,
+    function: {
+      name: "write",
+      arguments: JSON.stringify(buildWriteArguments(filePath, content, writeSchema)),
+    },
   };
 }
 
@@ -242,8 +338,6 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
     return args;
   }
 
-  const hadOldStringProperty = hasOwn(args, "old_string");
-
   const repaired: JsonRecord = { ...args };
   const hasStringNew = typeof repaired.new_string === "string";
   const hasStringOld = typeof repaired.old_string === "string";
@@ -265,19 +359,6 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
   }
   if (hasStringOld && repaired.old_string === "") {
     delete repaired.old_string;
-  }
-
-  // Executor (`resolveEditArguments`) treats missing old_string + new bodies as full-file
-  // replace. Schema requires old_string unless we synthesize empty here. Do not synthesize when
-  // the model explicitly sent old_string (including ""); those are stripped above on purpose.
-  if (
-    !hadOldStringProperty
-    && typeof repaired.path === "string"
-    && repaired.path.trim().length > 0
-    && typeof repaired.new_string === "string"
-    && repaired.old_string === undefined
-  ) {
-    repaired.old_string = "";
   }
 
   return repaired;
@@ -365,11 +446,17 @@ function sanitizeArgumentsForSchema(
   return { args: sanitized, unexpected };
 }
 
+type ValidateToolArgumentsContext = {
+  originalArgs?: JsonRecord;
+  writeSchema?: unknown;
+};
+
 function validateToolArguments(
   toolName: string,
   args: JsonRecord,
   schema: unknown,
   unexpected: string[],
+  context: ValidateToolArgumentsContext = {},
 ): ToolSchemaValidationResult {
   if (!isRecord(schema)) {
     return {
@@ -414,16 +501,90 @@ function validateToolArguments(
     missing,
     unexpected,
     typeErrors,
-    repairHint: ok ? undefined : buildRepairHint(toolName, missing, unexpected, typeErrors),
+    repairHint: ok
+      ? undefined
+      : buildRepairHint(toolName, args, missing, unexpected, typeErrors, context),
   };
+}
+
+function hadOldStringPropertyInPayload(args: JsonRecord): boolean {
+  for (const key of Object.keys(args)) {
+    const token = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (token === "oldstring") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasEditFilePath(args: JsonRecord): boolean {
+  const pathValue = args.path ?? args.filePath;
+  return typeof pathValue === "string" && pathValue.trim().length > 0;
+}
+
+function hasEditBody(args: JsonRecord): boolean {
+  const body = args.new_string ?? args.newString ?? args.content;
+  return typeof body === "string" && body.length > 0;
+}
+
+function writeToolExample(writeSchema: unknown): string {
+  if (!isRecord(writeSchema)) {
+    return "write with path and content";
+  }
+  const required = Array.isArray(writeSchema.required)
+    ? writeSchema.required.filter((value): value is string => typeof value === "string")
+    : [];
+  if (required.includes("filePath")) {
+    return "write with filePath and content";
+  }
+  return "write with path and content";
+}
+
+function buildEditFullFileHint(
+  args: JsonRecord,
+  missing: string[],
+  typeErrors: string[],
+  context: ValidateToolArgumentsContext,
+): string | null {
+  if (typeErrors.length > 0) {
+    return null;
+  }
+
+  const missingOldStringOnly =
+    (missing.includes("old_string") || missing.includes("oldString"))
+    && missing.every((key) => key === "old_string" || key === "oldString");
+  if (!missingOldStringOnly) {
+    return null;
+  }
+
+  const originalArgs = context.originalArgs ?? {};
+  if (hadOldStringPropertyInPayload(originalArgs)) {
+    return null;
+  }
+
+  if (!hasEditFilePath(args) || !hasEditBody(args)) {
+    return null;
+  }
+
+  const example = writeToolExample(context.writeSchema);
+  return `For a full file body, use ${example} instead of edit without old_string`;
 }
 
 function buildRepairHint(
   toolName: string,
+  args: JsonRecord,
   missing: string[],
   unexpected: string[],
   typeErrors: string[],
+  context: ValidateToolArgumentsContext = {},
 ): string {
+  const fullFileHint = toolName.toLowerCase() === "edit"
+    ? buildEditFullFileHint(args, missing, typeErrors, context)
+    : null;
+  if (fullFileHint) {
+    return fullFileHint;
+  }
+
   const hints: string[] = [];
   if (missing.length > 0) {
     hints.push(`missing required: ${missing.join(", ")}`);
@@ -434,12 +595,14 @@ function buildRepairHint(
   if (typeErrors.length > 0) {
     hints.push(`fix type errors: ${typeErrors.join("; ")}`);
   }
+
   if (
     toolName.toLowerCase() === "edit"
-    && (missing.includes("old_string") || missing.includes("new_string"))
+    && (missing.includes("old_string") || missing.includes("oldString") || missing.includes("new_string") || missing.includes("newString"))
   ) {
     hints.push("edit requires path, old_string, and new_string");
   }
+
   return hints.join(" | ");
 }
 

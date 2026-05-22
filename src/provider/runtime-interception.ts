@@ -3,7 +3,11 @@ import { extractOpenAiToolCall, type OpenAiToolCall, type ToolCallExtractionResu
 import type { StreamJsonToolCallEvent } from "../streaming/types.js";
 import type { ToolRouter } from "../tools/router.js";
 import { createLogger } from "../utils/logger.js";
-import { applyToolSchemaCompat, type ToolSchemaValidationResult } from "./tool-schema-compat.js";
+import {
+  applyToolSchemaCompat,
+  tryRerouteEditToWrite,
+  type ToolSchemaValidationResult,
+} from "./tool-schema-compat.js";
 import type { ToolLoopGuard } from "./tool-loop-guard.js";
 import type { ProviderBoundaryMode, ToolLoopMode } from "./boundary.js";
 import type { ProviderBoundary } from "./boundary.js";
@@ -188,6 +192,20 @@ export async function handleToolLoopEventLegacy(
           return { intercepted: false, skipConverter: true };
         }
         return { intercepted: false, skipConverter: true, terminate: validationTermination };
+      }
+
+      const reroutedWrite = tryRerouteEditToWrite(
+        normalizedToolCall,
+        compat,
+        allowedToolNames,
+        toolSchemaMap,
+      );
+      if (reroutedWrite) {
+        log.debug("Rerouting malformed edit call to write (legacy)", {
+          missing: compat.validation.missing,
+        });
+        await onInterceptedToolCall(reroutedWrite);
+        return { intercepted: true, skipConverter: true };
       }
 
       if (shouldEmitNonFatalSchemaValidationHint(normalizedToolCall, compat.validation)) {
@@ -381,6 +399,23 @@ export async function handleToolLoopEventV1(
         intercepted: false,
         skipConverter: true,
         terminate: createSchemaValidationTermination(normalizedToolCall, compat.validation),
+      };
+    }
+    const reroutedWrite = tryRerouteEditToWrite(
+      normalizedToolCall,
+      compat,
+      allowedToolNames,
+      toolSchemaMap,
+    );
+    if (reroutedWrite) {
+      log.debug("Rerouting malformed edit call to write", {
+        missing: compat.validation.missing,
+        typeErrors: compat.validation.typeErrors,
+      });
+      await onInterceptedToolCall(reroutedWrite);
+      return {
+        intercepted: true,
+        skipConverter: true,
       };
     }
     if (
@@ -668,11 +703,11 @@ function createNonFatalSchemaValidationHintChunk(
   validation: ToolSchemaValidationResult,
 ): NonFatalSchemaValidationResultChunk {
   const termination = createSchemaValidationTermination(toolCall, validation);
-  const hint =
-    termination.repairHint
-    || "Use write for full-file replacement, or provide path, old_string, and new_string for edit.";
+  const fallbackHint =
+    "Use write for full-file replacement, or provide path, old_string, and new_string for edit.";
+  const suffix = termination.repairHint ? "" : ` ${fallbackHint}`;
   const content =
-    `Skipped malformed tool call "${toolCall.function.name}": ${termination.message} ${hint}`.trim();
+    `Skipped malformed tool call "${toolCall.function.name}": ${termination.message}${suffix}`.trim();
   return {
     id: meta.id,
     object: "chat.completion.chunk",

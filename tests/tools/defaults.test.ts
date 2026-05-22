@@ -210,26 +210,32 @@ describe("Default Tools", () => {
     expect(result.error).toContain("missing required argument 'old_string'");
   });
 
-  it("should accept edit payloads that only provide content", async () => {
+  it("regression: rejects edit payloads that only provide content without old_string", async () => {
     const registry = new ToolRegistry();
     registerDefaultTools(registry);
     const executor = new LocalExecutor(registry);
-    const fs = await import("fs");
-
-    const tmpFile = `/tmp/test-edit-content-${Date.now()}.txt`;
-    if (fs.existsSync(tmpFile)) {
-      fs.unlinkSync(tmpFile);
-    }
 
     const result = await executeWithChain([executor], "edit", {
-      path: tmpFile,
-      content: "Created from content fallback",
+      path: "/tmp/test-edit-content-only.txt",
+      content: "should not overwrite",
     });
 
-    expect(result.status).toBe("success");
-    expect(fs.readFileSync(tmpFile, "utf-8")).toBe("Created from content fallback");
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("missing required argument 'old_string'");
+  });
 
-    fs.unlinkSync(tmpFile);
+  it("regression: rejects edit payloads that only provide new_string without old_string", async () => {
+    const registry = new ToolRegistry();
+    registerDefaultTools(registry);
+    const executor = new LocalExecutor(registry);
+
+    const result = await executeWithChain([executor], "edit", {
+      path: "/tmp/test-edit-new-only.txt",
+      new_string: "should not overwrite",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("missing required argument 'old_string'");
   });
 
   it("should get all tool definitions", () => {
