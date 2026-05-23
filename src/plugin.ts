@@ -1,7 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
-import { appendFileSync, existsSync, mkdirSync, realpathSync } from "fs";
+import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
@@ -61,31 +61,6 @@ import {
 import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
 
 const log = createLogger("plugin");
-
-// Debug log file for tool-loop investigation
-const DEBUG_LOG_DIR = join(homedir(), ".config", "opencode", "logs");
-const DEBUG_LOG_FILE = join(DEBUG_LOG_DIR, "tool-loop-debug.log");
-
-function ensureDebugLogDir(): void {
-  try {
-    if (!existsSync(DEBUG_LOG_DIR)) {
-      mkdir(DEBUG_LOG_DIR, { recursive: true }).catch(() => {});
-    }
-  } catch {
-    // Ignore errors creating log directory
-  }
-}
-
-function debugLogToFile(message: string, data: any): void {
-  try {
-    ensureDebugLogDir();
-    const timestamp = new Date().toISOString();
-    const logLine = `[${timestamp}] ${message}: ${JSON.stringify(data, null, 2)}\n`;
-    appendFileSync(DEBUG_LOG_FILE, logLine);
-  } catch {
-    // Ignore errors
-  }
-}
 
 interface McpToolSummary {
   serverName: string;
@@ -707,8 +682,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const stream = body?.stream === true;
       const tools = Array.isArray(body?.tools) ? body.tools : [];
 
-      // DEBUG: Log raw request structure for tool-loop investigation
-      debugLogToFile("raw_request_body", {
+      log.debug("raw request body", {
         model: body?.model,
         cursorModel: body?.cursorModel,
         stream,

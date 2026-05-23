@@ -1,35 +1,6 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("proxy:prompt-builder");
-
-// Debug log file for tool-loop investigation
-const DEBUG_LOG_DIR = join(homedir(), ".config", "opencode", "logs");
-const DEBUG_LOG_FILE = join(DEBUG_LOG_DIR, "tool-loop-debug.log");
-
-function ensureLogDir(): void {
-  try {
-    if (!existsSync(DEBUG_LOG_DIR)) {
-      mkdirSync(DEBUG_LOG_DIR, { recursive: true });
-    }
-  } catch {
-    // Ignore errors creating log directory
-  }
-}
-
-function debugLogToFile(message: string, data: any): void {
-  try {
-    ensureLogDir();
-    const timestamp = new Date().toISOString();
-    const logLine = `[${timestamp}] ${message}: ${JSON.stringify(data, null, 2)}\n`;
-    appendFileSync(DEBUG_LOG_FILE, logLine);
-  } catch (err) {
-    // Fall back to regular debug log if file writing fails
-    log.debug(message, data);
-  }
-}
 
 /**
  * Build a text prompt from OpenAI chat messages + tool definitions.
@@ -37,7 +8,6 @@ function debugLogToFile(message: string, data: any): void {
  * plain text flattening would silently drop.
  */
 export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>, subagentNames: string[] = []): string {
-  // DEBUG: Log incoming message structure to file for root cause analysis
   const messageSummary = messages.map((m: any, i: number) => {
     const role = m?.role ?? "?";
     const hasToolCalls = Array.isArray(m?.tool_calls) ? m.tool_calls.length : 0;
@@ -52,7 +22,7 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>,
   const assistantEmpty = messages.filter((m: any) => m?.role === "assistant" && (!m?.tool_calls || m.tool_calls.length === 0) && (!m?.content || m.content === "" || m.content === null));
   const toolResults = messages.filter((m: any) => m?.role === "tool");
 
-  debugLogToFile("buildPromptFromMessages", {
+  log.debug("buildPromptFromMessages", {
     totalMessages: messages.length,
     totalTools: tools.length,
     messageSummary,
@@ -165,15 +135,14 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>,
     );
   }
 
-  // DEBUG: Log the final prompt structure
   const finalPrompt = lines.join("\n\n");
-  debugLogToFile("buildPromptFromMessages: final prompt", {
+  log.debug("buildPromptFromMessages: final prompt", {
     lineCount: lines.length,
     promptLength: finalPrompt.length,
     promptPreview: finalPrompt.slice(0, 500),
     hasToolResultFormat: finalPrompt.includes("TOOL_RESULT"),
     hasAssistantToolCallFormat: finalPrompt.includes("tool_call(id:"),
-    hasCompletionSignal: finalPrompt.includes("Based on the tool results"),
+    hasCompletionSignal: finalPrompt.includes("The above tool calls have been executed"),
   });
 
   return finalPrompt;
