@@ -33,6 +33,7 @@ import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
 import { readMcpConfigs, readSubagentNames } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
+import { MCP_TOOL_PREFIX } from "./mcp/tool-bridge.js";
 import { buildMcpToolHookEntries, buildMcpToolDefinitions } from "./mcp/tool-bridge.js";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
@@ -93,8 +94,8 @@ export function buildAvailableToolsSystemMessage(
     }
 
     const lines: string[] = [
-      "MCP TOOLS — Use via Shell with the `mcptool` CLI.",
-      "Syntax: mcptool call <server> <tool> [json-args]",
+      `MCP TOOLS — Use via direct tool calls (\`${MCP_TOOL_PREFIX}<server>__<tool>\`).`,
+      "These tools are exposed as first-class tool calls (e.g. mcp__filesystem__read_file).",
       "",
     ];
 
@@ -103,11 +104,6 @@ export function buildAvailableToolsSystemMessage(
       for (const t of tools) {
         const paramHint = t.params?.length ? ` (params: ${t.params.join(", ")})` : "";
         lines.push(`  - ${t.toolName}${paramHint}${t.description ? " — " + t.description : ""}`);
-      }
-      if (tools.length > 0) {
-        const ex = tools[0];
-        const exArgs = ex.params?.length ? ` '{"${ex.params[0]}":"..."}'` : "";
-        lines.push(`  Example: mcptool call ${server} ${ex.toolName}${exArgs}`);
       }
       lines.push("");
     }

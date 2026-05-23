@@ -12,7 +12,7 @@ describe("Plugin MCP system transform", () => {
     expect(systemMessage).toContain("skill_search -> search");
   });
 
-  it("includes mcptool Shell instructions when summaries provided", () => {
+  it("includes direct MCP tool call instructions when summaries provided", () => {
     const systemMessage = buildAvailableToolsSystemMessage(
       ["read", "write"],
       [],
@@ -37,15 +37,15 @@ describe("Plugin MCP system transform", () => {
       ],
     );
 
-    expect(systemMessage).toContain("mcptool call");
+    expect(systemMessage).toContain("direct tool calls");
+    expect(systemMessage).toContain("mcp__");
     expect(systemMessage).toContain("hybrid-memory");
     expect(systemMessage).toContain("memory_search");
     expect(systemMessage).toContain("memory_stats");
     expect(systemMessage).toContain("query, limit");
-    expect(systemMessage).toContain("Shell");
   });
 
-  it("includes multiple servers in Shell instructions", () => {
+  it("includes multiple servers in MCP tool instructions", () => {
     const systemMessage = buildAvailableToolsSystemMessage(
       [],
       [],

@@ -4,6 +4,8 @@ import type { McpClientManager } from "./client-manager.js";
 
 const log = createLogger("mcp:tool-bridge");
 
+export const MCP_TOOL_PREFIX = "mcp__";
+
 interface DiscoveredMcpTool {
   name: string;
   serverName: string;
@@ -79,7 +81,7 @@ export function buildMcpToolDefinitions(tools: DiscoveredMcpTool[]): any[] {
 function namespaceMcpTool(serverName: string, toolName: string): string {
   const sanitizedServer = serverName.replace(/[^a-zA-Z0-9]/g, "_");
   const sanitizedTool = toolName.replace(/[^a-zA-Z0-9]/g, "_");
-  return `mcp__${sanitizedServer}__${sanitizedTool}`;
+  return `${MCP_TOOL_PREFIX}${sanitizedServer}__${sanitizedTool}`;
 }
 
 function mcpSchemaToZod(inputSchema: Record<string, unknown> | undefined, z: any): any {
