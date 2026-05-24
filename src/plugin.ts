@@ -33,8 +33,12 @@ import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
 import { readMcpConfigs, readSubagentNames } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
-import { MCP_TOOL_PREFIX } from "./mcp/tool-bridge.js";
-import { buildMcpToolHookEntries, buildMcpToolDefinitions } from "./mcp/tool-bridge.js";
+import {
+  MCP_TOOL_PREFIX,
+  buildMcpToolHookEntries,
+  buildMcpToolDefinitions,
+  namespaceMcpTool,
+} from "./mcp/tool-bridge.js";
 import { createOpencodeClient } from "@opencode-ai/sdk";
 import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
 import { LocalExecutor } from "./tools/executors/local.js";
@@ -66,8 +70,14 @@ const log = createLogger("plugin");
 interface McpToolSummary {
   serverName: string;
   toolName: string;
+  callName?: string;
   description?: string;
   params?: string[];
+}
+
+function getMcpToolDefinitionName(mcpToolDefs: any[], index: number): string | undefined {
+  const name = mcpToolDefs[index]?.function?.name;
+  return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
 export function buildAvailableToolsSystemMessage(
@@ -86,8 +96,15 @@ export function buildAvailableToolsSystemMessage(
   }
 
   if (mcpToolSummaries && mcpToolSummaries.length > 0) {
-    const servers = new Map<string, McpToolSummary[]>();
-    for (const s of mcpToolSummaries) {
+    const summariesWithCallNames = mcpToolSummaries.map((summary, index) => ({
+      ...summary,
+      callName: summary.callName
+        ?? getMcpToolDefinitionName(mcpToolDefs, index)
+        ?? namespaceMcpTool(summary.serverName, summary.toolName),
+    }));
+
+    const servers = new Map<string, Array<McpToolSummary & { callName: string }>>();
+    for (const s of summariesWithCallNames) {
       const list = servers.get(s.serverName) ?? [];
       list.push(s);
       servers.set(s.serverName, list);
@@ -103,7 +120,8 @@ export function buildAvailableToolsSystemMessage(
       lines.push(`Server: ${server}`);
       for (const t of tools) {
         const paramHint = t.params?.length ? ` (params: ${t.params.join(", ")})` : "";
-        lines.push(`  - ${t.toolName}${paramHint}${t.description ? " — " + t.description : ""}`);
+        const sourceHint = t.callName === t.toolName ? "" : ` (server: ${t.serverName}; tool: ${t.toolName})`;
+        lines.push(`  - ${t.callName}${paramHint}${t.description ? " — " + t.description : ""}${sourceHint}`);
       }
       lines.push("");
     }
@@ -1873,6 +1891,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           mcpToolSummaries = tools.map((t) => ({
             serverName: t.serverName,
             toolName: t.name,
+            callName: namespaceMcpTool(t.serverName, t.name),
             description: t.description,
             params: t.inputSchema
               ? Object.keys((t.inputSchema as any).properties ?? {})

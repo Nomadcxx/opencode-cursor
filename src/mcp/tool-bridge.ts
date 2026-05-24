@@ -78,7 +78,7 @@ export function buildMcpToolDefinitions(tools: DiscoveredMcpTool[]): any[] {
   return defs;
 }
 
-function namespaceMcpTool(serverName: string, toolName: string): string {
+export function namespaceMcpTool(serverName: string, toolName: string): string {
   const sanitizedServer = serverName.replace(/[^a-zA-Z0-9]/g, "_");
   const sanitizedTool = toolName.replace(/[^a-zA-Z0-9]/g, "_");
   return `${MCP_TOOL_PREFIX}${sanitizedServer}__${sanitizedTool}`;
