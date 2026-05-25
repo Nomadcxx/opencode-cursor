@@ -43,8 +43,13 @@ describe("models/sync", () => {
     vi.clearAllMocks();
   });
 
-  it("adds newly discovered models without removing existing entries", async () => {
+  it("uses direct sync when explicitly requested", async () => {
     const { deps, writeFileSync } = createDeps({
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG: "/tmp/opencode.json",
+        CURSOR_ACP_MODEL_AUTO_REFRESH: "direct",
+      },
       readFileSync: vi.fn(() =>
         JSON.stringify({
           provider: {
@@ -75,6 +80,147 @@ describe("models/sync", () => {
       "gpt-5.4-high": { name: "GPT-5.4 High" },
       "kimi-k2.5": { name: "Kimi K2.5" },
     });
+  });
+
+  it("uses compact variant sync by default", async () => {
+    const { deps, writeFileSync } = createDeps({
+      readFileSync: vi.fn(() =>
+        JSON.stringify({
+          provider: {
+            "cursor-acp": {
+              models: {
+                auto: { name: "Auto" },
+                "custom-model": { name: "Custom" },
+                "gpt-5.4-low": { name: "Old Low" },
+                "gpt-5.4-high": { name: "Old High" },
+              },
+            },
+          },
+        }),
+      ),
+      discoverModels: vi.fn(() => [
+        { id: "auto", name: "Auto" },
+        { id: "gpt-5.4", name: "GPT-5.4" },
+        { id: "gpt-5.4-low", name: "GPT-5.4 Low" },
+        { id: "gpt-5.4-high", name: "GPT-5.4 High" },
+      ]),
+    });
+
+    await autoRefreshModels(deps);
+
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    const [, writtenConfig] = writeFileSync.mock.calls[0];
+    const parsed = JSON.parse(writtenConfig as string);
+    expect(parsed.provider["cursor-acp"].models).toMatchObject({
+      auto: { name: "Auto" },
+      "custom-model": { name: "Custom" },
+      "gpt-5.4": {
+        name: "GPT-5.4",
+        options: { cursorModel: "gpt-5.4" },
+        variants: {
+          low: { cursorModel: "gpt-5.4-low" },
+          high: { cursorModel: "gpt-5.4-high" },
+        },
+      },
+    });
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-low"]).toBeUndefined();
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-high"]).toBeUndefined();
+  });
+
+  it("compacts existing raw variant entries when no discovered ids are missing", async () => {
+    const { deps, writeFileSync } = createDeps({
+      readFileSync: vi.fn(() =>
+        JSON.stringify({
+          provider: {
+            "cursor-acp": {
+              models: {
+                "gpt-5.4": { name: "GPT-5.4" },
+                "gpt-5.4-low": { name: "GPT-5.4 Low" },
+                "gpt-5.4-high": { name: "GPT-5.4 High" },
+              },
+            },
+          },
+        }),
+      ),
+      discoverModels: vi.fn(() => [
+        { id: "gpt-5.4", name: "GPT-5.4" },
+        { id: "gpt-5.4-low", name: "GPT-5.4 Low" },
+        { id: "gpt-5.4-high", name: "GPT-5.4 High" },
+      ]),
+    });
+
+    await autoRefreshModels(deps);
+
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    const [, writtenConfig] = writeFileSync.mock.calls[0];
+    const parsed = JSON.parse(writtenConfig as string);
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4"]).toMatchObject({
+      options: { cursorModel: "gpt-5.4" },
+      variants: {
+        low: { cursorModel: "gpt-5.4-low" },
+        high: { cursorModel: "gpt-5.4-high" },
+      },
+    });
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-low"]).toBeUndefined();
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-high"]).toBeUndefined();
+  });
+
+  it("uses compact variant sync when explicitly requested", async () => {
+    const { deps, writeFileSync } = createDeps({
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG: "/tmp/opencode.json",
+        CURSOR_ACP_MODEL_AUTO_REFRESH: "compact",
+      },
+      readFileSync: vi.fn(() =>
+        JSON.stringify({
+          provider: {
+            "cursor-acp": {
+              models: {
+                "gpt-5.4-low": { name: "Old Low" },
+                "gpt-5.4-high": { name: "Old High" },
+              },
+            },
+          },
+        }),
+      ),
+      discoverModels: vi.fn(() => [
+        { id: "gpt-5.4", name: "GPT-5.4" },
+        { id: "gpt-5.4-low", name: "GPT-5.4 Low" },
+        { id: "gpt-5.4-high", name: "GPT-5.4 High" },
+      ]),
+    });
+
+    await autoRefreshModels(deps);
+
+    expect(writeFileSync).toHaveBeenCalledTimes(1);
+    const [, writtenConfig] = writeFileSync.mock.calls[0];
+    const parsed = JSON.parse(writtenConfig as string);
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4"]).toMatchObject({
+      options: { cursorModel: "gpt-5.4" },
+      variants: {
+        low: { cursorModel: "gpt-5.4-low" },
+        high: { cursorModel: "gpt-5.4-high" },
+      },
+    });
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-low"]).toBeUndefined();
+    expect(parsed.provider["cursor-acp"].models["gpt-5.4-high"]).toBeUndefined();
+  });
+
+  it("can disable startup model refresh", async () => {
+    const { deps, readFileSync, writeFileSync, discoverModels } = createDeps({
+      env: {
+        ...process.env,
+        OPENCODE_CONFIG: "/tmp/opencode.json",
+        CURSOR_ACP_MODEL_AUTO_REFRESH: "false",
+      },
+    });
+
+    await autoRefreshModels(deps);
+
+    expect(readFileSync).not.toHaveBeenCalled();
+    expect(discoverModels).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
   });
 
   it("returns silently when the config file is missing", async () => {
