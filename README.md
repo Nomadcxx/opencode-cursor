@@ -8,31 +8,48 @@
 
 No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Your Cursor subscription, properly integrated.
 
+## Requirements
+
+- **Node.js >= 20** (required for the SDK runner process)
+- **CURSOR_API_KEY** environment variable (from [cursor.com/settings](https://cursor.com/settings))
+
 ## Installation
 
-### Option A — One-line installer
+### Option A — Local development (from source)
 
 **Linux & macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
+git clone https://github.com/Nomadcxx/opencode-cursor.git
+cd opencode-cursor
+./scripts/install-plugin.sh
 ```
 
-**Windows:**
-```powershell
-# Windows installer coming soon.
-# In the meantime, use Option C (npm install):
+Set your API key:
+```bash
+export CURSOR_API_KEY=<your-api-key>
+```
+
+Verify: `opencode models | grep cursor-acp`
+
+### Option B — npm global + CLI
+
+```bash
 npm install -g @rama_nigg/open-cursor
 open-cursor install
 ```
 
+Upgrade: `npm update -g @rama_nigg/open-cursor`
+
 <details>
-<summary><b>Option B</b> — Add to opencode.json</summary>
+<summary><b>Option C</b> — Manual (add to opencode.json)</summary>
 
 Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\opencode.json` on Windows):
 
+**IMPORTANT:** Do NOT add `"@rama_nigg/open-cursor"` to the `"plugin"` array. The plugin is loaded via the local wrapper from Step A. Only use the `"provider"` section below.
+
 ```json
 {
-  "plugin": ["@rama_nigg/open-cursor@latest"],
+  "plugin": [],
   "provider": {
     "cursor-acp": {
       "name": "Cursor ACP",
@@ -79,12 +96,12 @@ Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\op
 }
 ```
 
-> **Refresh anytime** with the bundled CLI:
+> **Refresh models anytime** with the bundled CLI:
 > ```bash
 > open-cursor sync-models                       # plain list
 > open-cursor sync-models --variants --compact  # group thinking / fast / -low/-high variants under each base
 > ```
-> The `--variants --compact` form is recommended — it folds dozens of `*-thinking-fast`, `*-high-fast`, etc. into a single entry per family with a `variants` map, and includes `cost` from the official Cursor pricing table so OpenCode TokenSpeed can render usage correctly. Direct `cursor-agent models` still works if you prefer the raw list.
+> The `--variants --compact` form is recommended — it folds dozens of `*-thinking-fast`, `*-high-fast`, etc. into a single entry per family with a `variants` map, and includes `cost` from the official Cursor pricing table so OpenCode TokenSpeed can render usage correctly.
 </details>
 
 <details>
@@ -131,9 +148,17 @@ Add `"cursor-acp"` to the `plugin` array and reuse the provider block from Optio
 
 ## Authentication
 
+Set your Cursor API key in your environment:
+
 ```bash
-opencode auth login   # provider id: cursor-acp
-cursor-agent login    # direct
+export CURSOR_API_KEY=<your-api-key>
+```
+
+Get your API key from [cursor.com/settings](https://cursor.com/settings) under **API Keys**.
+
+For persistent setup, add to your shell profile (`.bashrc`, `.zshrc`, etc.):
+```bash
+export CURSOR_API_KEY=your-key-here
 ```
 
 ## Usage
@@ -164,12 +189,14 @@ Any MCP server using stdio transport works. Tested with hybrid-memory, @modelcon
 flowchart TB
     OC["OpenCode"] --> SDK["@ai-sdk/openai-compatible"]
     SDK -->|"POST /v1/chat/completions"| PROXY["open-cursor proxy :32124"]
-    PROXY -->|"spawn per request"| AGENT["cursor-agent --output-format stream-json"]
-    AGENT -->|"HTTPS"| CURSOR["Cursor API"]
-    CURSOR --> AGENT
+    PROXY -->|"spawn persistent"| RUNNER["Node runner: sdk-runner.mjs"]
+    RUNNER -->|"stdin: {model, prompt, cwd}"| CURSORSDK["@cursor/sdk Agent.create + send()"]
+    CURSORSDK -->|"HTTPS"| CURSOR["Cursor API"]
+    CURSOR --> CURSORSDK
 
-    AGENT -->|"assistant / thinking events"| SSE["SSE content chunks"]
-    AGENT -->|"tool_call event"| BOUNDARY["Provider boundary (v1 default)"]
+    CURSORSDK -->|"stdout: NDJSON StreamJsonEvent"| PARSER["Parse + convert to SSE"]
+    PARSER -->|"assistant / thinking events"| SSE["SSE content chunks"]
+    PARSER -->|"tool_call event"| BOUNDARY["Provider boundary (v1 default)"]
     BOUNDARY --> COMPAT["Schema compat + alias normalization"]
     COMPAT --> GUARD["Tool-loop guard"]
     GUARD -->|"emit tool_calls + finish_reason=tool_calls"| SDK
@@ -177,15 +204,17 @@ flowchart TB
 
     OC -->|"execute tool locally"| TOOLRUN["OpenCode tool runtime"]
     TOOLRUN -->|"next request includes role:tool result"| SDK
-    SDK -->|"TOOL_RESULT prompt block"| AGENT
+    SDK -->|"TOOL_RESULT prompt block"| RUNNER
 
-    AGENT -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
+    RUNNER -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
     MCPTOOL -->|"stdio"| MCP["MCP Servers"]
     MCP --> MCPTOOL
-    MCPTOOL --> AGENT
+    MCPTOOL --> RUNNER
 ```
 
-Default mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Details: [docs/architecture/runtime-tool-loop.md](docs/architecture/runtime-tool-loop.md).
+**How it works:** A persistent Node.js child process (`scripts/sdk-runner.mjs`) runs `@cursor/sdk` on behalf of the proxy. This replaces the old `cursor-agent` binary (removed in Cursor >= 0.43). The SDK runs in a separate Node process because its ConnectRPC/HTTP2 stack hangs inside OpenCode's embedded Bun runtime. The runner emits NDJSON `StreamJsonEvent` objects, which the proxy converts to OpenAI-compatible SSE format. Note: per-request latency (~6s) is dominated by the SDK's `Agent.create` + `send` calls themselves.
+
+Default tool-loop mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Details: [docs/architecture/runtime-tool-loop.md](docs/architecture/runtime-tool-loop.md).
 
 ## Alternatives
 THERE is currently not a single perfect plugin for cursor in opencode, my advice is stick with what is the LEAST worst option for you.
@@ -206,10 +235,10 @@ THERE is currently not a single perfect plugin for cursor in opencode, my advice
 
 ## Troubleshooting
 
-- `fetch() URL is invalid` → `opencode auth login`
-- Model not responding → `cursor-agent login`
+- `CURSOR_API_KEY not set` → Set `export CURSOR_API_KEY=<your-api-key>` (get it from [cursor.com/settings](https://cursor.com/settings))
+- Model not responding → Verify your API key is valid and you have quota
 - Quota exceeded → [cursor.com/settings](https://cursor.com/settings)
-- Auth failed → `CURSOR_ACP_LOG_LEVEL=debug opencode auth login cursor-acp`
+- Proxy not starting → Ensure Node.js is in your PATH and port 32124 is available
 
 Debug logging: `CURSOR_ACP_LOG_LEVEL=debug opencode run "your prompt" --model cursor-acp/auto`
 

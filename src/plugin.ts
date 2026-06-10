@@ -63,7 +63,7 @@ import {
   parseToolLoopMaxRepeat,
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
+import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
 
 const log = createLogger("plugin");
 
@@ -111,8 +111,9 @@ export function buildAvailableToolsSystemMessage(
     }
 
     const lines: string[] = [
-      `MCP TOOLS — Use via direct tool calls (\`${MCP_TOOL_PREFIX}<server>__<tool>\`).`,
-      "These tools are exposed as first-class tool calls (e.g. mcp__filesystem__read_file).",
+      `MCP TOOLS — Call these tools by their FULL exact name (e.g. mcp__filesystem__read_file).`,
+      `Important: There is NO tool named 'mcp'. Every MCP tool has the format mcp__<server>__<tool>.`,
+      "Do NOT call a tool named 'mcp' with parameters. Always use the complete tool name below.",
       "",
     ];
 
@@ -644,39 +645,25 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         });
       }
 
-      // Dynamic model discovery via cursor-agent models
+      // Model list via ModelDiscoveryService (has built-in fallback models)
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
-          const bunAny = globalThis as any;
-          const proc = bunAny.Bun.spawn([resolveCursorAgentBinary(), "models"], {
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const output = await new Response(proc.stdout).text();
-          await proc.exited;
-
-          const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
-          const lines = stripAnsi(output).split("\n");
-          for (const line of lines) {
-            // Format: "model-id - Display Name [(current)] [(default)]"
-            const match = line.match(/^([a-z0-9.-]+)\s+-\s+(.+?)(?:\s+\((current|default)\))*\s*$/i);
-            if (match) {
-              models.push({
-                id: match[1],
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "cursor",
-              });
-            }
-          }
-
+          const { ModelDiscoveryService } = await import("./models/discovery.js");
+          const discovery = new ModelDiscoveryService();
+          const modelList = await discovery.discover();
+          const models = modelList.map((m: any) => ({
+            id: typeof m === "string" ? m : m.id,
+            object: "model",
+            created: Math.floor(Date.now() / 1000),
+            owned_by: "cursor",
+          }));
           return new Response(JSON.stringify({ object: "list", data: models }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
         } catch (err) {
           log.error("Failed to list models", { error: String(err) });
-          return new Response(JSON.stringify({ error: "Failed to fetch models from cursor-agent" }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch models" }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -733,40 +720,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         msgRoles: msgSummaryBun.join(","),
       });
 
-      const bunAny = globalThis as any;
-      if (!bunAny.Bun?.spawn) {
-        return new Response(JSON.stringify({ error: "This provider requires Bun runtime." }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+      const apiKey = process.env.CURSOR_API_KEY;
+      if (!apiKey || !apiKey.trim()) {
+        return new Response(
+          JSON.stringify({ error: "CURSOR_API_KEY not set. Add it to your .env file and restart." }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      const cmd = [
-        resolveCursorAgentBinary(),
-        "--print",
-        "--output-format",
-        "stream-json",
-        "--stream-partial-output",
-        "--workspace",
-        workspaceDirectory,
-        "--model",
-        model,
-      ];
-      if (FORCE_TOOL_MODE) {
-        cmd.push("--force");
-      }
-
-      const child = bunAny.Bun.spawn({
-        cmd,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunAny.Bun.env,
-      });
-
-      // Write prompt to stdin to avoid E2BIG error
-      child.stdin.write(prompt);
-      child.stdin.end();
+      const child = createSdkBunChild({ apiKey, model, prompt, cwd: workspaceDirectory });
 
       if (!stream) {
         const [stdoutText, stderrText] = await Promise.all([
@@ -1130,7 +1092,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
   // Use Node.js http server (works in both Node and Bun)
   const http = await import("http");
-  const { spawn } = await import("child_process");
 
   const requestHandler = async (req: any, res: any) => {
     try{
@@ -1142,24 +1103,18 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         return;
       }
 
-      // Dynamic model discovery via cursor-agent models (Node.js handler)
+      // Model list via ModelDiscoveryService (has built-in fallback models)
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
-          const { execFileSync } = await import("child_process");
-          const output = execFileSync(resolveCursorAgentBinary(), ["models"], { encoding: "utf-8", timeout: 30000 });
-          const clean = stripAnsi(output);
-          const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
-          for (const line of clean.split("\n")) {
-            const match = line.match(/^([a-z0-9.-]+)\s+-\s+(.+?)(?:\s+\((current|default)\))*\s*$/i);
-            if (match) {
-              models.push({
-                id: match[1],
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "cursor",
-              });
-            }
-          }
+          const { ModelDiscoveryService } = await import("./models/discovery.js");
+          const discovery = new ModelDiscoveryService();
+          const modelList = await discovery.discover();
+          const models = modelList.map((m: any) => ({
+            id: typeof m === "string" ? m : m.id,
+            object: "model",
+            created: Math.floor(Date.now() / 1000),
+            owned_by: "cursor",
+          }));
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ object: "list", data: models }));
         } catch (err) {
@@ -1213,29 +1168,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         msgRoles: msgSummary.join(","),
       });
 
-      const cmd = [
-        resolveCursorAgentBinary(),
-        "--print",
-        "--output-format",
-        "stream-json",
-        "--stream-partial-output",
-        "--workspace",
-        workspaceDirectory,
-        "--model",
-        model,
-      ];
-      if (FORCE_TOOL_MODE) {
-        cmd.push("--force");
+      const apiKeyNode = process.env.CURSOR_API_KEY;
+      if (!apiKeyNode || !apiKeyNode.trim()) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "CURSOR_API_KEY not set. Add it to your .env file and restart." }));
+        return;
       }
 
-      const child = spawn(formatShellCommandForPlatform(cmd[0]), cmd.slice(1), {
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
-      });
-
-      // Write prompt to stdin to avoid E2BIG error
-      child.stdin.write(prompt);
-      child.stdin.end();
+      const child = createSdkNodeChild({ apiKey: apiKeyNode, model, prompt, cwd: workspaceDirectory });
 
       if (!stream) {
         const stdoutChunks: Buffer[] = [];
