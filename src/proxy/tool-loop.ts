@@ -37,6 +37,16 @@ const TOOL_NAME_ALIASES = new Map<string, string>([
   ["bashcommand", "bash"],
   ["runbash", "bash"],
   ["executebash", "bash"],
+  // edit/write aliases
+  ["ocedit", "edit"],
+  ["strreplace", "edit"],
+  ["replace", "edit"],
+  ["ocwrite", "write"],
+  ["writefile", "write"],
+  // read aliases
+  ["ocread", "read"],
+  // grep aliases
+  ["ocgrep", "grep"],
   // glob aliases
   ["findfiles", "glob"],
   ["searchfiles", "glob"],

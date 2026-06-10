@@ -54,6 +54,9 @@ describe("Plugin tool hook", () => {
     expect(toolNames).toContain("read");
     expect(toolNames).toContain("write");
     expect(toolNames).toContain("edit");
+    expect(toolNames).toContain("oc_edit");
+    expect(toolNames).toContain("oc_write");
+    expect(toolNames).toContain("oc_read");
     expect(toolNames).not.toContain("grep");
     expect(toolNames).toContain("ls");
     expect(toolNames).toContain("glob");
@@ -155,7 +158,29 @@ describe("Plugin tool hook", () => {
     }
   });
 
-  it("pins non-config workspace per session and reuses it when later context loses worktree", async () => {
+
+
+  it("executes oc_edit alias the same as edit", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-oc-edit-"));
+    try {
+      const target = join(projectDir, "file.txt");
+      const hooks = await CursorPlugin(createMockInput(projectDir));
+      const { writeFileSync } = await import("fs");
+      writeFileSync(target, "hello world", "utf-8");
+
+      const out = await hooks.tool?.oc_edit?.execute(
+        { path: target, old_string: "hello", new_string: "hi" },
+        createToolContext(projectDir, projectDir),
+      );
+
+      expect(readFileSync(target, "utf-8")).toBe("hi world");
+      expect(out).toContain("edited successfully");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+ it("pins non-config workspace per session and reuses it when later context loses worktree", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-project-"));
     const xdgConfigHome = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-xdg-"));
     const unexpectedDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-unexpected-"));

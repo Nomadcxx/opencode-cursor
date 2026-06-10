@@ -1815,6 +1815,11 @@ function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string):
 
     entries[t.name] = createEntry(t.name);
 
+    const ocAlias = `oc_${t.id}`;
+    if (!entries[ocAlias]) {
+      entries[ocAlias] = createEntry(ocAlias);
+    }
+
     // Some agent variants emit "shell" instead of "bash".
     if (t.name === "bash" && !entries.shell) {
       entries.shell = createEntry("shell");
