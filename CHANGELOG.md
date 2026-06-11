@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### BREAKING
+
+- **Authentication:** API key authentication now supports three methods with priority: (1) `CURSOR_API_KEY` environment variable, (2) OpenCode auth store (`opencode auth login --provider cursor-acp`), (3) provider options in `opencode.json`. Get your API key from [cursor.com/settings](https://cursor.com/settings). Legacy OAuth flow via `cursor-agent login` is no longer supported.
+
+### Changed
+
+- **Runtime:** Replaced the `cursor-agent` binary (removed by Cursor in IDE versions >= 0.43) with the official `@cursor/sdk`. The SDK runs in a persistent Node.js child process (`scripts/sdk-runner.mjs`) instead of in-process, because the SDK's ConnectRPC/HTTP2 stack hangs inside OpenCode's embedded Bun runtime and its native `sqlite3` dependency cannot be bundled. The persistent process avoids paying Node boot + SDK import cost on every request.
+- **SDK Agent isolation:** The Agent now runs isolated from the Cursor environment by default (`settingSources: []`), no longer loading user/project/team/mdm/plugins rules and skills per request. This eliminates duplicate instructions between Cursor and OpenCode and reduces request latency. To restore the previous behavior, set `CURSOR_ACP_SETTING_SOURCES=all`, or specify a subset like `user,project`.
+- **Tool calls:** The SDK emits MCP tool calls as a generic tool named `mcp` with `{providerIdentifier, toolName, args}`; the runner remaps them to the `mcp__<server>__<tool>` names OpenCode expects, so MCP tools are executed instead of rejected as unavailable.
+- **Model discovery:** `/v1/models` and the startup auto-refresh now query `Cursor.models.list()` from the SDK (via the runner) instead of the removed `cursor-agent models` command. Newly released Cursor models are added to `opencode.json` automatically (additive only), with an updated hardcoded fallback when no API key is available.
+- **Installation:** New local development workflow via `scripts/install-plugin.sh`, which creates a TypeScript wrapper at `~/.config/opencode/plugins/cursor-acp.ts` pointing at the repository entry point.
+
+### Fixed
+
+- **Issue #76 (ECONNREFUSED on 127.0.0.1:32124):** the proxy failed to start because the plugin spawned the removed `cursor-agent` binary. The plugin now works without `cursor-agent` installed.
+- The system prompt no longer suggests an ambiguous `mcp` tool name; full tool names are listed explicitly, and a defensive guard logs any remaining bare `mcp` calls.
+
+### Known limitations
+
+- Per-request latency is bound by `@cursor/sdk` itself (`Agent.create` + `send` take ~6s even standalone). Each request uses a fresh Agent by design: conversation state stays in OpenCode and is never persisted on Cursor's side.
+- Node.js >= 20 must be available in `PATH` (the SDK runner requires it).
+
 ## [2.3.5] - 2026-02-17
 
 ### Fixed

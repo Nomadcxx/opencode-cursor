@@ -37,7 +37,7 @@ describe("Plugin MCP system transform", () => {
       ],
     );
 
-    expect(systemMessage).toContain("direct tool calls");
+    expect(systemMessage).toContain("FULL exact name");
     expect(systemMessage).toContain("mcp__");
     expect(systemMessage).toContain("mcp__hybrid_memory__memory_search");
     expect(systemMessage).toContain("hybrid-memory");

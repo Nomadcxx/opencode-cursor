@@ -19,7 +19,7 @@ function createDeps(overrides: MockDeps = {}) {
     }),
   );
   const writeFileSync = vi.fn();
-  const discoverModels = vi.fn(() => [
+  const discoverModels = vi.fn(async () => [
     { id: "auto", name: "Auto" },
     { id: "gpt-5.4-high", name: "GPT-5.4 High" },
   ]);
@@ -57,7 +57,7 @@ describe("models/sync", () => {
           },
         }),
       ),
-      discoverModels: vi.fn(() => [
+      discoverModels: vi.fn(async () => [
         { id: "auto", name: "Auto" },
         { id: "gpt-5.4-high", name: "GPT-5.4 High" },
         { id: "kimi-k2.5", name: "Kimi K2.5" },
@@ -108,10 +108,10 @@ describe("models/sync", () => {
     expect(writeFileSync).not.toHaveBeenCalled();
   });
 
-  it("returns silently when cursor-agent model discovery fails", async () => {
+  it("returns silently when model discovery fails", async () => {
     const { deps, writeFileSync } = createDeps({
-      discoverModels: vi.fn(() => {
-        throw new Error("cursor-agent unavailable");
+      discoverModels: vi.fn(async () => {
+        throw new Error("discovery unavailable");
       }),
     });
 
@@ -121,7 +121,7 @@ describe("models/sync", () => {
 
   it("does not rewrite the config when no new models are discovered", async () => {
     const { deps, writeFileSync, info } = createDeps({
-      discoverModels: vi.fn(() => [{ id: "auto", name: "Auto" }]),
+      discoverModels: vi.fn(async () => [{ id: "auto", name: "Auto" }]),
     });
 
     await autoRefreshModels(deps);

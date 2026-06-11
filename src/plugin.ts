@@ -6,7 +6,6 @@ import { mkdir } from "fs/promises";
 import { homedir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
 import { ToolMapper, type ToolUpdate } from "./acp/tools.js";
-import { startCursorOAuth } from "./auth";
 import { LineBuffer } from "./streaming/line-buffer.js";
 import { MixedDeltaTracker } from "./streaming/delta-tracker.js";
 import { StreamToSseConverter, formatSseDone } from "./streaming/openai-sse.js";
@@ -63,7 +62,7 @@ import {
   parseToolLoopMaxRepeat,
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
+import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
 
 const log = createLogger("plugin");
 
@@ -111,8 +110,9 @@ export function buildAvailableToolsSystemMessage(
     }
 
     const lines: string[] = [
-      `MCP TOOLS — Use via direct tool calls (\`${MCP_TOOL_PREFIX}<server>__<tool>\`).`,
-      "These tools are exposed as first-class tool calls (e.g. mcp__filesystem__read_file).",
+      `MCP TOOLS — Call these tools by their FULL exact name (e.g. mcp__filesystem__read_file).`,
+      `Important: There is NO tool named 'mcp'. Every MCP tool has the format mcp__<server>__<tool>.`,
+      "Do NOT call a tool named 'mcp' with parameters. Always use the complete tool name below.",
       "",
     ];
 
@@ -163,6 +163,9 @@ const CURSOR_PROXY_HOST = "127.0.0.1";
 const CURSOR_PROXY_DEFAULT_PORT = 32124;
 const CURSOR_PROXY_DEFAULT_BASE_URL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
 const REUSE_EXISTING_PROXY = process.env.CURSOR_ACP_REUSE_EXISTING_PROXY !== "false";
+
+// Stored API key from auth loader (OpenCode auth store)
+let storedApiKey: string | undefined;
 
 function getGlobalKey(): string {
   return "__opencode_cursor_proxy_server__";
@@ -633,6 +636,39 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
   // Mark as starting to avoid duplicate starts in-process.
   state.baseURL = "";
 
+  /**
+   * Resolve API key from multiple sources with priority:
+   * 1. process.env.CURSOR_API_KEY (highest priority)
+   * 2. storedApiKey (from OpenCode auth loader)
+   * 3. Authorization header from request (format: "Bearer <key>" or just "<key>")
+   */
+  const resolveApiKey = (authHeader?: string | null): string | undefined => {
+    // Priority 1: environment variable
+    const envKey = process.env.CURSOR_API_KEY;
+    if (envKey && envKey.trim()) {
+      return envKey;
+    }
+
+    // Priority 2: stored key from auth loader
+    if (storedApiKey && storedApiKey.trim()) {
+      return storedApiKey;
+    }
+
+    // Priority 3: Authorization header
+    if (authHeader && authHeader.trim()) {
+      const trimmed = authHeader.trim();
+      // Handle "Bearer <key>" format
+      if (trimmed.toLowerCase().startsWith("bearer ")) {
+        const key = trimmed.slice(7).trim();
+        return key || undefined;
+      }
+      // Handle raw key format
+      return trimmed || undefined;
+    }
+
+    return undefined;
+  };
+
       const handler = async (req: Request): Promise<Response> => {
         try {
           const url = new URL(req.url);
@@ -644,39 +680,25 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         });
       }
 
-      // Dynamic model discovery via cursor-agent models
+      // Model list via ModelDiscoveryService (has built-in fallback models)
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
-          const bunAny = globalThis as any;
-          const proc = bunAny.Bun.spawn([resolveCursorAgentBinary(), "models"], {
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const output = await new Response(proc.stdout).text();
-          await proc.exited;
-
-          const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
-          const lines = stripAnsi(output).split("\n");
-          for (const line of lines) {
-            // Format: "model-id - Display Name [(current)] [(default)]"
-            const match = line.match(/^([a-z0-9.-]+)\s+-\s+(.+?)(?:\s+\((current|default)\))*\s*$/i);
-            if (match) {
-              models.push({
-                id: match[1],
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "cursor",
-              });
-            }
-          }
-
+          const { ModelDiscoveryService } = await import("./models/discovery.js");
+          const discovery = new ModelDiscoveryService();
+          const modelList = await discovery.discover(resolveApiKey());
+          const models = modelList.map((m: any) => ({
+            id: typeof m === "string" ? m : m.id,
+            object: "model",
+            created: Math.floor(Date.now() / 1000),
+            owned_by: "cursor",
+          }));
           return new Response(JSON.stringify({ object: "list", data: models }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });
         } catch (err) {
           log.error("Failed to list models", { error: String(err) });
-          return new Response(JSON.stringify({ error: "Failed to fetch models from cursor-agent" }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch models" }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
           });
@@ -733,40 +755,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         msgRoles: msgSummaryBun.join(","),
       });
 
-      const bunAny = globalThis as any;
-      if (!bunAny.Bun?.spawn) {
-        return new Response(JSON.stringify({ error: "This provider requires Bun runtime." }), {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        });
+      const authHeader = req.headers.get("authorization");
+      const apiKey = resolveApiKey(authHeader);
+      if (!apiKey || !apiKey.trim()) {
+        return new Response(
+          JSON.stringify({ error: "Cursor API key not found. Set CURSOR_API_KEY, run `opencode auth login`, or set provider options.apiKey in opencode.json." }),
+          { status: 401, headers: { "Content-Type": "application/json" } },
+        );
       }
 
-      const cmd = [
-        resolveCursorAgentBinary(),
-        "--print",
-        "--output-format",
-        "stream-json",
-        "--stream-partial-output",
-        "--workspace",
-        workspaceDirectory,
-        "--model",
-        model,
-      ];
-      if (FORCE_TOOL_MODE) {
-        cmd.push("--force");
-      }
-
-      const child = bunAny.Bun.spawn({
-        cmd,
-        stdin: "pipe",
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunAny.Bun.env,
-      });
-
-      // Write prompt to stdin to avoid E2BIG error
-      child.stdin.write(prompt);
-      child.stdin.end();
+      const child = createSdkBunChild({ apiKey, model, prompt, cwd: workspaceDirectory });
 
       if (!stream) {
         const [stdoutText, stderrText] = await Promise.all([
@@ -1130,7 +1128,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
   // Use Node.js http server (works in both Node and Bun)
   const http = await import("http");
-  const { spawn } = await import("child_process");
 
   const requestHandler = async (req: any, res: any) => {
     try{
@@ -1142,24 +1139,18 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         return;
       }
 
-      // Dynamic model discovery via cursor-agent models (Node.js handler)
+      // Model list via ModelDiscoveryService (has built-in fallback models)
       if (url.pathname === "/v1/models" || url.pathname === "/models") {
         try {
-          const { execFileSync } = await import("child_process");
-          const output = execFileSync(resolveCursorAgentBinary(), ["models"], { encoding: "utf-8", timeout: 30000 });
-          const clean = stripAnsi(output);
-          const models: Array<{ id: string; object: string; created: number; owned_by: string }> = [];
-          for (const line of clean.split("\n")) {
-            const match = line.match(/^([a-z0-9.-]+)\s+-\s+(.+?)(?:\s+\((current|default)\))*\s*$/i);
-            if (match) {
-              models.push({
-                id: match[1],
-                object: "model",
-                created: Math.floor(Date.now() / 1000),
-                owned_by: "cursor",
-              });
-            }
-          }
+          const { ModelDiscoveryService } = await import("./models/discovery.js");
+          const discovery = new ModelDiscoveryService();
+          const modelList = await discovery.discover(resolveApiKey());
+          const models = modelList.map((m: any) => ({
+            id: typeof m === "string" ? m : m.id,
+            object: "model",
+            created: Math.floor(Date.now() / 1000),
+            owned_by: "cursor",
+          }));
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ object: "list", data: models }));
         } catch (err) {
@@ -1213,29 +1204,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         msgRoles: msgSummary.join(","),
       });
 
-      const cmd = [
-        resolveCursorAgentBinary(),
-        "--print",
-        "--output-format",
-        "stream-json",
-        "--stream-partial-output",
-        "--workspace",
-        workspaceDirectory,
-        "--model",
-        model,
-      ];
-      if (FORCE_TOOL_MODE) {
-        cmd.push("--force");
+      const authHeaderNode = req.headers["authorization"] as string | undefined;
+      const apiKeyNode = resolveApiKey(authHeaderNode);
+      if (!apiKeyNode || !apiKeyNode.trim()) {
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Cursor API key not found. Set CURSOR_API_KEY, run `opencode auth login`, or set provider options.apiKey in opencode.json." }));
+        return;
       }
 
-      const child = spawn(formatShellCommandForPlatform(cmd[0]), cmd.slice(1), {
-        stdio: ["pipe", "pipe", "pipe"],
-        shell: process.platform === "win32",
-      });
-
-      // Write prompt to stdin to avoid E2BIG error
-      child.stdin.write(prompt);
-      child.stdin.end();
+      const child = createSdkNodeChild({ apiKey: apiKeyNode, model, prompt, cwd: workspaceDirectory });
 
       if (!stream) {
         const stdoutChunks: Buffer[] = [];
@@ -2034,29 +2011,24 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     tool: { ...toolHookEntries, ...mcpToolEntries },
     auth: {
       provider: CURSOR_PROVIDER_ID,
-      async loader(_getAuth: () => Promise<Auth>) {
+      async loader(getAuth: () => Promise<Auth>) {
+        // Load API key from OpenCode auth store and cache it.
+        // Never throw: a missing/unreadable auth entry must not break plugin load.
+        try {
+          const auth = await getAuth();
+          if (auth?.type === "api" && auth.key) {
+            storedApiKey = auth.key;
+            log.debug("Stored API key from auth loader");
+          }
+        } catch (err) {
+          log.debug("No stored auth available", { error: String(err) });
+        }
         return {};
       },
       methods: [
         {
-          label: "Cursor OAuth",
-          type: "oauth",
-          async authorize() {
-            try {
-              log.info("Starting OAuth flow");
-              const { url, instructions, callback } = await startCursorOAuth();
-              log.debug("Got OAuth URL", { url: url.substring(0, 50) + "..." });
-              return {
-                url,
-                instructions,
-                method: "auto" as const,
-                callback,
-              };
-            } catch (error) {
-              log.error("OAuth error", { error });
-              throw error;
-            }
-          },
+          type: "api" as const,
+          label: "Cursor API Key (cursor.com/settings)",
         },
       ],
     },
