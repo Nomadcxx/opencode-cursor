@@ -30,6 +30,8 @@
  * Lifecycle: reads stdin indefinitely; on EOF, disposes agents and exits 0.
  */
 
+import { pathToFileURL } from "node:url";
+
 // Import Agent and Cursor dynamically after API key check to accelerate boot time
 let Agent;
 let Cursor;
@@ -54,7 +56,12 @@ const SETTING_SOURCES = (() => {
 // pollute our NDJSON protocol. Redirect any stdout writes that don't come from
 // our emit helpers to stderr, and keep a private handle to the real stdout.
 const protocolWrite = process.stdout.write.bind(process.stdout);
-process.stdout.write = (chunk, ...args) => process.stderr.write(chunk, ...args);
+const RUNNING_AS_MAIN = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+if (RUNNING_AS_MAIN) {
+  process.stdout.write = (chunk, ...args) => process.stderr.write(chunk, ...args);
+}
 
 /**
  * Write a line to the real (protocol) stdout.
@@ -68,7 +75,13 @@ function writeProtocolLine(line) {
 /**
  * Convert SDK message to StreamJsonEvent (portable copy from sdk-child.ts).
  */
-function sdkMessageToStreamJson(msg) {
+export function namespaceMcpTool(serverName, toolName) {
+  const sanitizedServer = String(serverName).replace(/[^a-zA-Z0-9]/g, "_");
+  const sanitizedTool = String(toolName).replace(/[^a-zA-Z0-9]/g, "_");
+  return `mcp__${sanitizedServer}__${sanitizedTool}`;
+}
+
+export function sdkMessageToStreamJson(msg) {
   switch (msg?.type) {
     case "assistant": {
       const content = msg.message?.content ?? [];
@@ -105,7 +118,7 @@ function sdkMessageToStreamJson(msg) {
         const provider = args.providerIdentifier;
         const toolName = args.toolName;
         if (provider && toolName) {
-          name = `mcp__${provider}__${toolName}`;
+          name = namespaceMcpTool(provider, toolName);
           args = args.args ?? {};
           console.error(`[sdk-runner] Remapped mcp tool call -> ${name}`);
         } else {
@@ -391,7 +404,9 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`[sdk-runner] Unhandled error in main:`, err);
-  process.exit(1);
-});
+if (RUNNING_AS_MAIN) {
+  main().catch((err) => {
+    console.error(`[sdk-runner] Unhandled error in main:`, err);
+    process.exit(1);
+  });
+}

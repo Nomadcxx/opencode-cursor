@@ -81,6 +81,42 @@ describe("cli/opencode-cursor commandDoctor", () => {
     expect(results.length).toBeGreaterThan(5);
     expect(results.every(r => typeof r.passed === "boolean")).toBe(true);
   }, 10000);
+
+  it("reports missing cursor-agent as a warning when SDK backend has a real key", () => {
+    const originalBackend = process.env.CURSOR_ACP_BACKEND;
+    const originalApiKey = process.env.CURSOR_API_KEY;
+    const originalCursorAgent = process.env.CURSOR_AGENT_EXECUTABLE;
+
+    process.env.CURSOR_ACP_BACKEND = "sdk";
+    process.env.CURSOR_API_KEY = "cursor_123";
+    process.env.CURSOR_AGENT_EXECUTABLE = "/definitely/missing/cursor-agent";
+
+    try {
+      const results = runDoctorChecks("/tmp/test-config.json", "/tmp/test-plugin");
+      const cursorAgent = results.find((result) => result.name === "cursor-agent");
+      const sdkAuth = results.find((result) => result.name === "Cursor SDK API key");
+
+      expect(cursorAgent?.passed).toBe(false);
+      expect(cursorAgent?.warning).toBe(true);
+      expect(sdkAuth?.passed).toBe(true);
+    } finally {
+      if (originalBackend === undefined) {
+        delete process.env.CURSOR_ACP_BACKEND;
+      } else {
+        process.env.CURSOR_ACP_BACKEND = originalBackend;
+      }
+      if (originalApiKey === undefined) {
+        delete process.env.CURSOR_API_KEY;
+      } else {
+        process.env.CURSOR_API_KEY = originalApiKey;
+      }
+      if (originalCursorAgent === undefined) {
+        delete process.env.CURSOR_AGENT_EXECUTABLE;
+      } else {
+        process.env.CURSOR_AGENT_EXECUTABLE = originalCursorAgent;
+      }
+    }
+  });
 });
 
 describe("cli/opencode-cursor status", () => {

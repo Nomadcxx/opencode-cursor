@@ -20,6 +20,8 @@ import {
   fallbackModels,
 } from "./model-discovery.js";
 import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
+import { parseCursorBackendPreference } from "../provider/backend.js";
 import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
 import type { DiscoveredModel } from "./model-discovery.js";
 
@@ -56,6 +58,11 @@ type StatusResult = {
   };
   aiSdk: {
     installed: boolean;
+  };
+  auth: {
+    legacyCursorAuthFile: boolean;
+    sdkApiKey: boolean;
+    sdkApiKeySource?: "CURSOR_API_KEY" | "provider.options.apiKey";
   };
 };
 
@@ -118,6 +125,67 @@ export function checkCursorAgentLogin(): CheckResult {
       warning: true,
     };
   }
+}
+
+function getProviderApiKey(config: unknown): string | undefined {
+  const provider = (config as any)?.provider?.[PROVIDER_ID];
+  const apiKey = provider?.options?.apiKey;
+  return typeof apiKey === "string" ? apiKey : undefined;
+}
+
+function resolveCliSdkAuthSource(config: unknown): StatusResult["auth"]["sdkApiKeySource"] | undefined {
+  if (isUsableSdkApiKey(process.env.CURSOR_API_KEY)) {
+    return "CURSOR_API_KEY";
+  }
+  if (isUsableSdkApiKey(getProviderApiKey(config))) {
+    return "provider.options.apiKey";
+  }
+  return undefined;
+}
+
+function checkSdkApiKey(config: unknown): CheckResult {
+  const source = resolveCliSdkAuthSource(config);
+  if (source) {
+    return {
+      name: "Cursor SDK API key",
+      passed: true,
+      message: `available via ${source}`,
+    };
+  }
+
+  const backend = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference;
+  return {
+    name: "Cursor SDK API key",
+    passed: false,
+    warning: backend !== "sdk",
+    message: backend === "sdk"
+      ? "not configured - required for CURSOR_ACP_BACKEND=sdk"
+      : "not configured - required only for CURSOR_ACP_BACKEND=sdk or when cursor-agent is unavailable",
+  };
+}
+
+function adjustCursorAgentCheckForBackend(
+  check: CheckResult,
+  config: unknown,
+): CheckResult {
+  if (check.passed) {
+    return check;
+  }
+
+  const backend = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference;
+  const sdkSource = resolveCliSdkAuthSource(config);
+  const sdkCanHandleRequest = backend === "sdk" || (backend === "auto" && sdkSource);
+  if (!sdkCanHandleRequest) {
+    return check;
+  }
+
+  return {
+    ...check,
+    warning: true,
+    message: sdkSource
+      ? `${check.message}; SDK backend can be used via ${sdkSource}`
+      : `${check.message}; SDK backend selected but no SDK API key is configured`,
+  };
 }
 
 function checkOpenCode(): CheckResult {
@@ -230,8 +298,9 @@ export function runDoctorChecks(configPath: string, pluginPath: string): CheckRe
   }
   return [
     checkBun(),
-    checkCursorAgent(),
+    adjustCursorAgentCheckForBackend(checkCursorAgent(), config),
     checkCursorAgentLogin(),
+    checkSdkApiKey(config),
     checkOpenCode(),
     checkPluginFile(pluginPath, config),
     checkProviderConfig(configPath),
@@ -793,6 +862,8 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   const opencodeDir = dirname(configPath);
   const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
   const aiSdkInstalled = existsSync(sdkPath);
+  const sdkApiKeySource = resolveCliSdkAuthSource(config);
+  const legacyCursorAuthFile = getPossibleAuthPaths().some((authPath) => existsSync(authPath));
 
   let installMethod: "symlink" | "npm-direct" | "none" = "none";
   if (pluginType !== "missing") {
@@ -817,6 +888,11 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
     },
     aiSdk: {
       installed: aiSdkInstalled,
+    },
+    auth: {
+      legacyCursorAuthFile,
+      sdkApiKey: sdkApiKeySource !== undefined,
+      sdkApiKeySource,
     },
   };
 }
@@ -962,6 +1038,13 @@ function commandStatus(options: Options) {
   console.log("");
   console.log("AI SDK");
   console.log(`  @ai-sdk/openai-compatible: ${result.aiSdk.installed ? "installed" : "not installed"}`);
+
+  console.log("");
+  console.log("Authentication");
+  console.log(`  Legacy cursor-agent auth file: ${result.auth.legacyCursorAuthFile ? "found" : "not found"}`);
+  console.log(
+    `  Cursor SDK API key: ${result.auth.sdkApiKey ? `found via ${result.auth.sdkApiKeySource}` : "not configured"}`,
+  );
 }
 
 function commandDoctor(options: Options) {

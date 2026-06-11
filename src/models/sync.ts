@@ -12,6 +12,7 @@ import {
   writeFileSync as nodeWriteFileSync,
 } from "node:fs";
 import { listModelsViaRunner } from "../client/sdk-child.js";
+import { resolveSdkApiKey } from "../auth.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 
@@ -42,8 +43,8 @@ type AutoRefreshModelsDeps = {
 const defaultDeps: AutoRefreshModelsDeps = {
   defer: () => Promise.resolve(),
   discoverModels: async () => {
-    const apiKey = process.env.CURSOR_API_KEY;
-    if (!apiKey || !apiKey.trim()) {
+    const apiKey = resolveSdkApiKey({ env: process.env });
+    if (!apiKey) {
       throw new Error("CURSOR_API_KEY not set");
     }
     const models = await listModelsViaRunner(apiKey);

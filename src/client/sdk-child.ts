@@ -46,17 +46,31 @@ function resolveNodeBinary(): string {
  * Resolve the path to sdk-runner.mjs, handling both src/ (dev) and dist/ (built) contexts.
  * Returns the absolute path or throws if not found.
  */
-function resolveRunnerPath(): string {
-  const currentFile = fileURLToPath(import.meta.url);
+export function resolveRunnerPath(
+  currentFile: string = fileURLToPath(import.meta.url),
+  checkExists: (path: string) => boolean = existsSync,
+  env: Pick<NodeJS.ProcessEnv, "CURSOR_ACP_SDK_RUNNER_PATH"> = process.env,
+): string {
+  const override = env.CURSOR_ACP_SDK_RUNNER_PATH?.trim();
+  if (override) {
+    if (checkExists(override)) {
+      return override;
+    }
+    throw new Error(`CURSOR_ACP_SDK_RUNNER_PATH does not exist: ${override}`);
+  }
+
   const currentDir = dirname(currentFile);
 
-  // Candidates: ../../scripts/sdk-runner.mjs from both src/client/ and dist/client/
   const candidates = [
+    // Source layout: src/client/sdk-child.ts -> scripts/sdk-runner.mjs.
+    // Non-bundled dist layout: dist/client/sdk-child.js -> scripts/sdk-runner.mjs.
     resolve(currentDir, "../../scripts/sdk-runner.mjs"),
+    // Bundled package layout: dist/plugin-entry.js -> scripts/sdk-runner.mjs.
+    resolve(currentDir, "../scripts/sdk-runner.mjs"),
   ];
 
   for (const candidate of candidates) {
-    if (existsSync(candidate)) {
+    if (checkExists(candidate)) {
       return candidate;
     }
   }
@@ -278,6 +292,10 @@ class SdkRunnerSingleton {
 }
 
 const singleton = new SdkRunnerSingleton();
+
+export function stopSdkRunner(): void {
+  singleton.kill();
+}
 
 // ─── BUN-compatible child ──────────────────────────────────────────────────
 

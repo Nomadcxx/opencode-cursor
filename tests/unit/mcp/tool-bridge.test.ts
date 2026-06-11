@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "bun:test";
-import { buildMcpToolHookEntries } from "../../../src/mcp/tool-bridge.js";
+import {
+  buildMcpToolDefinitions,
+  buildMcpToolHookEntries,
+  namespaceMcpTool,
+} from "../../../src/mcp/tool-bridge.js";
 
 describe("mcp/tool-bridge", () => {
   it("creates tool hook entries for discovered MCP tools", () => {
@@ -39,6 +43,22 @@ describe("mcp/tool-bridge", () => {
       "mcp__my_server__search",
       "mcp__my_server__store",
     ]);
+  });
+
+  it("uses one sanitized MCP namespace for hyphenated server and tool names", () => {
+    const tools = [
+      { name: "memory-search", serverName: "hybrid-memory", description: "Search memory" },
+    ];
+
+    expect(namespaceMcpTool("hybrid-memory", "memory-search")).toBe(
+      "mcp__hybrid_memory__memory_search",
+    );
+
+    const entries = buildMcpToolHookEntries(tools as any, { callTool: async () => "" } as any);
+    expect(Object.keys(entries)).toEqual(["mcp__hybrid_memory__memory_search"]);
+
+    const defs = buildMcpToolDefinitions(tools as any);
+    expect(defs[0]?.function?.name).toBe("mcp__hybrid_memory__memory_search");
   });
 
   it("handles tools with no inputSchema", () => {

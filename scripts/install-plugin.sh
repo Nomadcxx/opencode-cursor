@@ -27,25 +27,24 @@ else
   npm install
 fi
 
+echo ""
+echo "Building plugin..."
+if command -v bun &> /dev/null; then
+  bun run build
+else
+  npm run build
+fi
+
 # Create plugin directory
-PLUGIN_DIR="${HOME}/.config/opencode/plugins"
+PLUGIN_DIR="${HOME}/.config/opencode/plugin"
 mkdir -p "$PLUGIN_DIR"
 echo "Created plugin directory: $PLUGIN_DIR"
 
-# Write plugin wrapper
-PLUGIN_FILE="$PLUGIN_DIR/cursor-acp.ts"
+# Write plugin symlink after build succeeds
+PLUGIN_FILE="$PLUGIN_DIR/cursor-acp.js"
 echo ""
-echo "Writing plugin wrapper to: $PLUGIN_FILE"
-cat > "$PLUGIN_FILE" << EOF
-export { default } from "$REPO_ROOT/src/plugin-entry.ts"
-EOF
-
-# Clean up old versions
-OLD_PLUGIN_JS="${HOME}/.config/opencode/plugin/cursor-acp.js"
-if [ -f "$OLD_PLUGIN_JS" ]; then
-  echo "Removing old plugin version: $OLD_PLUGIN_JS"
-  rm -f "$OLD_PLUGIN_JS"
-fi
+echo "Linking plugin entrypoint to: $PLUGIN_FILE"
+ln -sfn "$REPO_ROOT/dist/plugin-entry.js" "$PLUGIN_FILE"
 
 # Validate opencode.json
 OPENCODE_CONFIG="${HOME}/.config/opencode/opencode.json"
@@ -62,19 +61,9 @@ if [ -f "$OPENCODE_CONFIG" ]; then
     } catch { process.stdout.write("no"); }
   ' "$OPENCODE_CONFIG")
   if [ "$IN_PLUGIN_ARRAY" = "yes" ]; then
-    echo ""
-    echo "WARNING: Your opencode.json contains 'cursor-acp' in the 'plugin' array."
-    echo "This causes OpenCode to try to install a third-party npm package instead of using this plugin."
-    echo ""
-    echo "Please manually edit $OPENCODE_CONFIG and:"
-    echo "  1. Remove 'cursor-acp' from the 'plugin' array"
-    echo "  2. Keep the 'provider' section with 'cursor-acp' intact"
-    echo ""
-    echo "Example fix:"
-    echo '  Remove the entry (or the whole "plugin" key if it becomes empty):'
-    echo '  "provider": {'
-    echo '    "cursor-acp": { ... }  // Keep this'
-    echo '  }'
+    echo "Found 'cursor-acp' in the plugin array."
+  else
+    echo "Reminder: add 'cursor-acp' to the plugin array if this is a new source install."
   fi
 fi
 
@@ -82,7 +71,10 @@ fi
 echo ""
 echo "Installation complete!"
 echo ""
-echo "IMPORTANT: Set the CURSOR_API_KEY environment variable:"
+echo "Existing cursor-agent users can continue with:"
+echo "  cursor-agent login"
+echo ""
+echo "For SDK mode or SDK fallback, set a real Cursor API key:"
 echo "  export CURSOR_API_KEY=<your-api-key>"
 echo ""
 echo "Get your API key from: https://cursor.com/settings"

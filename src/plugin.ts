@@ -1,6 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import type { Auth } from "@opencode-ai/sdk";
+import { spawn, spawnSync } from "child_process";
 import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
@@ -63,6 +64,13 @@ import {
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
 import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
+import {
+  parseCursorBackendPreference,
+  resolveSdkApiKey,
+  selectBackendForRequest,
+  type CursorRuntimeBackend,
+} from "./provider/backend.js";
+import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
 
 const log = createLogger("plugin");
 
@@ -166,9 +174,137 @@ const REUSE_EXISTING_PROXY = process.env.CURSOR_ACP_REUSE_EXISTING_PROXY !== "fa
 
 // Stored API key from auth loader (OpenCode auth store)
 let storedApiKey: string | undefined;
+let cursorAgentAvailabilityCache: boolean | undefined;
 
 function getGlobalKey(): string {
   return "__opencode_cursor_proxy_server__";
+}
+
+function isCursorAgentAvailable(): boolean {
+  if (cursorAgentAvailabilityCache !== undefined) {
+    return cursorAgentAvailabilityCache;
+  }
+
+  const binary = resolveCursorAgentBinary();
+  const result = spawnSync(formatShellCommandForPlatform(binary), ["--version"], {
+    stdio: "ignore",
+    timeout: 1000,
+    shell: process.platform === "win32",
+  });
+  const error = result.error as NodeJS.ErrnoException | undefined;
+
+  // ENOENT is the one signal that the binary is clearly absent. Other failures
+  // mean the command path exists but the probe could not complete cleanly.
+  cursorAgentAvailabilityCache = error?.code === "ENOENT" ? false : true;
+  return cursorAgentAvailabilityCache;
+}
+
+function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeBackend {
+  const parsed = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND);
+  if (!parsed.valid) {
+    log.warn("Invalid CURSOR_ACP_BACKEND value; falling back to auto", {
+      value: process.env.CURSOR_ACP_BACKEND,
+    });
+  }
+
+  return selectBackendForRequest({
+    preference: parsed.preference,
+    cursorAgentAvailable: isCursorAgentAvailable(),
+    sdkApiKey,
+  });
+}
+
+function buildCursorAgentCommand(model: string, workspaceDirectory: string): string[] {
+  const cmd = [
+    resolveCursorAgentBinary(),
+    "--print",
+    "--output-format",
+    "stream-json",
+    "--stream-partial-output",
+    "--workspace",
+    workspaceDirectory,
+    "--model",
+    model,
+  ];
+  if (FORCE_TOOL_MODE) {
+    cmd.push("--force");
+  }
+  return cmd;
+}
+
+function createCursorAgentBunChild(model: string, prompt: string, workspaceDirectory: string): any {
+  const bunAny = globalThis as any;
+  if (!bunAny.Bun?.spawn) {
+    throw new Error("This provider requires Bun runtime.");
+  }
+
+  const child = bunAny.Bun.spawn({
+    cmd: buildCursorAgentCommand(model, workspaceDirectory),
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunAny.Bun.env,
+  });
+
+  child.stdin.write(prompt);
+  child.stdin.end();
+  return child;
+}
+
+function createBunChildForBackend(input: {
+  backend: CursorRuntimeBackend;
+  sdkApiKey?: string;
+  model: string;
+  prompt: string;
+  workspaceDirectory: string;
+}): any {
+  if (input.backend === "sdk") {
+    if (!input.sdkApiKey) {
+      throw new Error("SDK backend requires CURSOR_API_KEY or OpenCode auth.");
+    }
+    return createSdkBunChild({
+      apiKey: input.sdkApiKey,
+      model: input.model,
+      prompt: input.prompt,
+      cwd: input.workspaceDirectory,
+    });
+  }
+
+  return createCursorAgentBunChild(input.model, input.prompt, input.workspaceDirectory);
+}
+
+function createCursorAgentNodeChild(model: string, prompt: string, workspaceDirectory: string): any {
+  const cmd = buildCursorAgentCommand(model, workspaceDirectory);
+  const child = spawn(formatShellCommandForPlatform(cmd[0]), cmd.slice(1), {
+    stdio: ["pipe", "pipe", "pipe"],
+    shell: process.platform === "win32",
+  });
+
+  child.stdin.write(prompt);
+  child.stdin.end();
+  return child;
+}
+
+function createNodeChildForBackend(input: {
+  backend: CursorRuntimeBackend;
+  sdkApiKey?: string;
+  model: string;
+  prompt: string;
+  workspaceDirectory: string;
+}): any {
+  if (input.backend === "sdk") {
+    if (!input.sdkApiKey) {
+      throw new Error("SDK backend requires CURSOR_API_KEY or OpenCode auth.");
+    }
+    return createSdkNodeChild({
+      apiKey: input.sdkApiKey,
+      model: input.model,
+      prompt: input.prompt,
+      cwd: input.workspaceDirectory,
+    });
+  }
+
+  return createCursorAgentNodeChild(input.model, input.prompt, input.workspaceDirectory);
 }
 
 function getOpenCodeConfigPrefix(): string {
@@ -636,38 +772,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
   // Mark as starting to avoid duplicate starts in-process.
   state.baseURL = "";
 
-  /**
-   * Resolve API key from multiple sources with priority:
-   * 1. process.env.CURSOR_API_KEY (highest priority)
-   * 2. storedApiKey (from OpenCode auth loader)
-   * 3. Authorization header from request (format: "Bearer <key>" or just "<key>")
-   */
-  const resolveApiKey = (authHeader?: string | null): string | undefined => {
-    // Priority 1: environment variable
-    const envKey = process.env.CURSOR_API_KEY;
-    if (envKey && envKey.trim()) {
-      return envKey;
-    }
-
-    // Priority 2: stored key from auth loader
-    if (storedApiKey && storedApiKey.trim()) {
-      return storedApiKey;
-    }
-
-    // Priority 3: Authorization header
-    if (authHeader && authHeader.trim()) {
-      const trimmed = authHeader.trim();
-      // Handle "Bearer <key>" format
-      if (trimmed.toLowerCase().startsWith("bearer ")) {
-        const key = trimmed.slice(7).trim();
-        return key || undefined;
-      }
-      // Handle raw key format
-      return trimmed || undefined;
-    }
-
-    return undefined;
-  };
+  const resolveRequestSdkApiKey = (authHeader?: string | null): string | undefined =>
+    resolveSdkApiKey({
+      env: process.env,
+      storedApiKey,
+      authorizationHeader: authHeader,
+    });
 
       const handler = async (req: Request): Promise<Response> => {
         try {
@@ -685,7 +795,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         try {
           const { ModelDiscoveryService } = await import("./models/discovery.js");
           const discovery = new ModelDiscoveryService();
-          const modelList = await discovery.discover(resolveApiKey());
+          const modelList = await discovery.discover(resolveRequestSdkApiKey());
           const models = modelList.map((m: any) => ({
             id: typeof m === "string" ? m : m.id,
             object: "model",
@@ -756,15 +866,22 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       });
 
       const authHeader = req.headers.get("authorization");
-      const apiKey = resolveApiKey(authHeader);
-      if (!apiKey || !apiKey.trim()) {
+      const sdkApiKey = resolveRequestSdkApiKey(authHeader);
+      const backend = resolveBackendForRequest(sdkApiKey);
+      if (backend === "sdk" && !sdkApiKey) {
         return new Response(
-          JSON.stringify({ error: "Cursor API key not found. Set CURSOR_API_KEY, run `opencode auth login`, or set provider options.apiKey in opencode.json." }),
+          JSON.stringify({ error: "Cursor SDK backend requires a real Cursor API key. Set CURSOR_API_KEY or run `opencode auth login`; the legacy `cursor-agent` placeholder is not valid SDK auth." }),
           { status: 401, headers: { "Content-Type": "application/json" } },
         );
       }
 
-      const child = createSdkBunChild({ apiKey, model, prompt, cwd: workspaceDirectory });
+      const child = createBunChildForBackend({
+        backend,
+        sdkApiKey,
+        model,
+        prompt,
+        workspaceDirectory,
+      });
 
       if (!stream) {
         const [stdoutText, stderrText] = await Promise.all([
@@ -1144,7 +1261,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         try {
           const { ModelDiscoveryService } = await import("./models/discovery.js");
           const discovery = new ModelDiscoveryService();
-          const modelList = await discovery.discover(resolveApiKey());
+          const modelList = await discovery.discover(resolveRequestSdkApiKey());
           const models = modelList.map((m: any) => ({
             id: typeof m === "string" ? m : m.id,
             object: "model",
@@ -1205,14 +1322,21 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       });
 
       const authHeaderNode = req.headers["authorization"] as string | undefined;
-      const apiKeyNode = resolveApiKey(authHeaderNode);
-      if (!apiKeyNode || !apiKeyNode.trim()) {
+      const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
+      const backend = resolveBackendForRequest(sdkApiKeyNode);
+      if (backend === "sdk" && !sdkApiKeyNode) {
         res.writeHead(401, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Cursor API key not found. Set CURSOR_API_KEY, run `opencode auth login`, or set provider options.apiKey in opencode.json." }));
+        res.end(JSON.stringify({ error: "Cursor SDK backend requires a real Cursor API key. Set CURSOR_API_KEY or run `opencode auth login`; the legacy `cursor-agent` placeholder is not valid SDK auth." }));
         return;
       }
 
-      const child = createSdkNodeChild({ apiKey: apiKeyNode, model, prompt, cwd: workspaceDirectory });
+      const child = createNodeChildForBackend({
+        backend,
+        sdkApiKey: sdkApiKeyNode,
+        model,
+        prompt,
+        workspaceDirectory,
+      });
 
       if (!stream) {
         const stdoutChunks: Buffer[] = [];

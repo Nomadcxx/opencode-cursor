@@ -1,5 +1,8 @@
 import type { ModelInfo, DiscoveryConfig } from "./types.js";
 import { listModelsViaRunner } from "../client/sdk-child.js";
+import { discoverModelsFromCursorAgent } from "../cli/model-discovery.js";
+import { resolveSdkApiKey } from "../auth.js";
+import { parseCursorBackendPreference } from "../provider/backend.js";
 
 interface CacheEntry {
   models: ModelInfo[];
@@ -22,20 +25,42 @@ export class ModelDiscoveryService {
       return this.cache.models;
     }
 
-    try {
-      const models = await this.queryViaSdk(apiKey);
-      this.cache = { models, timestamp: Date.now() };
-      return models;
-    } catch (error) {
-      // Return fallback on error
-      return this.fallbackModels;
+    const backendPreference = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference;
+    const queryOrder = backendPreference === "sdk"
+      ? ["sdk"]
+      : backendPreference === "cursor-agent"
+        ? ["cursor-agent"]
+        : ["cursor-agent", "sdk"];
+
+    for (const backend of queryOrder) {
+      try {
+        const models = backend === "cursor-agent"
+          ? await this.queryCursorAgent()
+          : await this.queryViaSdk(apiKey);
+        this.cache = { models, timestamp: Date.now() };
+        return models;
+      } catch {
+        // Try the next backend before falling back to static defaults.
+      }
     }
+
+    this.cache = { models: this.fallbackModels, timestamp: Date.now() };
+    return this.fallbackModels;
+  }
+
+  async queryCursorAgent(apiKey?: string): Promise<ModelInfo[]> {
+    void apiKey;
+    return discoverModelsFromCursorAgent().map((model) => ({
+      id: model.id,
+      name: model.name,
+      description: `Cursor ${model.name} model`,
+    }));
   }
 
   private async queryViaSdk(apiKey?: string): Promise<ModelInfo[]> {
     // Use the SDK runner to list models
-    const key = apiKey ?? process.env.CURSOR_API_KEY;
-    if (!key || !key.trim()) {
+    const key = resolveSdkApiKey({ env: process.env, storedApiKey: apiKey });
+    if (!key) {
       throw new Error("No Cursor API key available");
     }
 
