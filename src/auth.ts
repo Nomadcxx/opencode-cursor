@@ -1,12 +1,9 @@
 // src/auth.ts
 
-import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { createLogger } from "./utils/logger";
-import { stripAnsi } from "./utils/errors";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
 
 const log = createLogger("auth");
 
@@ -68,153 +65,23 @@ export async function pollForAuthFile(
   });
 }
 
-export async function startCursorOAuth(): Promise<{
-  url: string;
-  instructions: string;
-  callback: () => Promise<AuthResult>;
-}> {
-  return new Promise((resolve, reject) => {
-    log.info("Starting cursor-cli login process");
-
-    const proc = spawn(formatShellCommandForPlatform(resolveCursorAgentBinary()), ["login"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: process.platform === "win32",
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let urlExtracted = false;
-
-    proc.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    const extractUrl = () => {
-      // Step 1: Strip ANSI codes
-      let cleanOutput = stripAnsi(stdout);
-      // Step 2: Remove ALL whitespace (newlines, spaces, tabs)
-      // The URL is split across lines with continuation spaces
-      cleanOutput = cleanOutput.replace(/\s/g, "");
-      // Step 3: Now extract the continuous URL
-      const urlMatch = cleanOutput.match(/https:\/\/cursor\.com\/loginDeepControl[^\s]*/);
-      if (urlMatch) {
-        return urlMatch[0];
-      }
-      return null;
-    };
-
-    // Try to extract URL with polling instead of fixed timeout
-    const tryExtractUrl = () => {
-      const url = extractUrl();
-
-      if (url && !urlExtracted) {
-        urlExtracted = true;
-        log.debug("Captured stdout", { length: stdout.length });
-        log.debug("Extracted URL", { url: url.substring(0, 50) + "..." });
-        log.info("Got login URL, waiting for browser auth");
-
-        resolve({
-          url,
-          instructions: "Click 'Continue with Cursor' in your browser to authenticate",
-          callback: async () => {
-            // Wait for process to complete
-            return new Promise((resolve) => {
-              let resolved = false;
-
-              const resolveOnce = (result: AuthResult) => {
-                if (!resolved) {
-                  resolved = true;
-                  resolve(result);
-                }
-              };
-
-              proc.on("close", async (code) => {
-                log.debug("Login process closed", { code });
-
-                // If process exited successfully, poll for auth file
-                if (code === 0) {
-                  log.info("Process exited successfully, polling for auth file...");
-                  const isAuthenticated = await pollForAuthFile();
-
-                  if (isAuthenticated) {
-                    log.info("Authentication successful");
-                    resolveOnce({
-                      type: "success",
-                      provider: "cursor-acp",
-                      key: "cursor-auth",
-                    });
-                  } else {
-                    log.warn("Auth file not found after polling");
-                    resolveOnce({
-                      type: "failed",
-                      error: "Authentication was not completed. Please try again.",
-                    });
-                  }
-                } else {
-                  log.warn("Login process failed", { code });
-                  resolveOnce({
-                    type: "failed",
-                    error: stderr ? stripAnsi(stderr) : `Authentication failed with code ${code}`,
-                  });
-                }
-              });
-
-              // Timeout after 5 minutes
-              setTimeout(() => {
-                log.warn("Authentication timed out after 5 minutes");
-                proc.kill();
-                resolveOnce({
-                  type: "failed",
-                  error: "Authentication timed out. Please try again.",
-                });
-              }, AUTH_POLL_TIMEOUT);
-            });
-          },
-        });
-      }
-    };
-
-    // Poll for URL extraction with timeout
-    const urlPollStart = Date.now();
-    const pollForUrl = () => {
-      if (urlExtracted) return;
-
-      const elapsed = Date.now() - urlPollStart;
-      if (elapsed >= URL_EXTRACTION_TIMEOUT) {
-        proc.kill();
-        const errorMsg = stderr ? stripAnsi(stderr) : "No login URL received within timeout";
-        log.error("Failed to extract login URL", { error: errorMsg, elapsed: `${elapsed}ms` });
-        reject(new Error(`Failed to get login URL: ${errorMsg}`));
-        return;
-      }
-
-      tryExtractUrl();
-
-      if (!urlExtracted) {
-        setTimeout(pollForUrl, 100); // Check every 100ms
-      }
-    };
-
-    // Start polling for URL
-    pollForUrl();
-  });
-}
-
 export function verifyCursorAuth(): boolean {
+  // API key takes priority over auth file
+  const apiKey = process.env.CURSOR_API_KEY;
+  if (apiKey && apiKey.trim().length > 0) {
+    log.debug("CURSOR_API_KEY found, auth verified");
+    return true;
+  }
+
   const possiblePaths = getPossibleAuthPaths();
-  
   for (const authPath of possiblePaths) {
     if (existsSync(authPath)) {
       log.debug("Auth file found", { path: authPath });
       return true;
     }
   }
-  
-  log.debug("No auth file found", { checkedPaths: possiblePaths });
+
+  log.debug("No auth found (no CURSOR_API_KEY, no auth file)", { checkedPaths: possiblePaths });
   return false;
 }
 

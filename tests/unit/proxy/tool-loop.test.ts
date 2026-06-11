@@ -419,55 +419,24 @@ describe("extractOpenAiToolCall with pass-through", () => {
     expect(result.action).toBe("skip");
     expect(result.skipReason).toBe("no_name");
   });
-});
 
-describe("extractOpenAiToolCall with pass-through", () => {
-  const allowedTools = new Set(["bash", "read", "write"]);
+  it("should return passthrough action when model tries to call 'mcp' directly", () => {
+    const event = createToolCallEvent("mcp", { server: "engram", tool: "mem_save" });
 
-  it("should return intercept action for known tools", () => {
-    const event = createToolCallEvent("bash", { command: "ls" });
-
-    const result = extractOpenAiToolCall(event, allowedTools);
-
-    expect(result.action).toBe("intercept");
-    expect(result.toolCall).toBeDefined();
-    expect(result.toolCall!.function.name).toBe("bash");
-  });
-
-  it("should return intercept action for aliased tools", () => {
-    const event = createToolCallEvent("runcommand", { command: "ls" });
-
-    const result = extractOpenAiToolCall(event, allowedTools);
-
-    expect(result.action).toBe("intercept");
-    expect(result.toolCall!.function.name).toBe("bash");
-  });
-
-  it("should return passthrough action for unknown tools", () => {
-    const event = createToolCallEvent("browser_navigate", { url: "https://example.com" });
-
-    const result = extractOpenAiToolCall(event, allowedTools);
+    const result = extractOpenAiToolCall(event, new Set(["bash", "mcp__engram__mem_save"]));
 
     expect(result.action).toBe("passthrough");
-    expect(result.passthroughName).toBe("browser_navigate");
+    expect(result.passthroughName).toBe("mcp");
     expect(result.toolCall).toBeUndefined();
   });
 
-  it("should return skip action when allowedToolNames is empty", () => {
-    const event = createToolCallEvent("bash", { command: "ls" });
+  it("should intercept valid MCP tool calls with full namespaced name", () => {
+    const event = createToolCallEvent("mcp__engram__mem_save", { memory: "test" });
 
-    const result = extractOpenAiToolCall(event, new Set());
+    const result = extractOpenAiToolCall(event, new Set(["bash", "mcp__engram__mem_save"]));
 
-    expect(result.action).toBe("skip");
-    expect(result.skipReason).toBe("no_allowed_tools");
-  });
-
-  it("should return skip action when no name can be extracted", () => {
-    const event = { tool_call: {} } as any;
-
-    const result = extractOpenAiToolCall(event, allowedTools);
-
-    expect(result.action).toBe("skip");
-    expect(result.skipReason).toBe("no_name");
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall).toBeDefined();
+    expect(result.toolCall!.function.name).toBe("mcp__engram__mem_save");
   });
 });

@@ -1,7 +1,7 @@
 /**
  * Non-blocking model auto-refresh for plugin startup.
  *
- * Discovers currently available models from cursor-agent and merges them
+ * Discovers currently available models via the SDK runner and merges them
  * into the opencode.json config. Only adds new models — never removes
  * user-configured ones. Safe to call fire-and-forget; all errors are
  * caught and logged silently.
@@ -11,7 +11,7 @@ import {
   readFileSync as nodeReadFileSync,
   writeFileSync as nodeWriteFileSync,
 } from "node:fs";
-import { discoverModelsFromCursorAgent, type DiscoveredModel } from "../cli/model-discovery.js";
+import { listModelsViaRunner } from "../client/sdk-child.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 
@@ -23,9 +23,15 @@ type ProviderConfig = { models?: Record<string, unknown> } & Record<string, unkn
 type OpenCodeConfig = {
   provider?: Record<string, ProviderConfig | undefined>;
 } & Record<string, unknown>;
+
+export type DiscoveredModel = {
+  id: string;
+  name: string;
+};
+
 type AutoRefreshModelsDeps = {
   defer: () => Promise<void>;
-  discoverModels: () => DiscoveredModel[];
+  discoverModels: () => Promise<DiscoveredModel[]>;
   env: NodeJS.ProcessEnv;
   existsSync: (path: string) => boolean;
   log: Logger;
@@ -35,7 +41,14 @@ type AutoRefreshModelsDeps = {
 
 const defaultDeps: AutoRefreshModelsDeps = {
   defer: () => Promise.resolve(),
-  discoverModels: discoverModelsFromCursorAgent,
+  discoverModels: async () => {
+    const apiKey = process.env.CURSOR_API_KEY;
+    if (!apiKey || !apiKey.trim()) {
+      throw new Error("CURSOR_API_KEY not set");
+    }
+    const models = await listModelsViaRunner(apiKey);
+    return models.map((m) => ({ id: m.id, name: m.name }));
+  },
   env: process.env,
   existsSync: nodeExistsSync,
   log,
@@ -77,7 +90,7 @@ function yieldForFireAndForget(): Promise<void> {
  * Auto-refresh models at plugin startup.
  *
  * - Reads the current opencode.json config
- * - Queries cursor-agent for available models
+ * - Queries the SDK runner for available models
  * - Merges discovered models into the provider config (additive only)
  * - Writes back if any new models were added
  *
@@ -118,9 +131,9 @@ export async function autoRefreshModels(
     const existingModels = getExistingModels(provider);
     let discovered: DiscoveredModel[];
     try {
-      discovered = resolvedDeps.discoverModels();
+      discovered = await resolvedDeps.discoverModels();
     } catch (err) {
-      resolvedDeps.log.debug("cursor-agent model discovery failed, skipping auto-refresh", {
+      resolvedDeps.log.debug("Model discovery failed, skipping auto-refresh", {
         error: String(err),
       });
       return;

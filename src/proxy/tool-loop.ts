@@ -132,6 +132,19 @@ export function extractOpenAiToolCall(
     return { action: "skip", skipReason: "no_name" };
   }
 
+  // Defensive check: if model tries to call "mcp" directly, it's a mistake.
+  // MCP tools must be called with their full names like mcp__server__tool.
+  if (name.toLowerCase() === "mcp") {
+    log.warn("Model attempted to call 'mcp' directly (not a valid tool name)", {
+      args,
+      hint: "MCP tools must be called by their full name (e.g. mcp__engram__mem_save), not 'mcp'",
+    });
+    return {
+      action: "passthrough",
+      passthroughName: name,
+    };
+  }
+
   const resolvedName = resolveAllowedToolName(name, allowedToolNames);
   if (resolvedName) {
     // Known tool → intercept and forward to OpenCode

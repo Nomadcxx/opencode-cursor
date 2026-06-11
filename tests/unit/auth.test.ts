@@ -97,9 +97,26 @@ describe("Auth Module", () => {
   });
 
   describe("verifyCursorAuth", () => {
-    it("should return false when auth file does not exist", () => {
-      const result = verifyCursorAuth();
-      expect(result).toBe(false);
+    it("should return false when auth file does not exist and CURSOR_API_KEY is unset", () => {
+      const prev = process.env.CURSOR_API_KEY;
+      delete process.env.CURSOR_API_KEY;
+      try {
+        const result = verifyCursorAuth();
+        expect(result).toBe(false);
+      } finally {
+        if (prev !== undefined) process.env.CURSOR_API_KEY = prev;
+      }
+    });
+
+    it("should return true when CURSOR_API_KEY is set even without auth file", () => {
+      const prev = process.env.CURSOR_API_KEY;
+      process.env.CURSOR_API_KEY = "test-key";
+      try {
+        expect(verifyCursorAuth()).toBe(true);
+      } finally {
+        if (prev !== undefined) process.env.CURSOR_API_KEY = prev;
+        else delete process.env.CURSOR_API_KEY;
+      }
     });
 
     it("should return true when auth file exists", () => {

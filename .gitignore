@@ -28,3 +28,9 @@ docs/plans/
 # Agent configuration (local only)
 AGENTS.md
 TOOL_SMOKE.md
+
+# Local development and debugging
+.env
+.atl/
+estado-fix-sdk.md
+plan-fix-sdk.md

@@ -37,9 +37,11 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "scripts/sdk-runner.mjs"
   ],
   "dependencies": {
+    "@cursor/sdk": "^1.0.18",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@opencode-ai/plugin": "1.1.53",
     "@opencode-ai/sdk": "1.1.53",

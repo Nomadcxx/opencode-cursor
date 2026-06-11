@@ -5,7 +5,6 @@ export { createProxyServer, findAvailablePort } from "./proxy/server.js";
 export { parseOpenAIRequest } from "./proxy/handler.js";
 export type { ParsedRequest } from "./proxy/handler.js";
 export { createChatCompletionResponse, createChatCompletionChunk } from "./proxy/formatter.js";
-// DO NOT export startCursorOAuth - it causes OpenCode to auto-trigger auth
 export { verifyCursorAuth } from "./auth.js";
 export type { AuthResult } from "./auth.js";
 export { checkAuthStatus, formatStatusOutput } from "./commands/status";
