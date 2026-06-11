@@ -261,7 +261,7 @@ flowchart LR
 [ ] **Simplify** — Rip out serialisation layers
 [ ] **ACP + MCP** — Structured protocols end-to-end
 
-`Future Architecture` — Long-term direction is `OpenCode -> Cursor ACP -> MCP`, using official Cursor ACP as the backend. Currently deferred: Cursor ACP does not yet reliably propagate MCP servers during ACP session setup. See [docs/architecture/cursor-acp-mcp-future.md](docs/architecture/cursor-acp-mcp-future.md).
+**ACP + MCP (deferred)** — End goal is a thin `OpenCode → Cursor ACP → MCP` plugin, not an evolved proxy. We ship the bridge until Cursor's ACP path passes MCP + headless approval re-validation. [Why and when →](docs/architecture/cursor-acp-mcp-future.md)
 
 ## License
 

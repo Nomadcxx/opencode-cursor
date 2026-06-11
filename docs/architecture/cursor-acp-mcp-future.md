@@ -1,110 +1,159 @@
-# Cursor ACP + MCP Future Architecture
+# Cursor ACP + MCP — Future Architecture
 
-## Purpose
+**Status:** Deferred — re-validation needed  
+**Last reviewed:** 2026-06-12  
+**Today:** `open-cursor` bridge — [runtime-tool-loop.md](runtime-tool-loop.md)
 
-This document defines the preferred long-term direction for the project after the current `open-cursor` bridge architecture.
+---
 
-It is a future-state architecture document, not an implementation plan. It exists to make the direction explicit, preserve the reasoning behind it, and avoid drifting into more custom compatibility work before the underlying ecosystem is ready.
+## Summary
 
-## Current State
+**North star:** `OpenCode → Cursor ACP → MCP` — OpenCode as host, Cursor's ACP agent as backend, MCP passed in at session setup, minimal glue in this repo.
 
-`open-cursor` is a working bridge built around an OpenCode-specific provider and proxy path. It exists because an earlier ACP-first approach did not become reliable enough for production use in this project.
+**Today:** We ship a **bridge** (HTTP proxy → cursor-agent or SDK → OpenCode-owned tool loop; MCP via `mcptool`). The ACP path is still the right end state, but not ready to replace the bridge until upstream is re-verified on a current `cursor-agent`.
 
-The current architecture proved that Cursor-backed usage inside OpenCode is valuable. It also preserved important operational lessons around auth UX, subprocess management, streaming behavior, and tool handling. However, it is still a custom bridge architecture rather than the preferred long-term shape.
+Architecture RFC + status memo. Not an implementation plan.
 
-## Future State
+---
 
-The preferred future architecture is:
+## Three architectures
 
-`OpenCode -> Cursor ACP -> MCP`
+### A. Production — `open-cursor` bridge
 
-In that future state:
+```mermaid
+flowchart LR
+    OC[OpenCode] --> SDK["@ai-sdk/openai-compatible"]
+    SDK --> PROXY["proxy :32124"]
+    PROXY --> BE["cursor-agent / SDK"]
+    BE --> CURSOR[Cursor API]
+    OC --> TOOLS[OpenCode tools]
+    TOOLS --> MCPTOOL[mcptool]
+    MCPTOOL --> MCP[MCP servers]
+```
 
-- OpenCode remains the host and UI.
-- Cursor ACP becomes the backend agent interface.
-- MCP servers are passed through from OpenCode to Cursor ACP during ACP session setup.
-- Tool execution remains agent-side and MCP-side rather than being reimplemented in a custom compatibility layer.
-- The ideal eventual upstream outcome is a small OpenCode integration surface, with minimal custom code specific to Cursor.
+- HTTP proxy, not ACP. `CURSOR_ACP_BACKEND=auto` → cursor-agent, SDK fallback.
+- OpenCode executes tools (`TOOL_LOOP_MODE=opencode`); plugin normalizes stream-json at the boundary.
+- MCP via `opencode.json` + `mcptool`, not ACP `mcpServers`.
 
-This means the real target is not "port `open-cursor` to ACP." The target is to replace the need for most of `open-cursor` with a thinner native ACP + MCP path.
+Works today. Bridge, not forever.
 
-## Architectural Principle
+### B. Target — Cursor ACP + MCP
 
-The future system should respect protocol ownership:
+```mermaid
+flowchart LR
+    OC[OpenCode] --> ACP[ACP client]
+    ACP -->|"session/new"| AGENT["cursor-agent acp"]
+    AGENT --> CURSOR[Cursor API]
+    AGENT --> MCP[MCP servers]
+```
 
-- ACP should handle agent transport and session semantics.
-- MCP should handle tool and server interoperability.
-- OpenCode should not own a large custom translation or runtime layer if official ACP + MCP can satisfy the product requirements.
+- ACP over stdio. MCP in `session/new`. Agent owns tools.
+- Goal: thin plugin — **not** porting the proxy stack.
 
-This principle matters because the current bridge architecture is useful precisely as a bridge. It should not become the permanent architecture if the ecosystem now offers a more standard path.
+### C. Rejected — OpenCode core ACP provider
 
-## Why ACP + MCP Is The Best Path
+[PR #5095](https://github.com/anomalyco/opencode/pull/5095) closed unmerged (Jan 2026). Maintainers pointed to plugins ([#2072](https://github.com/anomalyco/opencode/issues/2072) still open). Realistic upstream path: plugin/ecosystem, not core merge.
 
-ACP + MCP is the preferred long-term path for several reasons:
+---
 
-- It aligns with the broader ecosystem direction: ACP is becoming the standard editor-to-agent boundary, while MCP is becoming the standard tool/server boundary.
-- It matches how Cursor is now being integrated into external clients such as JetBrains, which makes the path strategically relevant rather than speculative.
-- It reduces the amount of custom protocol translation this project would otherwise need to own indefinitely.
-- It preserves the correct ownership model: agent backends should manage agent behavior and MCP tools, while OpenCode should remain focused on host UX and provider integration.
-- It gives the best chance of an eventual upstream OpenCode contribution that maintainers can reasonably accept, because the ideal end state is a small native integration rather than a large compatibility subsystem.
+## Why ACP + MCP
 
-## Why Not Keep Evolving The Current Architecture
+| | |
+|--|--|
+| Standards | ACP for agent transport; MCP for tools — both converging. |
+| Cost | Bridge owns NDJSON parsing, aliases, schema compat, guards — ongoing. |
+| Fit | Cursor ships ACP for JetBrains etc.; path is real, not speculative. |
+| Ownership | Agent runs agent + MCP; OpenCode stays host UX. |
 
-The current `open-cursor` architecture should not be stretched into the long-term ACP solution.
+**Don't stretch the bridge:** it's built for proxy + OpenCode tool loop + `mcptool`. Evolving it into "ACP compatibility" cements the wrong architecture ([ACP_MIGRATION.md](../ACP_MIGRATION.md)). Use the bridge until upstream is ready.
 
-Reasons:
+---
 
-- The current system is optimized for the custom proxy and provider-boundary path, not for native ACP backend integration.
-- Extending it further risks preserving the bridge architecture as the permanent architecture.
-- The repository already shows how easily historical experiments and transitional layers can accumulate and blur the true direction.
-- Building more custom protocol glue now would increase migration cost later and weaken the case for a small upstream integration.
+## Parity: bridge vs ACP
 
-In short: the current system should remain the practical current solution while the preferred future remains blocked, but it should not define the long-term architecture.
+Assumes working `session/new` + MCP without approval hacks.
 
-## Current Constraint
+| | Bridge today | ACP target |
+|--|--------------|------------|
+| Host | OpenCode TUI | OpenCode TUI |
+| Models / auth | Proxy + cursor-agent/SDK | ACP agent |
+| Streaming / thinking | SSE via proxy | ACP session updates |
+| bash/edit/write | OpenCode tool loop | ACP agent |
+| `permission` in opencode.json | Yes (tools + `mcptool` bash) | Unclear ([#5095](https://github.com/anomalyco/opencode/pull/5095)) |
+| MCP from `opencode.json` | Plugin + `mcptool` | `mcpServers` in `session/new` |
+| Headless MCP approval | Bash permissions | Approval middleware + file hack ([#153823](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823)) |
+| Custom code | Large (proxy, boundary, mcptool) | Small client + mapper |
+| OpenCode core | Plugin only | Plugin only (#5095 rejected) |
 
-The preferred future depends on official Cursor ACP correctly accepting and using MCP server configuration during ACP session setup.
+Fixed MCP in ACP ≠ parity. Tool ownership and permissions may still differ.
 
-At present, that does not appear reliable enough for this project's requirements.
+---
 
-Without MCP propagation, the ACP path loses too much of the tool and server behavior that makes the current bridge valuable. Because MCP interoperability is part of the reason to move to ACP at all, this is not a minor gap; it cuts into the core value of the future architecture.
+## Blockers
 
-## Why The Project Is Not Moving Yet
+### P0 — before any prototype
 
-The project is not moving to the future architecture yet because the key dependency appears blocked today:
+1. **MCP via `session/new`** — Mar 2026: broken ([#153623](https://forum.cursor.com/t/acp-agent-silently-ignores-mcpservers-in-session-new/153623)). Apr 2026: possible fix on newer builds; unverified here (Jun 2026).
+2. **No approval-file hack** — Client-passed servers blocked unless `mcp-approvals.json` is pre-seeded ([#153823](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823)). `--approve-mcps` / `--yolo` don't help ACP.
+3. **Headless auth** — must work for non-interactive OpenCode.
 
-- Official Cursor ACP appears to ignore `mcpServers` supplied during ACP `session/new`.
+### P1 — design impact
 
-That is a practical blocker for `OpenCode -> Cursor ACP -> MCP`.
+- `loadSession` advertised but was broken (Mar 2026).
+- ACP may move tool execution off OpenCode (permissions tradeoff).
+- No OpenCode core ACP provider — plugin path only.
 
-The project should not paper over that limitation with a large custom workaround unless the tradeoff is revisited explicitly. A custom MCP bridge layered on top of Cursor ACP would risk recreating the same kind of custom compatibility infrastructure the project is trying to move away from.
+### Not blockers
 
-That kind of workaround could easily become another transitional system that is difficult to upstream and harder to remove later.
+- `mcptool` ships MCP today.
+- Cursor still investing in ACP (JetBrains, etc.).
 
-## Decision Gate
+---
 
-Revisit implementation when official Cursor ACP supports MCP server propagation well enough to preserve the intended ownership model and keep the OpenCode integration thin.
+## Decision gate
 
-Until that gate is met, the project should:
+**Now:** `deferred` — re-verify P0 on current `cursor-agent` before a spike.
 
-- treat `open-cursor` as the practical current solution,
-- keep roadmap messaging honest about the preferred future,
-- avoid committing to a premature rewrite,
-- and avoid building a second large custom compatibility layer in the name of ACP.
+**Prototype when:** `session/new` MCP works without approval hacks; headless auth OK; integration stays small (ACP client + config map — not proxy + `mcptool` on top).
 
-## Migration Outlook
+**Migrate when:** Parity table satisfied for real users; clear bridge deprecation; accept tool/permission model changes if needed.
 
-`open-cursor` remains the practical current solution while the ACP + MCP path is blocked.
+**Don't:** Rewrite `src/proxy/*` in place; stack ACP on the proxy; treat the gate as permanently closed.
 
-The future architecture should be treated as a replacement direction, not as a near-term rewrite of the current codebase. If the blocker is resolved, the next step should likely be a small prototype built around official Cursor ACP rather than an in-place evolution of the current proxy architecture.
+**Re-verify on agent bumps:**
+1. `cursor-agent acp` + minimal stdio MCP — spawns, `tools/list` works?
+2. Real `opencode.json` server — callable without pre-written approval files?
+3. Update **Last reviewed** + agent version at top.
 
-Any eventual OpenCode contribution should aim to keep the maintainership burden low by upstreaming only the minimal backend and provider integration needed for the native ACP path.
+Repros: [#153623](https://forum.cursor.com/t/acp-agent-silently-ignores-mcpservers-in-session-new/153623), [#153823](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823).
 
-Until then, roadmap messaging should acknowledge the preferred future architecture, explain why it is deferred, and link readers to this document for detail.
+---
+
+## If the gate opens
+
+1. Spike outside proxy — ACP client only, no `tool-loop.ts` reuse.
+2. Map `opencode.json` MCP → ACP `mcpServers` (one-way).
+3. Parity pass — document regressions.
+4. Ship as plugin (per OpenCode maintainer guidance).
+5. Deprecate bridge only after sign-off.
+
+---
+
+## While deferred
+
+Ship the bridge: install via README, dual backend, OpenCode tool loop, MCP via `mcptool`. Roadmap phase **ACP + MCP** stays unchecked — deferral, not cancellation.
+
+See [runtime-tool-loop.md](runtime-tool-loop.md), [ACP_MIGRATION.md](../ACP_MIGRATION.md).
+
+---
 
 ## References
 
-- OpenCode issue `#2072`
-- OpenCode PR `#5095`
-- Official Cursor ACP discussions and JetBrains integration announcements
-- Current `open-cursor` architecture and roadmap materials in this repository
+| | |
+|--|--|
+| MCP in `session/new` | [#153623](https://forum.cursor.com/t/acp-agent-silently-ignores-mcpservers-in-session-new/153623) |
+| MCP approval | [#153823](https://forum.cursor.com/t/mcp-servers-passed-via-session-new-dont-work-in-acp-mode/153823) |
+| OpenCode Cursor | [#2072](https://github.com/anomalyco/opencode/issues/2072) |
+| OpenCode ACP PR | [#5095](https://github.com/anomalyco/opencode/pull/5095) — closed |
+
+Update **Status** to `prototype-worthy` if P0 passes; open a separate plan — don't bloat this doc.
