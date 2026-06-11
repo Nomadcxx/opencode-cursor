@@ -8,12 +8,6 @@
 
 No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Your Cursor subscription, properly integrated.
 
-## Requirements
-
-- **Bun** for the OpenCode plugin runtime.
-- **Node.js >= 20** when using the SDK backend (`CURSOR_ACP_BACKEND=sdk` or automatic SDK fallback).
-- Existing `cursor-agent login` users can keep using that flow when the `cursor-agent` binary is available.
-
 ## Installation
 
 ### Option A — Local development (from source)
