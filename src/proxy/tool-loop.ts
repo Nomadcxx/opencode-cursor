@@ -97,6 +97,12 @@ const TOOL_NAME_ALIASES = new Map<string, string>([
   ["mcp_skill", "skill_mcp"],
   ["runmcpskill", "skill_mcp"],
   ["invokeskillmcp", "skill_mcp"],
+  // question aliases (Cursor-trained models often emit AskQuestion / ask_user)
+  ["askquestion", "question"],
+  ["askuser", "question"],
+  ["askuserquestion", "question"],
+  ["askquestions", "question"],
+  ["promptuser", "question"],
 ]);
 
 export function extractAllowedToolNames(tools: Array<any>): Set<string> {
