@@ -297,6 +297,40 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.name).toBe("skill_mcp");
   });
 
+  it("maps askQuestion alias to allowed question tool name", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_question_alias",
+      name: "askQuestion",
+      tool_call: {
+        askQuestion: {
+          args: { questions: [{ prompt: "Proceed?", options: [{ label: "Yes" }] }] },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["question"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("question");
+  });
+
+  it("passes askQuestion through when question tool is not allowed", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_question_passthrough",
+      name: "askQuestion",
+      tool_call: {
+        askQuestion: {
+          args: { questions: [{ prompt: "Proceed?", options: [{ label: "Yes" }] }] },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["bash"]));
+    expect(result.action).toBe("passthrough");
+    expect(result.passthroughName).toBe("askQuestion");
+  });
+
   it("builds valid non-stream tool call response", () => {
     const response = createToolCallCompletionResponse(
       { id: "resp-1", created: 123, model: "cursor-acp/auto" },

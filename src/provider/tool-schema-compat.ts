@@ -3,6 +3,12 @@ import type { OpenAiToolCall } from "../proxy/tool-loop.js";
 type JsonRecord = Record<string, unknown>;
 
 const EDIT_COMPAT_REPAIR_ENABLED = process.env.CURSOR_ACP_EDIT_COMPAT_REPAIR !== "false";
+const QUESTION_COMPAT_REPAIR_ENABLED = process.env.CURSOR_ACP_QUESTION_COMPAT_REPAIR !== "false";
+
+// OpenCode's `question` tool caps option labels and the per-question header at
+// 30 characters (see opencode question schema). Cursor-style AskQuestion
+// payloads routinely exceed this, so we truncate when remapping.
+const QUESTION_LABEL_MAX = 30;
 
 const ARG_KEY_ALIASES = new Map<string, string>([
   ["filepath", "path"],
@@ -252,6 +258,10 @@ function resolveCanonicalArgKey(rawKey: string): string | null {
 
 function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonRecord {
   const normalizedToolName = toolName.toLowerCase();
+  if (normalizedToolName === "question" && QUESTION_COMPAT_REPAIR_ENABLED) {
+    return normalizeQuestionArgs(args);
+  }
+
   if (normalizedToolName === "bash") {
     const normalized: JsonRecord = { ...args };
     const normalizedCommand = normalizeBashCommand(normalized.command);
@@ -362,6 +372,102 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
   }
 
   return repaired;
+}
+
+/**
+ * Maps a Cursor-style `AskQuestion` payload into OpenCode's `question` schema.
+ *
+ * Cursor emits:   { title?, questions: [{ id?, prompt, options: [{ id?, label }], allow_multiple? }] }
+ * OpenCode wants: { questions: [{ question, header(<=30), options: [{ label(<=30), description }], multiple?, custom? }] }
+ *
+ * The transform is idempotent: payloads already shaped for OpenCode pass through
+ * unchanged apart from defensive truncation of over-long labels/headers.
+ */
+function normalizeQuestionArgs(args: JsonRecord): JsonRecord {
+  if (!Array.isArray(args.questions)) {
+    return args;
+  }
+
+  const topTitle = typeof args.title === "string" ? args.title : undefined;
+
+  const questions = args.questions.map((rawQuestion) => {
+    if (!isRecord(rawQuestion)) {
+      return rawQuestion;
+    }
+
+    const question: JsonRecord = { ...rawQuestion };
+
+    // prompt/text -> question
+    if (typeof question.question !== "string") {
+      if (typeof question.prompt === "string") {
+        question.question = question.prompt;
+      } else if (typeof question.text === "string") {
+        question.question = question.text;
+      }
+    }
+    delete question.prompt;
+    delete question.text;
+
+    // header (<=30 chars). Prefer an explicit header, then the top-level title,
+    // then a truncation of the question itself so the field is never empty.
+    const headerSource =
+      typeof question.header === "string" && question.header.trim().length > 0
+        ? question.header
+        : topTitle ?? (typeof question.question === "string" ? question.question : "");
+    question.header = truncate(headerSource, QUESTION_LABEL_MAX);
+
+    // allow_multiple -> multiple
+    if (question.multiple === undefined && typeof question.allow_multiple === "boolean") {
+      question.multiple = question.allow_multiple;
+    }
+    delete question.allow_multiple;
+
+    if (Array.isArray(question.options)) {
+      question.options = question.options.map((rawOption) => {
+        if (typeof rawOption === "string") {
+          return { label: truncate(rawOption, QUESTION_LABEL_MAX), description: rawOption };
+        }
+        if (!isRecord(rawOption)) {
+          return rawOption;
+        }
+
+        const option: JsonRecord = { ...rawOption };
+        const fullLabel =
+          typeof option.label === "string"
+            ? option.label
+            : typeof option.title === "string"
+              ? option.title
+              : typeof option.text === "string"
+                ? option.text
+                : "";
+
+        // OpenCode requires a non-empty description; fall back to the full label.
+        if (typeof option.description !== "string" || option.description.trim().length === 0) {
+          option.description = fullLabel;
+        }
+        const labelSource = fullLabel.length > 0 ? fullLabel : String(option.description ?? "");
+        option.label = truncate(labelSource, QUESTION_LABEL_MAX);
+
+        // Cursor-only fields OpenCode does not understand.
+        delete option.id;
+        delete option.title;
+        delete option.text;
+        return option;
+      });
+    }
+
+    // Cursor scopes answers by per-question id; OpenCode keys by index/label.
+    delete question.id;
+    return question;
+  });
+
+  // OpenCode's `question` schema has no top-level title field.
+  return { questions };
+}
+
+function truncate(value: unknown, max: number): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text.length > max ? text.slice(0, max) : text;
 }
 
 function normalizeBashCommand(value: unknown): string | null {

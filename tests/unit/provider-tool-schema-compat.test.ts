@@ -45,6 +45,45 @@ function buildEditWriteSchemaMap(writeUsesFilePath = false): Map<string, unknown
   ]);
 }
 
+function buildQuestionSchemaMap(): Map<string, unknown> {
+  return new Map([
+    [
+      "question",
+      {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                header: { type: "string" },
+                multiple: { type: "boolean" },
+                custom: { type: "boolean" },
+                options: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string" },
+                      description: { type: "string" },
+                    },
+                    required: ["label", "description"],
+                  },
+                },
+              },
+              required: ["question", "header", "options"],
+            },
+          },
+        },
+        required: ["questions"],
+        additionalProperties: false,
+      },
+    ],
+  ]);
+}
+
 function editToolCall(args: Record<string, unknown>, id = "c_edit"): OpenAiToolCall {
   return {
     id,
@@ -962,6 +1001,111 @@ describe("tool schema compatibility", () => {
     expect(args.path).toBe("/tmp/b.txt");
     expect(args.content).toBe("hello");
     expect(args.new_string).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
+  it("maps a Cursor AskQuestion payload onto the OpenCode question schema", () => {
+    const longOption = "Apply the recommended fix and rerun the test suite";
+    const result = applyToolSchemaCompat(
+      {
+        id: "q1",
+        type: "function",
+        function: {
+          name: "question",
+          arguments: JSON.stringify({
+            title: "How should we proceed with the migration?",
+            questions: [
+              {
+                id: "step",
+                prompt: "Which approach do you want?",
+                allow_multiple: true,
+                options: [
+                  { id: "a", label: longOption },
+                  { id: "b", label: "Skip" },
+                ],
+              },
+            ],
+          }),
+        },
+      },
+      buildQuestionSchemaMap(),
+    );
+
+    const args = JSON.parse(result.toolCall.function.arguments);
+    expect(args.title).toBeUndefined();
+    expect(args.questions).toHaveLength(1);
+
+    const q = args.questions[0];
+    expect(q.question).toBe("Which approach do you want?");
+    expect(q.prompt).toBeUndefined();
+    expect(q.id).toBeUndefined();
+    expect(q.allow_multiple).toBeUndefined();
+    expect(q.multiple).toBe(true);
+    expect(q.header.length).toBeLessThanOrEqual(30);
+    expect(q.header).toBe("How should we proceed with the".slice(0, 30));
+
+    expect(q.options[0].label.length).toBeLessThanOrEqual(30);
+    expect(q.options[0].description).toBe(longOption);
+    expect(q.options[0].id).toBeUndefined();
+    expect(q.options[1].label).toBe("Skip");
+    expect(q.options[1].description).toBe("Skip");
+
+    expect(result.validation.ok).toBe(true);
+  });
+
+  it("leaves an already OpenCode-shaped question payload valid", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "q2",
+        type: "function",
+        function: {
+          name: "question",
+          arguments: JSON.stringify({
+            questions: [
+              {
+                question: "Pick one",
+                header: "Pick",
+                multiple: false,
+                options: [{ label: "Yes", description: "Proceed now" }],
+              },
+            ],
+          }),
+        },
+      },
+      buildQuestionSchemaMap(),
+    );
+
+    const q = JSON.parse(result.toolCall.function.arguments).questions[0];
+    expect(q.question).toBe("Pick one");
+    expect(q.header).toBe("Pick");
+    expect(q.options[0].label).toBe("Yes");
+    expect(q.options[0].description).toBe("Proceed now");
+    expect(result.validation.ok).toBe(true);
+  });
+
+  it("synthesizes a header from the question when none is provided", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "q3",
+        type: "function",
+        function: {
+          name: "question",
+          arguments: JSON.stringify({
+            questions: [
+              {
+                prompt: "Do you want to continue with the deployment to production?",
+                options: [{ label: "Confirm" }],
+              },
+            ],
+          }),
+        },
+      },
+      buildQuestionSchemaMap(),
+    );
+
+    const q = JSON.parse(result.toolCall.function.arguments).questions[0];
+    expect(q.header.length).toBeLessThanOrEqual(30);
+    expect(q.header.length).toBeGreaterThan(0);
     expect(result.validation.ok).toBe(true);
   });
 });
