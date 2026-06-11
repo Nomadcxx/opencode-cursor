@@ -19,6 +19,14 @@ export interface AuthResult {
   error?: string;
 }
 
+export interface ResolveSdkApiKeyInput {
+  env?: Pick<NodeJS.ProcessEnv, "CURSOR_API_KEY">;
+  storedApiKey?: string;
+  authorizationHeader?: string | null;
+}
+
+const PLACEHOLDER_API_KEYS = new Set(["cursor-agent"]);
+
 function getHomeDir(): string {
   const override = process.env.CURSOR_ACP_HOME_DIR;
   if (override && override.length > 0) {
@@ -83,6 +91,35 @@ export function verifyCursorAuth(): boolean {
 
   log.debug("No auth found (no CURSOR_API_KEY, no auth file)", { checkedPaths: possiblePaths });
   return false;
+}
+
+export function isUsableSdkApiKey(value: string | undefined | null): value is string {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  return !PLACEHOLDER_API_KEYS.has(trimmed.toLowerCase());
+}
+
+export function normalizeAuthorizationHeader(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const bearerMatch = /^bearer\s+(.+)$/i.exec(trimmed);
+  return bearerMatch?.[1]?.trim() ?? trimmed;
+}
+
+export function resolveSdkApiKey(input: ResolveSdkApiKeyInput): string | undefined {
+  const candidates = [
+    input.env?.CURSOR_API_KEY,
+    input.storedApiKey,
+    normalizeAuthorizationHeader(input.authorizationHeader),
+  ];
+
+  return candidates.find(isUsableSdkApiKey)?.trim();
 }
 
 /**

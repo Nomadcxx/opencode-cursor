@@ -10,8 +10,9 @@ No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Y
 
 ## Requirements
 
-- **Node.js >= 20** (required for the SDK runner process)
-- **CURSOR_API_KEY** environment variable (from [cursor.com/settings](https://cursor.com/settings))
+- **Bun** for the OpenCode plugin runtime.
+- **Node.js >= 20** when using the SDK backend (`CURSOR_ACP_BACKEND=sdk` or automatic SDK fallback).
+- Existing `cursor-agent login` users can keep using that flow when the `cursor-agent` binary is available.
 
 ## Installation
 
@@ -24,7 +25,7 @@ cd opencode-cursor
 ./scripts/install-plugin.sh
 ```
 
-Set your API key:
+If you are using the SDK backend, set your API key:
 ```bash
 export CURSOR_API_KEY=<your-api-key>
 ```
@@ -148,7 +149,9 @@ Add `"cursor-acp"` to the `plugin` array and reuse the provider block from Optio
 
 ## Authentication
 
-The plugin supports three methods to provide your Cursor API key, in priority order:
+By default, `CURSOR_ACP_BACKEND=auto` preserves existing `cursor-agent` behavior when the `cursor-agent` binary is available. The SDK backend is used only when you set `CURSOR_ACP_BACKEND=sdk` or when `auto` cannot find `cursor-agent` and a real Cursor API key is configured.
+
+For SDK mode, the plugin supports three methods to provide your Cursor API key, in priority order:
 
 ### Option 1: Environment Variable (Highest Priority)
 
@@ -187,7 +190,7 @@ Set the API key directly in your `opencode.json` provider options:
 }
 ```
 
-**Get your API key from [cursor.com/settings](https://cursor.com/settings) under API Keys.**
+Do not use the historical `cursor-agent` placeholder as an SDK key; it is only kept for legacy OpenCode provider compatibility. Get a real API key from [cursor.com/settings](https://cursor.com/settings) under API Keys.
 
 ## Usage
 
@@ -240,9 +243,9 @@ flowchart TB
     MCPTOOL --> RUNNER
 ```
 
-**How it works:** A persistent Node.js child process (`scripts/sdk-runner.mjs`) runs `@cursor/sdk` on behalf of the proxy. This replaces the old `cursor-agent` binary (removed in Cursor >= 0.43). The SDK runs in a separate Node process because its ConnectRPC/HTTP2 stack hangs inside OpenCode's embedded Bun runtime. The runner emits NDJSON `StreamJsonEvent` objects, which the proxy converts to OpenAI-compatible SSE format. Note: per-request latency (~6s) is dominated by the SDK's `Agent.create` + `send` calls themselves.
+**How it works:** The proxy uses a dual-backend runtime. In `auto` mode it prefers the existing `cursor-agent` binary when available, preserving current workflows. If `cursor-agent` is unavailable and a real Cursor API key is configured, or if `CURSOR_ACP_BACKEND=sdk` is set, a persistent Node.js child process (`scripts/sdk-runner.mjs`) runs `@cursor/sdk` on behalf of the proxy. The SDK runs in a separate Node process because its ConnectRPC/HTTP2 stack hangs inside OpenCode's embedded Bun runtime. The runner emits NDJSON `StreamJsonEvent` objects, which the proxy converts to OpenAI-compatible SSE format.
 
-By default, the Agent runs in isolated mode (`settingSources: []`), loading no rules, skills, or MCP servers from the Cursor environment. This avoids duplicate instructions between Cursor and OpenCode and reduces request latency. To restore the previous behavior (loading all Cursor env settings), set `CURSOR_ACP_SETTING_SOURCES=all`. You can also specify a subset: `CURSOR_ACP_SETTING_SOURCES=user,project` loads only user and project rules.
+By default, the SDK Agent runs in isolated mode (`settingSources: []`), loading no rules, skills, or MCP servers from the Cursor environment. This avoids duplicate instructions between Cursor and OpenCode and keeps OpenCode-owned MCP execution as the default. To load Cursor environment settings in SDK mode, set `CURSOR_ACP_SETTING_SOURCES=all`. You can also specify a subset: `CURSOR_ACP_SETTING_SOURCES=user,project` loads only user and project rules.
 
 Default tool-loop mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Details: [docs/architecture/runtime-tool-loop.md](docs/architecture/runtime-tool-loop.md).
 
@@ -265,7 +268,7 @@ THERE is currently not a single perfect plugin for cursor in opencode, my advice
 
 ## Troubleshooting
 
-- `CURSOR_API_KEY not set` → Set `export CURSOR_API_KEY=<your-api-key>` (get it from [cursor.com/settings](https://cursor.com/settings))
+- `CURSOR_API_KEY not set` in SDK mode → Set `export CURSOR_API_KEY=<your-api-key>` (get it from [cursor.com/settings](https://cursor.com/settings)) or switch back to `CURSOR_ACP_BACKEND=auto` with a working `cursor-agent`.
 - Model not responding → Verify your API key is valid and you have quota
 - Quota exceeded → [cursor.com/settings](https://cursor.com/settings)
 - Proxy not starting → Ensure Node.js is in your PATH and port 32124 is available

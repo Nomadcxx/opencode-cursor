@@ -11,7 +11,7 @@
     "test": "bun test",
     "test:unit": "bun test tests/unit",
     "test:integration": "bun test tests/integration",
-    "test:ci:unit": "bun test tests/tools/defaults.test.ts tests/tools/executor-chain.test.ts tests/tools/sdk-executor.test.ts tests/tools/mcp-executor.test.ts tests/tools/skills.test.ts tests/tools/registry.test.ts tests/unit/cli/opencode-cursor.test.ts tests/unit/cli/model-discovery.test.ts tests/unit/proxy/prompt-builder.test.ts tests/unit/proxy/tool-loop.test.ts tests/unit/provider-boundary.test.ts tests/unit/provider-runtime-interception.test.ts tests/unit/provider-tool-schema-compat.test.ts tests/unit/provider-tool-loop-guard.test.ts tests/unit/plugin.test.ts tests/unit/plugin-tools-hook.test.ts tests/unit/plugin-tool-resolution.test.ts tests/unit/plugin-config.test.ts tests/unit/plugin-stream-extraction.test.ts tests/unit/auth.test.ts tests/unit/streaming/line-buffer.test.ts tests/unit/streaming/parser.test.ts tests/unit/streaming/types.test.ts tests/unit/streaming/delta-tracker.test.ts tests/unit/streaming/openai-sse.test.ts tests/unit/streaming/ai-sdk-parts.test.ts tests/competitive/edge.test.ts",
+    "test:ci:unit": "bun test tests/tools/defaults.test.ts tests/tools/executor-chain.test.ts tests/tools/sdk-executor.test.ts tests/tools/mcp-executor.test.ts tests/tools/skills.test.ts tests/tools/registry.test.ts tests/unit/cli/opencode-cursor.test.ts tests/unit/cli/model-discovery.test.ts tests/unit/models/discovery.test.ts tests/unit/proxy/prompt-builder.test.ts tests/unit/proxy/tool-loop.test.ts tests/unit/provider-backend.test.ts tests/unit/provider-boundary.test.ts tests/unit/provider-runtime-interception.test.ts tests/unit/provider-tool-schema-compat.test.ts tests/unit/provider-tool-loop-guard.test.ts tests/unit/mcp/tool-bridge.test.ts tests/unit/sdk-child.test.ts tests/unit/sdk-runner.test.ts tests/unit/plugin.test.ts tests/unit/plugin-tools-hook.test.ts tests/unit/plugin-tool-resolution.test.ts tests/unit/plugin-config.test.ts tests/unit/plugin-stream-extraction.test.ts tests/unit/auth.test.ts tests/unit/streaming/line-buffer.test.ts tests/unit/streaming/parser.test.ts tests/unit/streaming/types.test.ts tests/unit/streaming/delta-tracker.test.ts tests/unit/streaming/openai-sse.test.ts tests/unit/streaming/ai-sdk-parts.test.ts tests/competitive/edge.test.ts",
     "test:ci:integration": "bun test tests/integration/comprehensive.test.ts tests/integration/tools-router.integration.test.ts tests/integration/stream-router.integration.test.ts tests/integration/opencode-loop.integration.test.ts",
     "check:pricing": "bun run scripts/check-cursor-pricing-coverage.ts",
     "check:pricing:fixture": "bun run scripts/check-cursor-pricing-coverage.ts --models-file tests/fixtures/cursor-pricing-models.txt --skip-doc-fetch",
@@ -41,12 +41,14 @@
     "scripts/sdk-runner.mjs"
   ],
   "dependencies": {
-    "@cursor/sdk": "^1.0.18",
     "@modelcontextprotocol/sdk": "^1.12.0",
     "@opencode-ai/plugin": "1.1.53",
     "@opencode-ai/sdk": "1.1.53",
     "ai": "^6.0.55",
     "strip-ansi": "^7.1.0"
+  },
+  "optionalDependencies": {
+    "@cursor/sdk": "^1.0.18"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
