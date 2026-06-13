@@ -56,6 +56,7 @@ Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\op
       "models": {
         "cursor-acp/auto":              { "name": "Auto" },
 
+        "cursor-acp/claude-opus-4-8":   { "name": "Claude Opus 4.8" },
         "cursor-acp/claude-opus-4-7":   { "name": "Claude 4.7 Opus" },
         "cursor-acp/claude-4.6-opus":   { "name": "Claude 4.6 Opus" },
         "cursor-acp/claude-4.6-sonnet": { "name": "Claude 4.6 Sonnet" },
@@ -83,6 +84,8 @@ Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\op
         "cursor-acp/composer-2":        { "name": "Composer 2" },
         "cursor-acp/composer-2-fast":   { "name": "Composer 2 Fast" },
         "cursor-acp/composer-1.5":      { "name": "Composer 1.5" },
+
+        "cursor-acp/claude-fable-5":    { "name": "Claude Fable 5" },
 
         "cursor-acp/grok-4-20":         { "name": "Grok 4.20" },
         "cursor-acp/kimi-k2.5":         { "name": "Kimi K2.5" }
