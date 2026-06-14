@@ -177,6 +177,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
           type: "string",
           description: "The replacement text"
         },
+        content: {
+          type: "string",
+          description: "Compatibility field for full-file content emitted by cursor-agent"
+        },
         streamContent: {
           type: "string",
           description: "Compatibility field for full-file content emitted by cursor-agent"
@@ -197,9 +201,9 @@ export function registerDefaultTools(registry: ToolRegistry): void {
         throw new Error("edit: missing required argument 'path'");
       }
       if (typeof oldString !== "string") {
-        const streamContent = coerceToString(args.streamContent);
-        if (streamContent !== null) {
-          return writeFullFileWithOverwriteGuard(fs, path, filePath, streamContent, args.force === true, "edit");
+        const fullFileContent = coerceToString(args.streamContent ?? args.content);
+        if (fullFileContent !== null) {
+          return writeFullFileWithOverwriteGuard(fs, path, filePath, fullFileContent, args.force === true, "edit", 2);
         }
         throw new Error("edit: missing required argument 'old_string'");
       }
@@ -528,6 +532,7 @@ function writeFullFileWithOverwriteGuard(
   content: string,
   force: boolean,
   toolName: string,
+  minimumExistingLines = 5,
 ): string {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
@@ -536,7 +541,7 @@ function writeFullFileWithOverwriteGuard(
 
   if (!force && fs.existsSync(filePath)) {
     const existing = fs.readFileSync(filePath, "utf-8");
-    const suspicious = detectSuspiciousPartialOverwrite(existing, content);
+    const suspicious = detectSuspiciousPartialOverwrite(existing, content, minimumExistingLines);
     if (suspicious) {
       throw new Error(
         `${toolName}: refusing suspicious partial overwrite of existing file ${filePath} `
@@ -577,6 +582,7 @@ function resolveEditArguments(args: Record<string, unknown>): {
 function detectSuspiciousPartialOverwrite(
   existing: string,
   next: string,
+  minimumExistingLines = 5,
 ): { existingLines: number; nextLines: number } | null {
   if (process.env.CURSOR_ACP_WRITE_OVERWRITE_GUARD === "false") {
     return null;
@@ -587,7 +593,7 @@ function detectSuspiciousPartialOverwrite(
 
   const existingLines = countLogicalLines(existing);
   const nextLines = countLogicalLines(next);
-  if (existingLines < 5) {
+  if (existingLines < minimumExistingLines) {
     return null;
   }
 

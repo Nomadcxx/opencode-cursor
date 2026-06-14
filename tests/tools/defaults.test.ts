@@ -53,7 +53,9 @@ describe("Default Tools", () => {
     expect(edit?.name).toBe("edit");
     expect(edit?.parameters.required).toContain("old_string");
     expect(edit?.parameters.required).toContain("new_string");
+    expect(edit?.parameters.required).not.toContain("content");
     expect(edit?.parameters.required).not.toContain("streamContent");
+    expect(edit?.parameters.properties.content).toBeDefined();
     expect(edit?.parameters.properties.streamContent).toBeDefined();
 
     const grep = registry.getTool("grep");
@@ -339,18 +341,51 @@ describe("Default Tools", () => {
     expect(result.error).toContain("missing required argument 'old_string'");
   });
 
-  it("regression: rejects edit payloads that only provide content without old_string", async () => {
+  it("allows malformed full-file edit content payloads to create files", async () => {
     const registry = new ToolRegistry();
     registerDefaultTools(registry);
     const executor = new LocalExecutor(registry);
+    const fs = await import("fs");
+    const tmpFile = `/tmp/test-edit-content-create-${Date.now()}.txt`;
+    if (fs.existsSync(tmpFile)) {
+      fs.unlinkSync(tmpFile);
+    }
 
-    const result = await executeWithChain([executor], "edit", {
-      path: "/tmp/test-edit-content-only.txt",
-      content: "should not overwrite",
-    });
+    try {
+      const result = await executeWithChain([executor], "edit", {
+        path: tmpFile,
+        content: "created through compatibility content",
+      });
 
-    expect(result.status).toBe("error");
-    expect(result.error).toContain("missing required argument 'old_string'");
+      expect(result.status).toBe("success");
+      expect(fs.readFileSync(tmpFile, "utf-8")).toBe("created through compatibility content");
+    } finally {
+      if (fs.existsSync(tmpFile)) {
+        fs.unlinkSync(tmpFile);
+      }
+    }
+  });
+
+  it("regression: rejects edit content payloads that look like partial overwrites", async () => {
+    const registry = new ToolRegistry();
+    registerDefaultTools(registry);
+    const executor = new LocalExecutor(registry);
+    const fs = await import("fs");
+    const tmpFile = `/tmp/test-edit-content-partial-${Date.now()}.txt`;
+    fs.writeFileSync(tmpFile, "one\ntwo\nthree\n", "utf-8");
+
+    try {
+      const result = await executeWithChain([executor], "edit", {
+        path: tmpFile,
+        content: "changed",
+      });
+
+      expect(result.status).toBe("error");
+      expect(result.error).toContain("refusing suspicious partial overwrite");
+      expect(fs.readFileSync(tmpFile, "utf-8")).toBe("one\ntwo\nthree\n");
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
   });
 
   it("regression: rejects edit payloads that only provide new_string without old_string", async () => {
