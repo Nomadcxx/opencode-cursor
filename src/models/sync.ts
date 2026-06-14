@@ -15,10 +15,12 @@ import { listModelsViaRunner } from "../client/sdk-child.js";
 import { resolveSdkApiKey } from "../auth.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { mergeCursorModelEntries } from "./variants.js";
 
 const log = createLogger("model-sync");
 const PROVIDER_ID = "cursor-acp";
 
+type AutoRefreshMode = "disabled" | "direct" | "compact";
 type ModelConfigEntry = { name: string };
 type ProviderConfig = { models?: Record<string, unknown> } & Record<string, unknown>;
 type OpenCodeConfig = {
@@ -83,8 +85,41 @@ function getExistingModels(provider: ProviderConfig): Record<string, unknown> {
   return isRecord(provider.models) ? { ...provider.models } : {};
 }
 
+function readCursorModel(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const cursorModel = value.cursorModel;
+  return typeof cursorModel === "string" && cursorModel.trim().length > 0
+    ? cursorModel.trim()
+    : undefined;
+}
+
+function collectRepresentedModelIds(models: Record<string, unknown>): Set<string> {
+  const represented = new Set<string>(Object.keys(models));
+
+  for (const entry of Object.values(models)) {
+    if (!isRecord(entry)) continue;
+    const optionModel = readCursorModel(entry.options);
+    if (optionModel) represented.add(optionModel);
+
+    if (!isRecord(entry.variants)) continue;
+    for (const variantEntry of Object.values(entry.variants)) {
+      const variantModel = readCursorModel(variantEntry);
+      if (variantModel) represented.add(variantModel);
+    }
+  }
+
+  return represented;
+}
+
 function yieldForFireAndForget(): Promise<void> {
   return Promise.resolve();
+}
+
+function getAutoRefreshMode(env: NodeJS.ProcessEnv): AutoRefreshMode {
+  const raw = env.CURSOR_ACP_MODEL_AUTO_REFRESH?.trim().toLowerCase();
+  if (raw === "false") return "disabled";
+  if (raw === "compact") return "compact";
+  return "direct";
 }
 
 /**
@@ -92,8 +127,8 @@ function yieldForFireAndForget(): Promise<void> {
  *
  * - Reads the current opencode.json config
  * - Queries the SDK runner for available models
- * - Merges discovered models into the provider config (additive only)
- * - Writes back if any new models were added
+ * - Merges discovered models into the provider config
+ * - Writes back if new models were added or compacted
  *
  * This function never throws. All failures are logged at debug level
  * and silently ignored so plugin startup is never blocked.
@@ -110,6 +145,12 @@ export async function autoRefreshModels(
   await resolvedDeps.defer();
 
   try {
+    const refreshMode = getAutoRefreshMode(resolvedDeps.env);
+    if (refreshMode === "disabled") {
+      resolvedDeps.log.debug("Model auto-refresh disabled by CURSOR_ACP_MODEL_AUTO_REFRESH");
+      return;
+    }
+
     const configPath = resolveOpenCodeConfigPath(resolvedDeps.env);
     if (!resolvedDeps.existsSync(configPath)) {
       resolvedDeps.log.debug("Config file not found, skipping model auto-refresh", { configPath });
@@ -136,6 +177,34 @@ export async function autoRefreshModels(
     } catch (err) {
       resolvedDeps.log.debug("Model discovery failed, skipping auto-refresh", {
         error: String(err),
+      });
+      return;
+    }
+
+    if (refreshMode === "compact") {
+      const representedModelIds = collectRepresentedModelIds(existingModels);
+      const missingModels = discovered.filter(model => !representedModelIds.has(model.id));
+      const result = mergeCursorModelEntries(existingModels, discovered, {
+        variants: true,
+        compact: true,
+      });
+
+      if (missingModels.length === 0 && result.removedCount === 0) {
+        resolvedDeps.log.debug("Model auto-refresh: no new models found", {
+          existing: Object.keys(existingModels).length,
+          discovered: discovered.length,
+        });
+        return;
+      }
+
+      provider.models = result.models;
+      resolvedDeps.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+      resolvedDeps.log.info("Model auto-refresh: synced models", {
+        mode: refreshMode,
+        synced: result.syncedCount,
+        grouped: result.groupedCount,
+        removed: result.removedCount,
+        total: Object.keys(result.models).length,
       });
       return;
     }
