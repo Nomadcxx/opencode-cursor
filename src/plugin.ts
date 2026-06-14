@@ -1,5 +1,5 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin/tool";
 import type { Auth } from "@opencode-ai/sdk";
 import { spawn, spawnSync } from "child_process";
 import { realpathSync } from "fs";

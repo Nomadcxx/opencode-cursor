@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin/tool";
 import { createLogger } from "../utils/logger.js";
 import type { McpClientManager } from "./client-manager.js";
 

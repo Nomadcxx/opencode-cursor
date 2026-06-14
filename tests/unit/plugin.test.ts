@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { spawnSync } from "child_process";
 import { existsSync, rmSync, mkdirSync, mkdtempSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -57,5 +58,34 @@ describe("Plugin Directory Initialization", () => {
     await ensurePluginDirectory();
     
     expect(existsSync(testPluginDir)).toBe(true);
+  });
+});
+
+describe("Plugin entry module", () => {
+  it("imports the built plugin entry under Node ESM", () => {
+    expect(existsSync("dist/plugin-entry.js")).toBe(true);
+
+    const result = spawnSync(
+      "node",
+      [
+        "-e",
+        "import('./dist/plugin-entry.js').then(()=>console.log('import ok')).catch(e=>{console.error(e.stack||e.message); process.exit(1)})",
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+      },
+    );
+
+    if (result.status !== 0) {
+      throw new Error(
+        [
+          "Node failed to import dist/plugin-entry.js",
+          `stdout: ${result.stdout.trim()}`,
+          `stderr: ${result.stderr.trim()}`,
+        ].join("\n"),
+      );
+    }
+    expect(result.status).toBe(0);
   });
 });
