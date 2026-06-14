@@ -4,42 +4,38 @@
 
 language: en
 
-early_access: false
-
 reviews:
   profile: chill
   request_changes_workflow: false
   review_status: true
   commit_status: true
   fail_commit_status: false
-  high_level_summary: true
+  high_level_summary: false
   poem: false
-  auto_title_placeholder: ""
-  auto_summary: true
-  auto_summary_generation: true
+  auto_summary: false
+
+  path_filters:
+    - "!dist/**"
+    - "!node_modules/**"
+    - "!package-lock.json"
+    - "!bun.lock"
+    - "!cmd/installer/installer-binary"
+    - "!installer"
+
   path_instructions:
-    - path: "src/**/*.ts"
+    - path: "src/auth.ts"
       instructions: |
-        This is a TypeScript OpenCode plugin. Prefer explicit types over `any`.
-        Avoid adding new dependencies without justification.
-        Changes to auth handling (src/auth.ts, src/provider.ts) must include
-        corresponding tests and must not log or persist raw credentials.
+        Never log or persist raw credentials. Prefer env-var lookup over defaults.
     - path: "src/proxy/**/*.ts"
       instructions: |
-        Proxy code handles streaming tool calls. Ensure backpressure and error
-        propagation are preserved. Add integration tests for new streaming paths.
+        Ensure streaming errors propagate and streams are destroyed on error.
     - path: "src/tools/**/*.ts"
       instructions: |
-        Tool executors should validate inputs and surface actionable error
-        messages. Add unit tests for new tools.
-    - path: "tests/**/*.ts"
-      instructions: |
-        Tests should be deterministic and not depend on external network state.
-        Mock Cursor-agent / OAuth endpoints.
+        Validate inputs and add unit tests for new tools.
     - path: "cmd/**/*.go"
       instructions: |
-        Go CLI code should handle context cancellation and return non-zero exit
-        codes on fatal errors. Keep `main` packages small.
+        Handle context cancellation and return non-zero exit codes on fatal errors.
+
   auto_review:
     enabled: true
     auto_incremental_review: true
@@ -49,17 +45,13 @@ reviews:
     ignore_title_keywords:
       - "[skip review]"
       - "[wip]"
+
   tools:
     eslint:
-      enabled: true
+      enabled: false
     prettier:
-      enabled: true
-    # CodeRabbit does not run the test suite; it only reviews code.
-    # Keep these disabled unless you want integration noise.
-    jest:
       enabled: false
-    vitest:
-      enabled: false
+
   finishing_touches:
     docstrings:
       enabled: false
@@ -70,8 +62,3 @@ reviews:
 
 chat:
   auto_reply: true
-  integrations:
-    linear:
-      enabled: false
-    jira:
-      enabled: false
