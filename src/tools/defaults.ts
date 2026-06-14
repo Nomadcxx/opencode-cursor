@@ -151,27 +151,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
       const filePath = args.path as string;
       const content = args.content as string;
       const force = args.force === true;
-      // Ensure directory exists
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-
-      if (!force && fs.existsSync(filePath)) {
-        const existing = fs.readFileSync(filePath, "utf-8");
-        const suspicious = detectSuspiciousPartialOverwrite(existing, content);
-        if (suspicious) {
-          throw new Error(
-            `write: refusing suspicious partial overwrite of existing file ${filePath} `
-              + `(${suspicious.existingLines} lines -> ${suspicious.nextLines} lines). `
-              + "write replaces the whole file; use edit with old_string/new_string for targeted changes, "
-              + "or pass force: true only when intentionally replacing the full file.",
-          );
-        }
-      }
-
-      fs.writeFileSync(filePath, content, "utf-8");
-      return `File written successfully: ${filePath}`;
+      return writeFullFileWithOverwriteGuard(fs, path, filePath, content, force, "write");
     } catch (error: any) {
       throw error;
     }
@@ -196,6 +176,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
         new_string: {
           type: "string",
           description: "The replacement text"
+        },
+        streamContent: {
+          type: "string",
+          description: "Compatibility field for full-file content emitted by cursor-agent"
         }
       },
       required: ["path", "old_string", "new_string"]
@@ -213,6 +197,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
         throw new Error("edit: missing required argument 'path'");
       }
       if (typeof oldString !== "string") {
+        const streamContent = coerceToString(args.streamContent);
+        if (streamContent !== null) {
+          return writeFullFileWithOverwriteGuard(fs, path, filePath, streamContent, args.force === true, "edit");
+        }
         throw new Error("edit: missing required argument 'old_string'");
       }
       if (oldString.length === 0) {
@@ -533,6 +521,36 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   });
 }
 
+function writeFullFileWithOverwriteGuard(
+  fs: typeof import("fs"),
+  path: typeof import("path"),
+  filePath: string,
+  content: string,
+  force: boolean,
+  toolName: string,
+): string {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  if (!force && fs.existsSync(filePath)) {
+    const existing = fs.readFileSync(filePath, "utf-8");
+    const suspicious = detectSuspiciousPartialOverwrite(existing, content);
+    if (suspicious) {
+      throw new Error(
+        `${toolName}: refusing suspicious partial overwrite of existing file ${filePath} `
+          + `(${suspicious.existingLines} lines -> ${suspicious.nextLines} lines). `
+          + "write/edit full-file replacement overwrites the whole file; use edit with old_string/new_string "
+          + "for targeted changes, or pass force: true only when intentionally replacing the full file.",
+      );
+    }
+  }
+
+  fs.writeFileSync(filePath, content, "utf-8");
+  return `File written successfully: ${filePath}`;
+}
+
 function resolveEditArguments(args: Record<string, unknown>): {
   path: string;
   old_string: string | undefined;
@@ -543,7 +561,7 @@ function resolveEditArguments(args: Record<string, unknown>): {
   let newString = typeof args.new_string === "string" ? args.new_string : undefined;
 
   if (newString === undefined) {
-    const fallbackContent = coerceToString(args.content ?? args.streamContent);
+    const fallbackContent = coerceToString(args.content);
     if (fallbackContent !== null) {
       newString = fallbackContent;
     }

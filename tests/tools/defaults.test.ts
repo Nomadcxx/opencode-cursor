@@ -51,6 +51,10 @@ describe("Default Tools", () => {
 
     const edit = registry.getTool("edit");
     expect(edit?.name).toBe("edit");
+    expect(edit?.parameters.required).toContain("old_string");
+    expect(edit?.parameters.required).toContain("new_string");
+    expect(edit?.parameters.required).not.toContain("streamContent");
+    expect(edit?.parameters.properties.streamContent).toBeDefined();
 
     const grep = registry.getTool("grep");
     expect(grep?.name).toBe("grep");
@@ -218,6 +222,56 @@ describe("Default Tools", () => {
 
       expect(result.status).toBe("success");
       expect(fs.readFileSync(tmpFile, "utf-8")).toBe("short replacement");
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  });
+
+  it("allows malformed full-file edit payloads to create files", async () => {
+    const registry = new ToolRegistry();
+    registerDefaultTools(registry);
+    const executor = new LocalExecutor(registry);
+
+    const fs = await import("fs");
+    const tmpFile = `/tmp/test-edit-streamcontent-create-${Date.now()}.txt`;
+    if (fs.existsSync(tmpFile)) {
+      fs.unlinkSync(tmpFile);
+    }
+
+    try {
+      const result = await executeWithChain([executor], "edit", {
+        path: tmpFile,
+        streamContent: "one\ntwo\nthree\n",
+      });
+
+      expect(result.status).toBe("success");
+      expect(fs.readFileSync(tmpFile, "utf-8")).toBe("one\ntwo\nthree\n");
+    } finally {
+      if (fs.existsSync(tmpFile)) {
+        fs.unlinkSync(tmpFile);
+      }
+    }
+  });
+
+  it("refuses malformed full-file edit payloads that look like partial overwrites", async () => {
+    const registry = new ToolRegistry();
+    registerDefaultTools(registry);
+    const executor = new LocalExecutor(registry);
+
+    const fs = await import("fs");
+    const tmpFile = `/tmp/test-edit-streamcontent-partial-overwrite-${Date.now()}.txt`;
+    const original = Array.from({ length: 100 }, (_, index) => String(index + 1)).join("\n") + "\n";
+    fs.writeFileSync(tmpFile, original, "utf-8");
+
+    try {
+      const result = await executeWithChain([executor], "edit", {
+        path: tmpFile,
+        streamContent: "test test",
+      });
+
+      expect(result.status).toBe("error");
+      expect(result.error).toContain("refusing suspicious partial overwrite");
+      expect(fs.readFileSync(tmpFile, "utf-8")).toBe(original);
     } finally {
       fs.unlinkSync(tmpFile);
     }

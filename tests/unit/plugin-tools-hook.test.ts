@@ -238,6 +238,28 @@ describe("Plugin tool hook", () => {
     }
   });
 
+  it("rejects malformed edit full-file payloads that look like partial overwrites", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-edit-streamcontent-partial-"));
+    try {
+      const target = join(projectDir, "file.txt");
+      const hooks = await CursorPlugin(createMockInput(projectDir));
+      const { writeFileSync } = await import("fs");
+      const original = Array.from({ length: 100 }, (_, index) => String(index + 1)).join("\n") + "\n";
+      writeFileSync(target, original, "utf-8");
+
+      await expect(
+        hooks.tool?.edit?.execute(
+          { path: target, streamContent: "test test" },
+          createToolContext(projectDir, projectDir),
+        ),
+      ).rejects.toThrow("refusing suspicious partial overwrite");
+
+      expect(readFileSync(target, "utf-8")).toBe(original);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("pins non-config workspace per session and reuses it when later context loses worktree", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-project-"));
     const xdgConfigHome = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-xdg-"));
