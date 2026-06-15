@@ -366,7 +366,7 @@ Commands:
   help        Show this help message
 
 Options:
-  --config <path>       Path to opencode.json (default: ~/.config/opencode/opencode.json)
+  --config <path>       Path to opencode.json (default: OPENCODE_CONFIG or ~/.config/opencode/opencode.json)
   --plugin-dir <path>   Path to plugin directory (default: ~/.config/opencode/plugin)
   --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
   --copy                Copy plugin instead of symlink
@@ -444,9 +444,9 @@ function getConfigHome(): string {
   return join(homedir(), ".config");
 }
 
-function resolvePaths(options: Options) {
+export function resolvePaths(options: Options) {
   const opencodeDir = join(getConfigHome(), "opencode");
-  const configPath = resolve(options.config || join(opencodeDir, "opencode.json"));
+  const configPath = resolve(options.config || process.env.OPENCODE_CONFIG || join(opencodeDir, "opencode.json"));
   const pluginDir = resolve(options.pluginDir || join(opencodeDir, "plugin"));
   const pluginPath = join(pluginDir, `${PROVIDER_ID}.js`);
   return { opencodeDir, configPath, pluginDir, pluginPath };

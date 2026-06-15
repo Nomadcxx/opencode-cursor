@@ -14,6 +14,7 @@ import {
   explainCursorModels,
   summarizeModelSync,
   isCliEntrypoint,
+  resolvePaths,
 } from "../../../src/cli/opencode-cursor.js";
 
 describe("cli/opencode-cursor entrypoint", () => {
@@ -125,6 +126,41 @@ describe("cli/opencode-cursor status", () => {
     expect(result).toHaveProperty("plugin");
     expect(result).toHaveProperty("provider");
     expect(result).toHaveProperty("aiSdk");
+  });
+});
+
+describe("cli/opencode-cursor path resolution", () => {
+  it("uses OPENCODE_CONFIG when --config is not provided", () => {
+    const originalConfig = process.env.OPENCODE_CONFIG;
+    const customConfig = join(tmpdir(), "cursor-models.json");
+    process.env.OPENCODE_CONFIG = customConfig;
+
+    try {
+      expect(resolvePaths({}).configPath).toBe(resolve(customConfig));
+    } finally {
+      if (originalConfig === undefined) {
+        delete process.env.OPENCODE_CONFIG;
+      } else {
+        process.env.OPENCODE_CONFIG = originalConfig;
+      }
+    }
+  });
+
+  it("prefers --config over OPENCODE_CONFIG", () => {
+    const originalConfig = process.env.OPENCODE_CONFIG;
+    const envConfig = join(tmpdir(), "env-opencode.json");
+    const flagConfig = join(tmpdir(), "flag-opencode.json");
+    process.env.OPENCODE_CONFIG = envConfig;
+
+    try {
+      expect(resolvePaths({ config: flagConfig }).configPath).toBe(resolve(flagConfig));
+    } finally {
+      if (originalConfig === undefined) {
+        delete process.env.OPENCODE_CONFIG;
+      } else {
+        process.env.OPENCODE_CONFIG = originalConfig;
+      }
+    }
   });
 });
 
