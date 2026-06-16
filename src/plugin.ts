@@ -1303,10 +1303,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       }
 
       log.debug("Proxy request (node)", { method: req.method, path: url.pathname });
-      let body = "";
+      const bodyChunks: Buffer[] = [];
       for await (const chunk of req) {
-        body += chunk;
+        bodyChunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       }
+      const body = Buffer.concat(bodyChunks).toString("utf8");
 
       const bodyData: any = JSON.parse(body || "{}");
       const messages: Array<any> = Array.isArray(bodyData?.messages) ? bodyData.messages : [];
@@ -1317,8 +1318,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
 
+      const reqPerf = new RequestPerf(`node-${Date.now()}`);
       const subagentNames = readSubagentNames();
       const prompt = buildPromptFromMessages(messages, tools, subagentNames);
+      reqPerf.mark("prompt-built");
       const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
         boundary.resolveRuntimeModel(bodyData?.model, bodyData?.cursorModel),
       );
@@ -1342,6 +1345,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const authHeaderNode = req.headers["authorization"] as string | undefined;
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const backend = resolveBackendForRequest(sdkApiKeyNode);
+      reqPerf.mark("backend-resolved");
       if (backend === "sdk" && !sdkApiKeyNode) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Cursor SDK backend requires a real Cursor API key. Set CURSOR_API_KEY or run `opencode auth login`; the legacy `cursor-agent` placeholder is not valid SDK auth." }));
@@ -1456,8 +1460,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const id = `cursor-acp-${Date.now()}`;
         const created = Math.floor(Date.now() / 1000);
-        const perf = new RequestPerf(id);
-        perf.mark("spawn");
+        const perf = reqPerf;
+        perf.mark("child-spawned");
 
         const converter = new StreamToSseConverter(model, { id, created });
         const lineBuffer = new LineBuffer();

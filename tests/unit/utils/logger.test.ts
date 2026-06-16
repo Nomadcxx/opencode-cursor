@@ -125,4 +125,26 @@ describe("logger", () => {
       consoleSpy.mockRestore();
     });
   });
+
+  describe("isDebugEnabled", () => {
+    it("returns false at default log level (info)", () => {
+      const log = createLogger("test");
+      expect(log.isDebugEnabled()).toBe(false);
+    });
+
+    it("returns true when log level is debug", () => {
+      process.env.CURSOR_ACP_LOG_LEVEL = "debug";
+      _resetLoggerState();
+      const log = createLogger("test");
+      expect(log.isDebugEnabled()).toBe(true);
+    });
+
+    it("returns false when silent", () => {
+      process.env.CURSOR_ACP_LOG_LEVEL = "debug";
+      process.env.CURSOR_ACP_LOG_SILENT = "1";
+      _resetLoggerState();
+      const log = createLogger("test");
+      expect(log.isDebugEnabled()).toBe(false);
+    });
+  });
 });

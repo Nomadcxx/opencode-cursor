@@ -93,6 +93,14 @@ export function readMcpConfigs(deps: ReadMcpConfigsDeps = {}): McpServerConfig[]
   return configs;
 }
 
+let _subagentCache: { names: string[]; expiry: number } | null = null;
+const SUBAGENT_CACHE_TTL_MS = 60_000;
+
+/** Clear cached subagent names (for testing only). */
+export function _resetSubagentCache(): void {
+  _subagentCache = null;
+}
+
 interface ReadSubagentNamesDeps {
   configJson?: string;
   existsSync?: (path: string) => boolean;
@@ -101,6 +109,20 @@ interface ReadSubagentNamesDeps {
 }
 
 export function readSubagentNames(deps: ReadSubagentNamesDeps = {}): string[] {
+  const useCache = deps.configJson == null;
+  if (useCache && _subagentCache && Date.now() < _subagentCache.expiry) {
+    return _subagentCache.names;
+  }
+
+  const result = readSubagentNamesUncached(deps);
+
+  if (useCache) {
+    _subagentCache = { names: result, expiry: Date.now() + SUBAGENT_CACHE_TTL_MS };
+  }
+  return result;
+}
+
+function readSubagentNamesUncached(deps: ReadSubagentNamesDeps): string[] {
   let raw: string;
 
   if (deps.configJson != null) {

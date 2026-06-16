@@ -114,10 +114,12 @@ export interface Logger {
   info: (message: string, data?: unknown) => void;
   warn: (message: string, data?: unknown) => void;
   error: (message: string, data?: unknown) => void;
+  isDebugEnabled: () => boolean;
 }
 
 export function createLogger(component: string): Logger {
   return {
+    isDebugEnabled: () => shouldLog("debug"),
     debug: (message: string, data?: unknown) => {
       if (!shouldLog("debug")) return;
       const formatted = formatMessage("debug", component, message, data);

@@ -1,7 +1,10 @@
-import { describe, it, expect } from "bun:test";
-import { readSubagentNames } from "../../src/mcp/config.js";
+import { describe, it, expect, beforeEach } from "bun:test";
+import { readSubagentNames, _resetSubagentCache } from "../../src/mcp/config.js";
 
 describe("readSubagentNames", () => {
+  beforeEach(() => {
+    _resetSubagentCache();
+  });
   it("returns only mode:subagent agents when some exist", () => {
     const config = JSON.stringify({
       agent: {
@@ -39,5 +42,48 @@ describe("readSubagentNames", () => {
 
   it("returns general-purpose when config is malformed JSON", () => {
     expect(readSubagentNames({ configJson: "{ bad json" })).toEqual(["general-purpose"]);
+  });
+
+  it("caches filesystem results across calls", () => {
+    let readCount = 0;
+    const deps = {
+      existsSync: () => true,
+      readFileSync: () => {
+        readCount++;
+        return JSON.stringify({ agent: { bot: { mode: "subagent" } } });
+      },
+      env: { OPENCODE_CONFIG: "/tmp/test.json" } as NodeJS.ProcessEnv,
+    };
+
+    const first = readSubagentNames(deps);
+    const second = readSubagentNames(deps);
+    expect(first).toEqual(["bot"]);
+    expect(second).toEqual(["bot"]);
+    expect(readCount).toBe(1);
+  });
+
+  it("bypasses cache when configJson is provided", () => {
+    const config1 = JSON.stringify({ agent: { a: { mode: "subagent" } } });
+    const config2 = JSON.stringify({ agent: { b: { mode: "subagent" } } });
+
+    expect(readSubagentNames({ configJson: config1 })).toEqual(["a"]);
+    expect(readSubagentNames({ configJson: config2 })).toEqual(["b"]);
+  });
+
+  it("returns fresh data after cache reset", () => {
+    let callNum = 0;
+    const deps = {
+      existsSync: () => true,
+      readFileSync: () => {
+        callNum++;
+        const name = callNum === 1 ? "first" : "second";
+        return JSON.stringify({ agent: { [name]: { mode: "subagent" } } });
+      },
+      env: { OPENCODE_CONFIG: "/tmp/test.json" } as NodeJS.ProcessEnv,
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["first"]);
+    _resetSubagentCache();
+    expect(readSubagentNames(deps)).toEqual(["second"]);
   });
 });
