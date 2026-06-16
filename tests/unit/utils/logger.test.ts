@@ -27,11 +27,11 @@ describe("logger", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    _resetLoggerState(); // Reset module-level state before each test
     process.env = { ...originalEnv };
     delete process.env.CURSOR_ACP_LOG_LEVEL;
     delete process.env.CURSOR_ACP_LOG_SILENT;
     delete process.env.CURSOR_ACP_LOG_CONSOLE;
+    _resetLoggerState();
   });
 
   afterEach(() => {
@@ -106,6 +106,46 @@ describe("logger", () => {
       const log = createLogger("test");
       log.info("test message");
 
+      expect(mockedFs.appendFileSync).not.toHaveBeenCalled();
+    });
+
+    it("respects cached CURSOR_ACP_LOG_LEVEL after _resetLoggerState", () => {
+      mockedFs.existsSync.mockReturnValue(true);
+      mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
+
+      process.env.CURSOR_ACP_LOG_LEVEL = "warn";
+      _resetLoggerState();
+
+      const log = createLogger("test");
+      log.info("filtered info");
+      log.warn("allowed warn");
+
+      expect(mockedFs.appendFileSync).toHaveBeenCalledTimes(1);
+      expect(mockedFs.appendFileSync).toHaveBeenCalledWith(
+        expect.stringContaining("plugin.log"),
+        expect.stringMatching(/\[cursor-acp:test\] WARN\s+allowed warn/),
+      );
+    });
+
+    it("refreshes cached log level when env changes and _resetLoggerState is called", () => {
+      mockedFs.existsSync.mockReturnValue(true);
+      mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
+
+      process.env.CURSOR_ACP_LOG_LEVEL = "debug";
+      _resetLoggerState();
+
+      const log = createLogger("test");
+      log.debug("debug while enabled");
+      expect(mockedFs.appendFileSync).toHaveBeenCalledTimes(1);
+
+      vi.clearAllMocks();
+      mockedFs.existsSync.mockReturnValue(true);
+      mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
+
+      process.env.CURSOR_ACP_LOG_LEVEL = "error";
+      _resetLoggerState();
+
+      log.debug("debug after level raised");
       expect(mockedFs.appendFileSync).not.toHaveBeenCalled();
     });
 
