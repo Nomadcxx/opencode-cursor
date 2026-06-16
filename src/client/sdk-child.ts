@@ -33,6 +33,10 @@ import { randomBytes } from "node:crypto";
 
 const log = createLogger("sdk-child");
 
+// ─── Shared encoder (avoid per-event allocation) ────────────────────────────
+
+const textEncoder = new TextEncoder();
+
 // ─── Utilities ──────────────────────────────────────────────────────────────
 
 /**
@@ -250,9 +254,8 @@ class SdkRunnerSingleton {
           pending.promiseResolver(wrapped.exitCode ?? 0);
           this.pendingRequests.delete(requestId);
         } else if (wrapped.event) {
-          // Emit unwrapped event
-          const event = JSON.stringify(wrapped.event) + "\n";
-          pending.controller.enqueue(new TextEncoder().encode(event));
+          const eventLine = JSON.stringify(wrapped.event) + "\n";
+          pending.controller.enqueue(textEncoder.encode(eventLine));
         }
       } catch (err) {
         log.error("Failed to parse wrapped response line", {

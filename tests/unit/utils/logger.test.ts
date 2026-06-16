@@ -70,6 +70,7 @@ describe("logger", () => {
 
     it("writes to console only when CURSOR_ACP_LOG_CONSOLE=1", () => {
       process.env.CURSOR_ACP_LOG_CONSOLE = "1";
+      _resetLoggerState();
       mockedFs.existsSync.mockReturnValue(true);
       mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -98,6 +99,7 @@ describe("logger", () => {
 
     it("respects CURSOR_ACP_LOG_SILENT", () => {
       process.env.CURSOR_ACP_LOG_SILENT = "1";
+      _resetLoggerState();
       mockedFs.existsSync.mockReturnValue(true);
       mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
 

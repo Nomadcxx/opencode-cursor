@@ -17,7 +17,9 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
 };
 
-function getConfiguredLevel(): LogLevel {
+// Cache env-derived config at module load — these don't change at runtime
+// and process.env access is surprisingly expensive per-call.
+function readConfiguredLevel(): LogLevel {
   const env = process.env.CURSOR_ACP_LOG_LEVEL?.toLowerCase();
   if (env && env in LEVEL_PRIORITY) {
     return env as LogLevel;
@@ -25,19 +27,21 @@ function getConfiguredLevel(): LogLevel {
   return "info";
 }
 
-function isSilent(): boolean {
-  return process.env.CURSOR_ACP_LOG_SILENT === "1" ||
-         process.env.CURSOR_ACP_LOG_SILENT === "true";
-}
+let CONFIGURED_LEVEL: LogLevel = readConfiguredLevel();
+let IS_SILENT: boolean =
+  process.env.CURSOR_ACP_LOG_SILENT === "1" ||
+  process.env.CURSOR_ACP_LOG_SILENT === "true";
+let CONSOLE_ENABLED: boolean =
+  process.env.CURSOR_ACP_LOG_CONSOLE === "1" ||
+  process.env.CURSOR_ACP_LOG_CONSOLE === "true";
+let CONFIGURED_PRIORITY = LEVEL_PRIORITY[CONFIGURED_LEVEL];
 
 function shouldLog(level: LogLevel): boolean {
-  if (isSilent()) return false;
-  const configured = getConfiguredLevel();
-  return LEVEL_PRIORITY[level] >= LEVEL_PRIORITY[configured];
+  if (IS_SILENT) return false;
+  return LEVEL_PRIORITY[level] >= CONFIGURED_PRIORITY;
 }
 
 function formatMessage(level: LogLevel, component: string, message: string, data?: unknown): string {
-  const timestamp = new Date().toISOString();
   const prefix = `[cursor-acp:${component}]`;
   const levelTag = level.toUpperCase().padEnd(5);
 
@@ -54,11 +58,6 @@ function formatMessage(level: LogLevel, component: string, message: string, data
   return formatted;
 }
 
-function isConsoleEnabled(): boolean {
-  const consoleEnv = process.env.CURSOR_ACP_LOG_CONSOLE;
-  return consoleEnv === "1" || consoleEnv === "true";
-}
-
 let logDirEnsured = false;
 let logFileError = false;
 
@@ -66,6 +65,14 @@ let logFileError = false;
 export function _resetLoggerState(): void {
   logDirEnsured = false;
   logFileError = false;
+  CONFIGURED_LEVEL = readConfiguredLevel();
+  IS_SILENT =
+    process.env.CURSOR_ACP_LOG_SILENT === "1" ||
+    process.env.CURSOR_ACP_LOG_SILENT === "true";
+  CONSOLE_ENABLED =
+    process.env.CURSOR_ACP_LOG_CONSOLE === "1" ||
+    process.env.CURSOR_ACP_LOG_CONSOLE === "true";
+  CONFIGURED_PRIORITY = LEVEL_PRIORITY[CONFIGURED_LEVEL];
 }
 
 function ensureLogDir(): void {
@@ -122,25 +129,25 @@ export function createLogger(component: string): Logger {
       if (!shouldLog("debug")) return;
       const formatted = formatMessage("debug", component, message, data);
       writeToFile(formatted);
-      if (isConsoleEnabled()) console.error(formatted);
+      if (CONSOLE_ENABLED) console.error(formatted);
     },
     info: (message: string, data?: unknown) => {
       if (!shouldLog("info")) return;
       const formatted = formatMessage("info", component, message, data);
       writeToFile(formatted);
-      if (isConsoleEnabled()) console.error(formatted);
+      if (CONSOLE_ENABLED) console.error(formatted);
     },
     warn: (message: string, data?: unknown) => {
       if (!shouldLog("warn")) return;
       const formatted = formatMessage("warn", component, message, data);
       writeToFile(formatted);
-      if (isConsoleEnabled()) console.error(formatted);
+      if (CONSOLE_ENABLED) console.error(formatted);
     },
     error: (message: string, data?: unknown) => {
       if (!shouldLog("error")) return;
       const formatted = formatMessage("error", component, message, data);
       writeToFile(formatted);
-      if (isConsoleEnabled()) console.error(formatted);
+      if (CONSOLE_ENABLED) console.error(formatted);
     },
   };
 }
