@@ -1,7 +1,10 @@
-import { describe, expect, it } from "bun:test";
-import { buildPromptFromMessages } from "../../../src/proxy/prompt-builder.js";
+import { describe, expect, it, beforeEach } from "bun:test";
+import { buildPromptFromMessages, _resetToolSchemaCache } from "../../../src/proxy/prompt-builder.js";
 
 describe("buildPromptFromMessages", () => {
+  beforeEach(() => {
+    _resetToolSchemaCache();
+  });
   it("converts simple text messages", () => {
     const messages = [
       { role: "system", content: "You are helpful." },
@@ -204,5 +207,38 @@ describe("buildPromptFromMessages", () => {
       "The above tool calls have been executed"
     ).length - 1;
     expect(suffixCount).toBe(1);
+  });
+
+  it("caches tool schema block across calls with same tools", () => {
+    const tools = [
+      { type: "function", function: { name: "read", description: "Read", parameters: { type: "object" } } },
+      { type: "function", function: { name: "write", description: "Write", parameters: { type: "object" } } },
+    ];
+    const msgs = [{ role: "user", content: "Hello" }];
+
+    const result1 = buildPromptFromMessages(msgs, tools);
+    const result2 = buildPromptFromMessages(msgs, tools);
+
+    expect(result1).toBe(result2);
+    expect(result1).toContain("read: Read");
+    expect(result1).toContain("write: Write");
+  });
+
+  it("invalidates cache when tools change", () => {
+    const tools1 = [
+      { type: "function", function: { name: "read", description: "Read", parameters: { type: "object" } } },
+    ];
+    const tools2 = [
+      { type: "function", function: { name: "read", description: "Read", parameters: { type: "object" } } },
+      { type: "function", function: { name: "write", description: "Write", parameters: { type: "object" } } },
+    ];
+    const msgs = [{ role: "user", content: "Hello" }];
+
+    const result1 = buildPromptFromMessages(msgs, tools1);
+    const result2 = buildPromptFromMessages(msgs, tools2);
+
+    expect(result1).not.toBe(result2);
+    expect(result1).not.toContain("write: Write");
+    expect(result2).toContain("write: Write");
   });
 });
