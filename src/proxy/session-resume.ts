@@ -19,17 +19,13 @@
  */
 
 import { createHash } from "node:crypto";
-import { createLogger } from "../utils/logger";
+import { createLogger } from "../utils/logger.js";
 import { extractTextContent, type ProxyMessage } from "./incremental-prompt.js";
 
 const log = createLogger("session-resume");
 
 interface SessionResumeEntry {
   chatId: string;
-  /** Stored for diagnostics only; the sessionKey already encodes model/workspace. */
-  model: string;
-  /** Stored for diagnostics only; the sessionKey already encodes model/workspace. */
-  workspace: string;
   /** First-message content prefix used as a collision safety check on lookup. */
   contentPrefix: string;
   /** Fingerprint of the tool schema active when the session was created. */
@@ -44,9 +40,9 @@ const DEFAULT_MAX_ENTRIES = 64;
 
 const cache = new Map<string, SessionResumeEntry>();
 
-/** 64-bit SHA-256 prefix. Content is tiny so cost is negligible. */
+/** 128-bit SHA-256 prefix. SHA-256 cost is independent of digest length. */
 function simpleHash(input: string): string {
-  return createHash("sha256").update(input).digest("hex").slice(0, 16);
+  return createHash("sha256").update(input).digest("hex").slice(0, 32);
 }
 
 /** Skip OpenCode meta-requests that share the proxy but aren't the main chat.
@@ -78,7 +74,7 @@ export function deriveConversationAnchor(
     if (message?.role !== "user") continue;
     const content = extractTextContent(message.content).trim();
     if (!content || isMetaUserMessage(content)) continue;
-    return { anchor: simpleHash(content), contentPrefix: content.slice(0, 80) };
+    return { anchor: simpleHash(content), contentPrefix: content.slice(0, 500) };
   }
   return undefined;
 }
@@ -97,8 +93,11 @@ export function isSessionResumeEnabled(): boolean {
 /**
  * Look up a cached cursor-agent chat ID for the given session key.
  *
- * Validates TTL, content prefix, and optional tool/subagent fingerprints.
- * Returns undefined and evicts stale entries on mismatch.
+ * Validates TTL, content prefix, and tool/subagent fingerprints. A request that
+ * supplies a non-empty fingerprint will evict a cached entry that was recorded
+ * without that fingerprint (or with a different one), preventing a stale chat
+ * from being resumed with an incompatible tool/subagent schema. Returns
+ * undefined and evicts stale entries on any mismatch.
  */
 export function getResumeChatId(
   sessionKey: string,
@@ -109,42 +108,60 @@ export function getResumeChatId(
   const entry = cache.get(sessionKey);
   if (!entry) return undefined;
   if (Date.now() - entry.updatedAt > DEFAULT_TTL_MS) {
-    log.info("Session resume entry expired", { sessionKey: sanitizeKey(sessionKey), ageMs: Date.now() - entry.updatedAt, ttlMs: DEFAULT_TTL_MS });
-    cache.delete(sessionKey);
+    evictEntry(sessionKey, "ttlExpired", {
+      ageMs: Date.now() - entry.updatedAt,
+      ttlMs: DEFAULT_TTL_MS,
+    });
     return undefined;
   }
   if (expectedPrefix != null && entry.contentPrefix !== expectedPrefix) {
-    log.warn("Session resume contentPrefix mismatch; treating as cache miss", {
-      sessionKey: sanitizeKey(sessionKey),
-      storedPrefixLength: entry.contentPrefix.length,
-      expectedPrefixLength: expectedPrefix.length,
-    });
+    evictEntry(
+      sessionKey,
+      "contentPrefixMismatch",
+      {
+        storedPrefixLength: entry.contentPrefix.length,
+        expectedPrefixLength: expectedPrefix.length,
+      },
+      "warn",
+    );
     return undefined;
   }
-  if (
-    toolFingerprint != null &&
-    entry.toolFingerprint != null &&
-    entry.toolFingerprint !== toolFingerprint
-  ) {
-    log.warn("Session resume tool fingerprint mismatch; falling back to full prompt", {
-      sessionKey: sanitizeKey(sessionKey),
-    });
+  if ((toolFingerprint || entry.toolFingerprint) && entry.toolFingerprint !== toolFingerprint) {
+    evictEntry(sessionKey, "toolFingerprintMismatch", {}, "warn");
     return undefined;
   }
-  if (
-    subagentFingerprint != null &&
-    entry.subagentFingerprint != null &&
-    entry.subagentFingerprint !== subagentFingerprint
-  ) {
-    log.warn("Session resume subagent fingerprint mismatch; falling back to full prompt", {
-      sessionKey: sanitizeKey(sessionKey),
-    });
+  if ((subagentFingerprint || entry.subagentFingerprint) && entry.subagentFingerprint !== subagentFingerprint) {
+    evictEntry(sessionKey, "subagentFingerprintMismatch", {}, "warn");
     return undefined;
   }
   // Refresh LRU order on a successful read.
   cache.delete(sessionKey);
   cache.set(sessionKey, entry);
   return entry.chatId;
+}
+
+/**
+ * Check whether a resume chat ID exists without evicting stale entries or
+ * refreshing LRU order. Use for observability-only checks (e.g. post-response
+ * warnings) where side effects would be incorrect.
+ */
+export function hasResumeChatId(
+  sessionKey: string,
+  expectedPrefix?: string,
+  toolFingerprint?: string,
+  subagentFingerprint?: string,
+): boolean {
+  const entry = cache.get(sessionKey);
+  if (!entry) return false;
+  if (Date.now() - entry.updatedAt > DEFAULT_TTL_MS) return false;
+  if (expectedPrefix != null && entry.contentPrefix !== expectedPrefix) return false;
+  if ((toolFingerprint || entry.toolFingerprint) && entry.toolFingerprint !== toolFingerprint) {
+    return false;
+  }
+  if ((subagentFingerprint || entry.subagentFingerprint) && entry.subagentFingerprint !== subagentFingerprint) {
+    return false;
+  }
+  return !!entry.chatId;
 }
 
 /**
@@ -156,8 +173,6 @@ export function getResumeChatId(
 export function recordResumeChatId(
   sessionKey: string,
   chatId: string,
-  model: string,
-  workspace: string,
   contentPrefix: string,
   toolFingerprint?: string,
   subagentFingerprint?: string,
@@ -167,8 +182,6 @@ export function recordResumeChatId(
   cache.delete(sessionKey);
   cache.set(sessionKey, {
     chatId,
-    model,
-    workspace,
     contentPrefix,
     toolFingerprint,
     subagentFingerprint,
@@ -177,14 +190,38 @@ export function recordResumeChatId(
   while (cache.size > DEFAULT_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
-    log.info("Evicting oldest session resume entry", { sessionKey: sanitizeKey(oldest), reason: "maxEntries", maxEntries: DEFAULT_MAX_ENTRIES });
-    cache.delete(oldest);
+    evictEntry(oldest, "maxEntries", { maxEntries: DEFAULT_MAX_ENTRIES });
   }
 }
 
-/** Sanitize a session key for logging by hashing the full key. */
-function sanitizeKey(sessionKey: string): string {
-  return createHash("sha256").update(sessionKey).digest("hex").slice(0, 16);
+/** Sanitize a session key for logging by hashing the full key (128-bit prefix). */
+export function sanitizeSessionKey(sessionKey: string): string {
+  return createHash("sha256").update(sessionKey).digest("hex").slice(0, 32);
+}
+
+/** Generic helper for hashing arbitrary text before logging. */
+export function hashForLog(input: unknown): string {
+  return sanitizeSessionKey(typeof input === "string" ? input : String(input ?? ""));
+}
+
+/** Evict a stale cache entry with a single, consistent log line. */
+function evictEntry(
+  sessionKey: string,
+  reason: string,
+  extra: Record<string, unknown> = {},
+  logLevel: "info" | "warn" = "info",
+): void {
+  const payload = {
+    sessionKeyHash: sanitizeSessionKey(sessionKey),
+    reason,
+    ...extra,
+  };
+  if (logLevel === "warn") {
+    log.warn("Evicting session resume entry", payload);
+  } else {
+    log.info("Evicting session resume entry", payload);
+  }
+  cache.delete(sessionKey);
 }
 
 /** Remove a cached chat ID, e.g. after a resume-specific cursor-agent failure. */

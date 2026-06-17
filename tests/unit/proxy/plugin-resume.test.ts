@@ -9,8 +9,10 @@ import {
   buildCursorAgentCommand,
   captureResumeChatIdFromEvent,
   captureResumeChatIdFromOutput,
+  maybeEvictResumeChatId,
   resolvePromptForBackend,
 } from "../../../src/plugin.js";
+import { isResumeSpecificFailure } from "../../../src/utils/errors.js";
 
 describe("plugin resume orchestration", () => {
   afterEach(() => {
@@ -182,6 +184,38 @@ describe("plugin resume orchestration", () => {
     expect(cmd).not.toContain("--resume");
   });
 
+  it("buildCursorAgentCommand omits --resume for unsafe chatIds", () => {
+    const unsafeIds = [
+      "",
+      " chat-123",
+      "chat-123 ",
+      "-chat-123",
+      "_chat-123",
+      "chat.123",
+      "chat/123",
+      "chat-123;echo bad",
+      "chat|123",
+      "chat$123",
+      "chat`123",
+      "chat\n123",
+      "chat\x00123",
+    ];
+    for (const unsafeId of unsafeIds) {
+      const cmd = buildCursorAgentCommand("gpt-5", "/workspace", unsafeId);
+      expect(cmd).not.toContain("--resume");
+    }
+  });
+
+  it("buildCursorAgentCommand keeps --resume for safe chatIds", () => {
+    const safeIds = ["chat-123", "Chat_123-abc", "a", "A1_b2-c3"];
+    for (const safeId of safeIds) {
+      const cmd = buildCursorAgentCommand("gpt-5", "/workspace", safeId);
+      expect(cmd).toContain("--resume");
+      const resumeIndex = cmd.indexOf("--resume");
+      expect(cmd[resumeIndex + 1]).toBe(safeId);
+    }
+  });
+
   it("captureResumeChatIdFromOutput ignores malformed and empty lines", () => {
     process.env.CURSOR_ACP_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
@@ -255,5 +289,60 @@ describe("plugin resume orchestration", () => {
     });
     expect(followUp.resumeChatId).toBeUndefined();
     expect(followUp.usedIncremental).toBe(false);
+  });
+
+  it("captures session_id from stream result events", () => {
+    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    const key = "/workspace\0gpt-5\0anchor";
+    captureResumeChatIdFromEvent(
+      { type: "result", session_id: "chat-stream" } as any,
+      key,
+      "gpt-5",
+      "/workspace",
+      "prefix",
+    );
+    expect(getResumeChatId(key, "prefix")).toBe("chat-stream");
+  });
+
+  it("evicts cached chatId on resume-specific failures", () => {
+    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
+    captureResumeChatIdFromEvent(
+      { type: "system", session_id: "chat-abc" } as any,
+      sessionKey,
+      "gpt-5",
+      "/workspace",
+      contentPrefix,
+    );
+    expect(getResumeChatId(sessionKey!, contentPrefix!)).toBe("chat-abc");
+
+    const errSource = "Error: session not found";
+    expect(isResumeSpecificFailure(errSource)).toBe(true);
+    const evicted = maybeEvictResumeChatId(errSource, "chat-abc", sessionKey, {
+      code: 1,
+    });
+    expect(evicted).toBe(true);
+    expect(getResumeChatId(sessionKey!, contentPrefix!)).toBeUndefined();
+  });
+
+  it("does not evict cached chatId on transient failures", () => {
+    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
+    captureResumeChatIdFromEvent(
+      { type: "system", session_id: "chat-abc" } as any,
+      sessionKey,
+      "gpt-5",
+      "/workspace",
+      contentPrefix,
+    );
+    expect(getResumeChatId(sessionKey!, contentPrefix!)).toBe("chat-abc");
+
+    const errSource = "fetch failed ECONNREFUSED";
+    expect(isResumeSpecificFailure(errSource)).toBe(false);
+    const evicted = maybeEvictResumeChatId(errSource, "chat-abc", sessionKey, {
+      code: 1,
+    });
+    expect(evicted).toBe(false);
+    expect(getResumeChatId(sessionKey!, contentPrefix!)).toBe("chat-abc");
   });
 });

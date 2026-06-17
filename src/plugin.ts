@@ -24,9 +24,9 @@ import {
   extractOpenAiUsageFromResult,
   type OpenAiUsage,
 } from "./usage.js";
-import { createLogger } from "./utils/logger";
-import { RequestPerf } from "./utils/perf";
-import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure } from "./utils/errors";
+import { createLogger } from "./utils/logger.js";
+import { RequestPerf } from "./utils/perf.js";
+import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure } from "./utils/errors.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
 import {
@@ -34,8 +34,11 @@ import {
   clearResumeChatId,
   deriveConversationAnchor,
   getResumeChatId,
+  hasResumeChatId,
+  hashForLog,
   isSessionResumeEnabled,
   recordResumeChatId,
+  sanitizeSessionKey,
 } from "./proxy/session-resume.js";
 import {
   extractAllowedToolNames,
@@ -231,6 +234,8 @@ function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeB
   });
 }
 
+const RESUME_CHAT_ID_SAFE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
 /**
  * Build the command array for invoking cursor-agent.
  * Appends `--resume <chatId>` only when a chat ID is supplied.
@@ -252,7 +257,14 @@ export function buildCursorAgentCommand(
     model,
   ];
   if (resumeChatId) {
-    cmd.push("--resume", resumeChatId);
+    if (RESUME_CHAT_ID_SAFE_RE.test(resumeChatId)) {
+      cmd.push("--resume", resumeChatId);
+    } else {
+      log.warn("Refusing to pass unsafe resume chat ID to cursor-agent; --resume omitted", {
+        resumeChatIdHash: hashForLog(resumeChatId),
+        model,
+      });
+    }
   }
   if (FORCE_TOOL_MODE) {
     cmd.push("--force");
@@ -305,20 +317,22 @@ export function resolvePromptForBackend(input: {
   if (!anchorResult) {
     log.warn("Session resume enabled but no usable conversation anchor; skipping resume", {
       model: input.model,
-      workspaceDirectory: input.workspaceDirectory,
+      workspaceDirectoryHash: sanitizeSessionKey(input.workspaceDirectory),
     });
     return { prompt: getFullPrompt(), usedIncremental: false };
   }
   const { anchor, contentPrefix } = anchorResult;
   const sessionKey = buildSessionKey(input.workspaceDirectory, input.model, anchor);
+  const sessionKeyHash = sanitizeSessionKey(sessionKey);
   const toolFingerprint = buildToolFingerprint(input.tools);
   const subagentFingerprint = input.subagentNames.slice().sort().join(",");
   const resumeChatId = getResumeChatId(sessionKey, contentPrefix, toolFingerprint, subagentFingerprint);
+  const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
   if (!resumeChatId) {
     const isContinuation = input.messages.some((m: any) => m?.role === "assistant");
     if (isContinuation) {
       log.warn("Session resume enabled but no chatId found for sessionKey; falling back to full prompt", {
-        sessionKey,
+        sessionKeyHash,
       });
     }
     return { prompt: getFullPrompt(), sessionKey, usedIncremental: false, contentPrefix, toolFingerprint, subagentFingerprint };
@@ -327,8 +341,8 @@ export function resolvePromptForBackend(input: {
   const incremental = buildIncrementalPrompt(input.messages);
   if (incremental) {
     log.debug("Using incremental prompt with session resume", {
-      sessionKey,
-      resumeChatId,
+      sessionKeyHash,
+      resumeChatIdHash,
       promptChars: incremental.length,
       fullPromptChars: getFullPrompt().length,
     });
@@ -336,8 +350,8 @@ export function resolvePromptForBackend(input: {
   }
 
   log.info("Session resume active but incremental prompt unavailable; using full prompt", {
-    sessionKey,
-    resumeChatId,
+    sessionKeyHash,
+    resumeChatIdHash,
   });
   return { prompt: getFullPrompt(), resumeChatId, sessionKey, usedIncremental: false, contentPrefix, toolFingerprint, subagentFingerprint };
 }
@@ -363,8 +377,6 @@ export function captureResumeChatIdFromEvent(
     recordResumeChatId(
       sessionKey,
       chatId.trim(),
-      model,
-      workspaceDirectory,
       contentPrefix ?? "",
       toolFingerprint,
       subagentFingerprint,
@@ -374,13 +386,15 @@ export function captureResumeChatIdFromEvent(
   log.warn("cursor-agent emitted invalid session_id", {
     type: typeof chatId,
     length: String(chatId).length,
-    sessionKey,
+    sessionKeyHash: sanitizeSessionKey(sessionKey),
   });
 }
 
 /**
- * Scan raw cursor-agent NDJSON output and capture the first valid `session_id`.
- * Each line is parsed independently and delegated to the event-level capture.
+ * Scan raw cursor-agent NDJSON output (stdout) and capture the first valid
+ * `session_id`. Each line is parsed independently and delegated to the
+ * event-level capture. cursor-agent emits `session_id` on stdout; stderr is
+ * intentionally not scanned here so error text cannot spoof a session ID.
  */
 export function captureResumeChatIdFromOutput(
   output: string,
@@ -392,7 +406,7 @@ export function captureResumeChatIdFromOutput(
   subagentFingerprint?: string,
 ): void {
   if (!sessionKey || !isSessionResumeEnabled() || !output) return;
-  for (const line of output.split("\n")) {
+  for (const line of output.split(/\r?\n/)) {
     const event = parseStreamJsonLine(line);
     if (event) {
       captureResumeChatIdFromEvent(
@@ -405,6 +419,62 @@ export function captureResumeChatIdFromOutput(
         subagentFingerprint,
       );
     }
+  }
+}
+
+/**
+ * Evict a cached resume chat ID when the cursor-agent error indicates the
+ * resumed session itself is gone. Transient errors (network, auth, OOM,
+ * signals) are ignored so a valid resume ID survives a flaky turn.
+ */
+export function maybeEvictResumeChatId(
+  errSource: unknown,
+  resumeChatId: string | undefined,
+  sessionKey: string | undefined,
+  logFields: { code?: number | null; spawnError?: boolean; failureTextHash?: string } = {},
+): boolean {
+  if (!resumeChatId || !sessionKey || !isSessionResumeEnabled() || !isResumeSpecificFailure(errSource)) {
+    return false;
+  }
+  clearResumeChatId(sessionKey);
+  log.warn("Evicting resume chatId after resume-specific cursor-agent failure", {
+    code: logFields.code,
+    spawnError: logFields.spawnError,
+    sessionKeyHash: sanitizeSessionKey(sessionKey),
+    resumeChatIdHash: sanitizeSessionKey(resumeChatId),
+    failureTextHash: logFields.failureTextHash,
+    hadResume: true,
+  });
+  return true;
+}
+
+/**
+ * Warn once per request when session resume is enabled but cursor-agent did
+ * not emit a usable `session_id`. Keeps the warning logic in one place across
+ * the Bun/Node stream/non-stream paths.
+ */
+function warnIfResumeNotCaptured(
+  sessionResumeKey: string | undefined,
+  sessionResumeKeyHash: string | undefined,
+  sessionResumeContentPrefix: string | undefined,
+  sessionResumeToolFingerprint: string | undefined,
+  sessionResumeSubagentFingerprint: string | undefined,
+  model: string,
+): void {
+  if (
+    sessionResumeKey
+    && isSessionResumeEnabled()
+    && !hasResumeChatId(
+      sessionResumeKey,
+      sessionResumeContentPrefix,
+      sessionResumeToolFingerprint,
+      sessionResumeSubagentFingerprint,
+    )
+  ) {
+    log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
+      sessionKeyHash: sessionResumeKeyHash,
+      model,
+    });
   }
 }
 
@@ -1083,6 +1153,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         model,
         workspaceDirectory,
       });
+      const sessionResumeKeyHash = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
+      const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
       const msgSummaryBun = messages.map((m: any, i: number) => {
         const role = m?.role ?? "?";
         const hasTc = Array.isArray(m?.tool_calls) ? m.tool_calls.length : 0;
@@ -1096,7 +1168,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         tools: tools.length,
         promptChars: prompt.length,
         msgRoles: msgSummaryBun.join(","),
-        sessionResume: resumeChatId ? { chatId: resumeChatId, incremental: usedIncremental } : undefined,
+        sessionResume: resumeChatId ? { chatIdHash: resumeChatIdHash, incremental: usedIncremental } : undefined,
       });
 
       if (backend === "sdk" && !sdkApiKey) {
@@ -1138,12 +1210,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           sessionResumeToolFingerprint,
           sessionResumeSubagentFingerprint,
         );
-        if (sessionResumeKey && isSessionResumeEnabled() && !getResumeChatId(sessionResumeKey, sessionResumeContentPrefix)) {
-          log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
-            sessionResumeKey,
-            model,
-          });
-        }
+        warnIfResumeNotCaptured(
+          sessionResumeKey,
+          sessionResumeKeyHash,
+          sessionResumeContentPrefix,
+          sessionResumeToolFingerprint,
+          sessionResumeSubagentFingerprint,
+          model,
+        );
         const meta = {
           id: `cursor-acp-${Date.now()}`,
           created: Math.floor(Date.now() / 1000),
@@ -1188,19 +1262,15 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           // Only evict the cached chat ID when the failure indicates the resumed
           // session itself is gone. Transient errors (network/auth/OOM/signals)
           // should not discard a valid resume ID.
-          if (resumeChatId && sessionResumeKey && isResumeSpecificFailure(errSource)) {
-            clearResumeChatId(sessionResumeKey);
-            log.warn("Evicting resume chatId after resume-specific cursor-agent failure", {
-              sessionResumeKey,
-              exitCode,
-              hadResume: true,
-            });
-          }
+          maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+            code: exitCode,
+            failureTextHash: hashForLog(errSource),
+          });
           const parsed = parseAgentError(errSource);
           const userError = formatErrorForUser(parsed);
           log.error("cursor-cli failed", {
             type: parsed.type,
-            message: parsed.message,
+            failureTextHash: hashForLog(parsed.message),
             code: exitCode,
           });
           // Return error as chat completion so user always sees it
@@ -1448,19 +1518,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               // Only evict the cached chat ID when the failure indicates the resumed
               // session itself is gone. Transient errors (network/auth/OOM/signals)
               // should not discard a valid resume ID.
-              if (resumeChatId && sessionResumeKey && isResumeSpecificFailure(errSource)) {
-                clearResumeChatId(sessionResumeKey);
-                log.warn("Evicting resume chatId after resume-specific cursor-agent failure", {
-                  sessionResumeKey,
-                  exitCode,
-                  hadResume: true,
-                });
-              }
+              maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+                code: exitCode,
+                failureTextHash: hashForLog(errSource),
+              });
               const parsed = parseAgentError(errSource);
               const msg = formatErrorForUser(parsed);
               log.error("cursor-cli streaming failed", {
                 type: parsed.type,
                 code: exitCode,
+                failureTextHash: hashForLog(parsed.message),
               });
               const errChunk = createChatCompletionChunk(id, created, model, msg, true);
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
@@ -1471,6 +1538,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             log.debug("cursor-agent completed (bun stream)", {
               exitCode,
             });
+            warnIfResumeNotCaptured(
+              sessionResumeKey,
+              sessionResumeKeyHash,
+              sessionResumeContentPrefix,
+              sessionResumeToolFingerprint,
+              sessionResumeSubagentFingerprint,
+              model,
+            );
 
             // Emit toast for passed-through MCP tools
             const passThroughSummary = passThroughTracker.getSummary();
@@ -1489,12 +1564,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             }
             controller.enqueue(encoder.encode(formatSseDone()));
           } finally {
-            if (sessionResumeKey && isSessionResumeEnabled() && !getResumeChatId(sessionResumeKey, sessionResumeContentPrefix)) {
-              log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
-                sessionResumeKey,
-                model,
-              });
-            }
             perf.mark("request:done");
             perf.summarize();
             controller.close();
@@ -1618,6 +1687,8 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         workspaceDirectory,
       });
       reqPerf.mark("prompt-built");
+      const sessionResumeKeyHashNode = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
+      const resumeChatIdHashNode = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
       const msgSummary = messages.map((m: any, i: number) => {
         const role = m?.role ?? "?";
         const hasTc = Array.isArray(m?.tool_calls) ? m.tool_calls.length : 0;
@@ -1633,7 +1704,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         tools: tools.length,
         promptChars: prompt.length,
         msgRoles: msgSummary.join(","),
-        sessionResume: resumeChatId ? { chatId: resumeChatId, incremental: usedIncremental } : undefined,
+        sessionResume: resumeChatId ? { chatIdHash: resumeChatIdHashNode, incremental: usedIncremental } : undefined,
       });
 
       reqPerf.mark("backend-resolved");
@@ -1659,7 +1730,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         child.on("error", (error: any) => {
           spawnErrorText = String(error?.message || error);
-          log.error("Failed to spawn cursor-agent", { error: spawnErrorText, model });
+          log.error("Failed to spawn cursor-agent", { errorHash: hashForLog(spawnErrorText), model });
         });
 
         child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
@@ -1675,20 +1746,22 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             spawnError: spawnErrorText != null,
           });
           captureResumeChatIdFromOutput(
-          stdout,
-          sessionResumeKey,
-          model,
-          workspaceDirectory,
-          sessionResumeContentPrefix,
-          sessionResumeToolFingerprint,
-          sessionResumeSubagentFingerprint,
-        );
-          if (sessionResumeKey && isSessionResumeEnabled() && !getResumeChatId(sessionResumeKey, sessionResumeContentPrefix)) {
-            log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
-              sessionResumeKey,
-              model,
-            });
-          }
+            stdout,
+            sessionResumeKey,
+            model,
+            workspaceDirectory,
+            sessionResumeContentPrefix,
+            sessionResumeToolFingerprint,
+            sessionResumeSubagentFingerprint,
+          );
+          warnIfResumeNotCaptured(
+            sessionResumeKey,
+            sessionResumeKeyHashNode,
+            sessionResumeContentPrefix,
+            sessionResumeToolFingerprint,
+            sessionResumeSubagentFingerprint,
+            model,
+          );
           const meta = {
             id: `cursor-acp-${Date.now()}`,
             created: Math.floor(Date.now() / 1000),
@@ -1734,20 +1807,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             // Only evict the cached chat ID when the failure indicates the resumed
             // session itself is gone. Transient errors (network/auth/OOM/signals)
             // should not discard a valid resume ID.
-            if (resumeChatId && sessionResumeKey && isResumeSpecificFailure(errSource)) {
-              clearResumeChatId(sessionResumeKey);
-              log.warn("Evicting resume chatId after resume-specific cursor-agent failure", {
-                sessionResumeKey,
-                code,
-                spawnError: spawnErrorText != null,
-                hadResume: true,
-              });
-            }
+            maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+              code,
+              spawnError: spawnErrorText != null,
+              failureTextHash: hashForLog(errSource),
+            });
             const parsed = parseAgentError(errSource);
             const userError = formatErrorForUser(parsed);
             log.error("cursor-cli failed", {
               type: parsed.type,
-              message: parsed.message,
+              failureTextHash: hashForLog(parsed.message),
               code,
             });
             // Return error as chat completion so user always sees it
@@ -1799,7 +1868,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             return;
           }
           const errSource = String(error?.message || error);
-          log.error("Failed to spawn cursor-agent (stream)", { error: errSource, model });
+          log.error("Failed to spawn cursor-agent (stream)", { errorHash: hashForLog(errSource), model });
           const parsed = parseAgentError(errSource);
           const msg = formatErrorForUser(parsed);
           const errChunk = createChatCompletionChunk(id, created, model, msg, true);
@@ -1956,14 +2025,10 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 // Only evict the cached chat ID when the failure indicates the resumed
                 // session itself is gone. Transient errors (network/auth/OOM/signals)
                 // should not discard a valid resume ID.
-                if (resumeChatId && sessionResumeKey && isResumeSpecificFailure(errSource)) {
-                  clearResumeChatId(sessionResumeKey);
-                  log.warn("Evicting resume chatId after resume-specific cursor-agent failure", {
-                    sessionResumeKey,
-                    code: childExitCode,
-                    hadResume: true,
-                  });
-                }
+                maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+                  code: childExitCode,
+                  failureTextHash: hashForLog(errSource),
+                });
                 const parsed = parseAgentError(errSource);
                 const msg = formatErrorForUser(parsed);
                 const errChunk = createChatCompletionChunk(id, created, model, msg, true);
@@ -1974,12 +2039,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 return;
               }
 
-              if (sessionResumeKey && isSessionResumeEnabled() && !getResumeChatId(sessionResumeKey, sessionResumeContentPrefix)) {
-                log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
-                  sessionResumeKey,
-                  model,
-                });
-              }
+              warnIfResumeNotCaptured(
+                sessionResumeKey,
+                sessionResumeKeyHashNode,
+                sessionResumeContentPrefix,
+                sessionResumeToolFingerprint,
+                sessionResumeSubagentFingerprint,
+                model,
+              );
 
               const passThroughSummary = passThroughTracker.getSummary();
               if (passThroughSummary.hasActivity) {

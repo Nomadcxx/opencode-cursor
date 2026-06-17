@@ -5,6 +5,8 @@ import {
   clearResumeChatId,
   deriveConversationAnchor,
   getResumeChatId,
+  hashForLog,
+  hasResumeChatId,
   isSessionResumeEnabled,
   recordResumeChatId,
 } from "../../../src/proxy/session-resume.js";
@@ -104,13 +106,13 @@ describe("session-resume", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
     expect(getResumeChatId(key)).toBeUndefined();
 
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello");
+    recordResumeChatId(key, "chat-uuid-1", "hello");
     expect(getResumeChatId(key)).toBe("chat-uuid-1");
   });
 
   it("clears a stored chat ID", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello");
+    recordResumeChatId(key, "chat-uuid-1", "hello");
     clearResumeChatId(key);
     expect(getResumeChatId(key)).toBeUndefined();
   });
@@ -126,21 +128,21 @@ describe("session-resume", () => {
 
   it("ignores recordResumeChatId with empty chatId", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "", "gpt-5", "/workspace", "hello");
+    recordResumeChatId(key, "", "hello");
     expect(getResumeChatId(key)).toBeUndefined();
   });
 
   it("evicts oldest entry when max entries exceeded", () => {
     for (let i = 0; i < 64; i++) {
       const key = buildSessionKey("/ws", "model", `anchor-${i}`);
-      recordResumeChatId(key, `chat-${i}`, "model", "/ws", `prefix-${i}`);
+      recordResumeChatId(key, `chat-${i}`, `prefix-${i}`);
     }
     const firstKey = buildSessionKey("/ws", "model", "anchor-0");
     const secondKey = buildSessionKey("/ws", "model", "anchor-1");
 
     // Add one more; oldest untouched entry should be evicted.
     const extraKey = buildSessionKey("/ws", "model", "anchor-64");
-    recordResumeChatId(extraKey, "chat-64", "model", "/ws", "prefix-64");
+    recordResumeChatId(extraKey, "chat-64", "prefix-64");
     expect(getResumeChatId(firstKey)).toBeUndefined();
     expect(getResumeChatId(secondKey)).toBe("chat-1");
     expect(getResumeChatId(extraKey)).toBe("chat-64");
@@ -149,15 +151,15 @@ describe("session-resume", () => {
   it("refreshes insertion order on update so recently-updated entry survives eviction", () => {
     for (let i = 0; i < 64; i++) {
       const key = buildSessionKey("/ws", "model", `anchor-${i}`);
-      recordResumeChatId(key, `chat-${i}`, "model", "/ws", `prefix-${i}`);
+      recordResumeChatId(key, `chat-${i}`, `prefix-${i}`);
     }
     const firstKey = buildSessionKey("/ws", "model", "anchor-0");
     // Touch the first entry to refresh its LRU position.
     getResumeChatId(firstKey);
-    recordResumeChatId(firstKey, "chat-0-updated", "model", "/ws", "prefix-0");
+    recordResumeChatId(firstKey, "chat-0-updated", "prefix-0");
 
     const extraKey = buildSessionKey("/ws", "model", "anchor-64");
-    recordResumeChatId(extraKey, "chat-64", "model", "/ws", "prefix-64");
+    recordResumeChatId(extraKey, "chat-64", "prefix-64");
     // anchor-1 (not touched) should be evicted instead of anchor-0.
     const secondKey = buildSessionKey("/ws", "model", "anchor-1");
     expect(getResumeChatId(secondKey)).toBeUndefined();
@@ -170,7 +172,7 @@ describe("session-resume", () => {
       const key = buildSessionKey("/workspace", "gpt-5", "abc123");
       const now = 1_000_000_000_000;
       Date.now = () => now;
-      recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello");
+      recordResumeChatId(key, "chat-uuid-1", "hello");
       expect(getResumeChatId(key)).toBe("chat-uuid-1");
 
       // Just over 1 hour later.
@@ -181,32 +183,83 @@ describe("session-resume", () => {
     }
   });
 
-  it("treats prefix mismatch as a cache miss", () => {
+  it("treats prefix mismatch as a cache miss and evicts the stale entry", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello");
+    recordResumeChatId(key, "chat-uuid-1", "hello");
     expect(getResumeChatId(key, "different")).toBeUndefined();
-    expect(getResumeChatId(key, "hello")).toBe("chat-uuid-1");
-    expect(getResumeChatId(key)).toBe("chat-uuid-1");
+    expect(getResumeChatId(key)).toBeUndefined();
   });
 
   it("evicts entry on tool fingerprint mismatch", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello", "fp-v1");
+    recordResumeChatId(key, "chat-uuid-1", "hello", "fp-v1");
     expect(getResumeChatId(key, "hello", "fp-v1")).toBe("chat-uuid-1");
     expect(getResumeChatId(key, "hello", "fp-v2")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
   });
 
   it("evicts entry on subagent fingerprint mismatch", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello", undefined, "agents-v1");
+    recordResumeChatId(key, "chat-uuid-1", "hello", undefined, "agents-v1");
     expect(getResumeChatId(key, "hello", undefined, "agents-v1")).toBe("chat-uuid-1");
     expect(getResumeChatId(key, "hello", undefined, "agents-v2")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
   });
 
-  it("ignores fingerprint checks when no fingerprint was recorded", () => {
+  it("evicts entries recorded without a fingerprint when a request fingerprint is supplied", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "gpt-5", "/workspace", "hello");
-    expect(getResumeChatId(key, "hello", "any-fp")).toBe("chat-uuid-1");
-    expect(getResumeChatId(key, "hello", undefined, "any-subagent")).toBe("chat-uuid-1");
+    recordResumeChatId(key, "chat-uuid-1", "hello");
+    expect(getResumeChatId(key, "hello", "any-fp")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
+
+    recordResumeChatId(key, "chat-uuid-2", "hello");
+    expect(getResumeChatId(key, "hello", undefined, "any-subagent")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
+  });
+
+  it("evicts entries with a fingerprint when the request supplies none", () => {
+    const key = buildSessionKey("/workspace", "gpt-5", "abc123");
+    recordResumeChatId(key, "chat-uuid-1", "hello", "fp-v1");
+    expect(getResumeChatId(key, "hello")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
+
+    recordResumeChatId(key, "chat-uuid-2", "hello", undefined, "agents-v1");
+    expect(getResumeChatId(key, "hello")).toBeUndefined();
+    expect(getResumeChatId(key)).toBeUndefined();
+  });
+
+  it("hasResumeChatId reports presence without refreshing LRU order", () => {
+    for (let i = 0; i < 64; i++) {
+      const key = buildSessionKey("/ws", "model", `anchor-${i}`);
+      recordResumeChatId(key, `chat-${i}`, `prefix-${i}`);
+    }
+    const firstKey = buildSessionKey("/ws", "model", "anchor-0");
+    expect(hasResumeChatId(firstKey, "prefix-0")).toBe(true);
+
+    const extraKey = buildSessionKey("/ws", "model", "anchor-64");
+    recordResumeChatId(extraKey, "chat-64", "prefix-64");
+
+    const secondKey = buildSessionKey("/ws", "model", "anchor-1");
+    expect(hasResumeChatId(firstKey, "prefix-0")).toBe(false);
+    expect(hasResumeChatId(secondKey, "prefix-1")).toBe(true);
+    expect(getResumeChatId(extraKey, "prefix-64")).toBe("chat-64");
+  });
+
+  it("hasResumeChatId returns false for prefix and fingerprint mismatches without evicting", () => {
+    const key = buildSessionKey("/workspace", "gpt-5", "abc123");
+    recordResumeChatId(key, "chat-uuid-1", "hello", "fp-v1");
+    expect(hasResumeChatId(key, "different")).toBe(false);
+    expect(hasResumeChatId(key, "hello", "fp-v2")).toBe(false);
+    expect(getResumeChatId(key, "hello", "fp-v1")).toBe("chat-uuid-1");
+  });
+
+  it("hashForLog hashes strings and coerces non-strings deterministically", () => {
+    const hashA = hashForLog("sensitive text");
+    const hashB = hashForLog("sensitive text");
+    expect(typeof hashA).toBe("string");
+    expect(hashA.length).toBe(32);
+    expect(hashA).toBe(hashB);
+    expect(hashForLog(null)).toBe(hashForLog(""));
+    expect(hashForLog(new Error("boom"))).toBe(hashForLog(String(new Error("boom"))));
   });
 });

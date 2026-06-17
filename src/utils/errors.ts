@@ -111,21 +111,82 @@ export function isRecoverableError(error: ParsedError): boolean {
 
 /** Resume-specific failure signatures from cursor-agent stderr/stdout. */
 const RESUME_FAILURE_PATTERNS = [
-  /session\s+(?:not\s+found|expired|invalid)/i,
-  /chat\s+(?:not\s+found|expired|invalid)/i,
-  /resume\s+(?:failed|error|invalid)/i,
-  /no\s+active\s+session/i,
+  /\bsession\s+(?:has\s+(?:been\s+)?|is\s+|was\s+)?(?:not\s+found|expired|deleted|missing|no\s+longer\s+exists)/i,
+  /\bchat\s+(?:has\s+(?:been\s+)?|is\s+|was\s+)?(?:not\s+found|expired|deleted|missing|no\s+longer\s+exists)/i,
+  /\bconversation\s+(?:has\s+(?:been\s+)?|is\s+|was\s+)?(?:not\s+found|expired|deleted|missing|no\s+longer\s+exists)/i,
+  /\bthread\s+(?:has\s+(?:been\s+)?|is\s+|was\s+)?(?:not\s+found|expired|deleted|missing|no\s+longer\s+exists)/i,
+  /\bresume\s+(?:failed|error|invalid|aborted)(?:\s+(?:session|chat|conversation|thread))?/i,
+  /\bfailed\s+to\s+resume(?:\s+(?:session|chat|conversation|thread))?/i,
+  /\bcould\s+not\s+resume(?:\s+(?:session|chat|conversation|thread))?/i,
+  /\bno\s+active\s+session/i,
+  /\bno\s+such\s+session/i,
+  /\bno\s+such\s+chat/i,
+  /\binvalid\s+(?:session|chat|conversation|thread)(?:\s+id)?/i,
+  /\b(?:session|chat|conversation|thread)\s+invalid(?:\s+id)?/i,
+  /\b(?:session|chat|conversation|thread)\s+id\s+(?:is\s+)?(?:invalid|not\s+found|expired|missing)/i,
+  /\b(?:session|chat|conversation|thread)\s+(?:isn['’]t|wasn['’]t)\s+found/i,
+  /\b(?:session|chat|conversation|thread)\s+(?:can(?:not|\s+not)|could\s+not)\s+(?:be\s+)?resumed/i,
+  /\bunable\s+to\s+resume\b/i,
+  /\bcan(?:not|\s+not)\s+resume\b/i,
 ];
+
+/** Continuations that turn a session-gone phrase into an auth/validation/network error. */
+const TRANSIENT_CONTINUATION_PATTERN = /^\s*[:;]?\s*(?:token|credential|credentials|auth|secret|password|format|network|quota|usage|limit|api|key|request(?:_|-|\s+)?id?|due\s+to\s+(?:network|auth|quota)|because\s+of\s+(?:network|auth|quota)|caused\s+by\s+(?:network|auth|quota))/i;
+
+/** Words in a continuation clause that indicate a transient infrastructure failure. */
+const TRANSIENT_CAUSE_WORDS =
+  /\b(?:auth(?:enticat(?:e|ion|ed))?|re-auth(?:enticate)?|token(?:\s+rotation)?|credential|password|secret|network|connection|internet|offline|quota|usage(?:\s+limit)?|api[\s-]?key|fetch\s+failed|econnrefused|timeout|timed\s+out)\b/i;
+
+/** Session-specific causes that should still count as resume failures. */
+const SESSION_SPECIFIC_CAUSE_WORDS =
+  /\b(?:inactiv(?:ity|e)|idle|policy|retention|archiv(?:e|ed)|purged|deleted|removed|expired)\b/i;
 
 /**
  * Decide whether a cursor-agent failure is specific to the resumed session.
  * Transient errors (network, auth, OOM, signal kills) should not evict a
  * valid chat ID; only failures that indicate the session itself is gone.
  */
-export function isResumeSpecificFailure(stderr: string): boolean {
+function isTransientContinuation(tail: string): boolean {
+  const trimmed = tail.trim();
+  if (!trimmed) return false;
+
+  const stripped = trimmed.replace(/^[\s:;,.]+/, "");
+
+  const causalMatch = stripped.match(/^(?:because of|due to)\s+(.+)/i);
+  if (causalMatch) {
+    const cause = causalMatch[1];
+    if (SESSION_SPECIFIC_CAUSE_WORDS.test(cause) && !TRANSIENT_CAUSE_WORDS.test(cause)) {
+      return false;
+    }
+    if (TRANSIENT_CAUSE_WORDS.test(cause)) {
+      return true;
+    }
+  }
+
+  const firstSegment = stripped.split(/[,;]/)[0]?.trim() ?? "";
+  if (firstSegment && TRANSIENT_CAUSE_WORDS.test(firstSegment)) {
+    return true;
+  }
+
+  if (TRANSIENT_CAUSE_WORDS.test(stripped)) {
+    return true;
+  }
+
+  return TRANSIENT_CONTINUATION_PATTERN.test(tail);
+}
+
+export function isResumeSpecificFailure(stderr: unknown): boolean {
   const text = typeof stderr === "string" ? stderr : String(stderr ?? "");
   const clean = stripAnsi(text);
-  return RESUME_FAILURE_PATTERNS.some((pattern) => pattern.test(clean));
+  for (const pattern of RESUME_FAILURE_PATTERNS) {
+    const match = clean.match(pattern);
+    if (!match) continue;
+    const tail = clean.slice(match.index! + match[0].length);
+    if (!isTransientContinuation(tail)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

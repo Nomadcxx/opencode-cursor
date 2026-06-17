@@ -144,24 +144,56 @@ describe("stripAnsi", () => {
 describe("isResumeSpecificFailure", () => {
   it("detects session-not-found failures", () => {
     expect(isResumeSpecificFailure("session not found")).toBe(true);
+    expect(isResumeSpecificFailure("session not found?")).toBe(true);
     expect(isResumeSpecificFailure("session expired")).toBe(true);
     expect(isResumeSpecificFailure("session invalid")).toBe(true);
+    expect(isResumeSpecificFailure("session deleted")).toBe(true);
+    expect(isResumeSpecificFailure("session no longer exists")).toBe(true);
   });
 
-  it("detects chat expired failures", () => {
+  it("detects chat/conversation/thread failures", () => {
     expect(isResumeSpecificFailure("chat expired")).toBe(true);
     expect(isResumeSpecificFailure("chat not found")).toBe(true);
     expect(isResumeSpecificFailure("chat invalid")).toBe(true);
+    expect(isResumeSpecificFailure("conversation not found")).toBe(true);
+    expect(isResumeSpecificFailure("thread missing")).toBe(true);
   });
 
   it("detects resume failed failures", () => {
     expect(isResumeSpecificFailure("resume failed")).toBe(true);
+    expect(isResumeSpecificFailure("resume failed?")).toBe(true);
     expect(isResumeSpecificFailure("resume error")).toBe(true);
     expect(isResumeSpecificFailure("resume invalid")).toBe(true);
+    expect(isResumeSpecificFailure("could not resume")).toBe(true);
+    expect(isResumeSpecificFailure("could not resume session")).toBe(true);
+    expect(isResumeSpecificFailure("failed to resume")).toBe(true);
+    expect(isResumeSpecificFailure("failed to resume session")).toBe(true);
+    expect(isResumeSpecificFailure("session cannot be resumed")).toBe(true);
+    expect(isResumeSpecificFailure("unable to resume")).toBe(true);
+    expect(isResumeSpecificFailure("cannot resume")).toBe(true);
+    expect(isResumeSpecificFailure("can not resume")).toBe(true);
   });
 
-  it("detects no active session failures", () => {
+  it("detects invalid session id failures", () => {
+    expect(isResumeSpecificFailure("invalid session id")).toBe(true);
+    expect(isResumeSpecificFailure("session id invalid")).toBe(true);
+    expect(isResumeSpecificFailure("session id is invalid")).toBe(true);
+    expect(isResumeSpecificFailure("invalid chat")).toBe(true);
+    expect(isResumeSpecificFailure("no such session")).toBe(true);
     expect(isResumeSpecificFailure("no active session")).toBe(true);
+  });
+
+  it("detects helper-verb variations", () => {
+    expect(isResumeSpecificFailure("session has expired")).toBe(true);
+    expect(isResumeSpecificFailure("session was not found")).toBe(true);
+    expect(isResumeSpecificFailure("chat is missing")).toBe(true);
+    expect(isResumeSpecificFailure("conversation has been deleted")).toBe(true);
+    expect(isResumeSpecificFailure("session isn't found")).toBe(true);
+  });
+
+  it("handles punctuation and closers around session-gone phrases", () => {
+    expect(isResumeSpecificFailure("session not found)")).toBe(true);
+    expect(isResumeSpecificFailure('session not found"')).toBe(true);
   });
 
   it("is case insensitive", () => {
@@ -183,13 +215,56 @@ describe("isResumeSpecificFailure", () => {
     expect(isResumeSpecificFailure("timeout")).toBe(false);
   });
 
+  it("does not flag words that merely contain session/resume/chat", () => {
+    expect(isResumeSpecificFailure("presumed failure")).toBe(false);
+    expect(isResumeSpecificFailure("chatting is not found")).toBe(false);
+    expect(isResumeSpecificFailure("sessioning error")).toBe(false);
+  });
+
+  it("does not flag auth/validation continuations after session phrases", () => {
+    expect(isResumeSpecificFailure("session has expired token")).toBe(false);
+    expect(isResumeSpecificFailure("session wasn't deleted")).toBe(false);
+    expect(isResumeSpecificFailure("session isn't missing")).toBe(false);
+    expect(isResumeSpecificFailure("session id invalid token")).toBe(false);
+    expect(isResumeSpecificFailure("resume failed due to network error")).toBe(false);
+    expect(isResumeSpecificFailure("resume failed: network error")).toBe(false);
+    expect(isResumeSpecificFailure("failed to resume: network error")).toBe(false);
+    expect(isResumeSpecificFailure("could not resume due to network error")).toBe(false);
+    expect(isResumeSpecificFailure("could not resume because of network error")).toBe(false);
+    expect(isResumeSpecificFailure("session expired; auth required")).toBe(false);
+    expect(isResumeSpecificFailure("resume timed out")).toBe(false);
+    expect(isResumeSpecificFailure("session has expired because of an auth problem")).toBe(false);
+    expect(isResumeSpecificFailure("resume failed due to token rotation")).toBe(false);
+    expect(isResumeSpecificFailure("session not found; please re-authenticate")).toBe(false);
+    expect(isResumeSpecificFailure("chat not found. The network may be down.")).toBe(false);
+    expect(isResumeSpecificFailure("session not found, auth failed")).toBe(false);
+  });
+
+  it("still flags session-gone messages with natural continuations", () => {
+    expect(isResumeSpecificFailure("session not found in our system")).toBe(true);
+    expect(isResumeSpecificFailure("session has expired due to inactivity")).toBe(true);
+  });
+
   it("handles non-string input safely", () => {
-    expect(isResumeSpecificFailure(null as any)).toBe(false);
-    expect(isResumeSpecificFailure(undefined as any)).toBe(false);
-    expect(isResumeSpecificFailure(42 as any)).toBe(false);
+    expect(isResumeSpecificFailure(null)).toBe(false);
+    expect(isResumeSpecificFailure(undefined)).toBe(false);
+    expect(isResumeSpecificFailure(42)).toBe(false);
+  });
+
+  it("does not flag invalid-session-style auth/validation phrases", () => {
+    expect(isResumeSpecificFailure("invalid session token")).toBe(false);
+    expect(isResumeSpecificFailure("session invalid token")).toBe(false);
+    expect(isResumeSpecificFailure("invalid chat format")).toBe(false);
+    expect(isResumeSpecificFailure("chat invalid format")).toBe(false);
   });
 
   it("does not flag empty strings", () => {
     expect(isResumeSpecificFailure("")).toBe(false);
+  });
+
+  it("handles Error objects and ANSI-wrapped strings", () => {
+    expect(isResumeSpecificFailure(new Error("session not found"))).toBe(true);
+    expect(isResumeSpecificFailure("\x1b[31msession not found\x1b[0m")).toBe(true);
+    expect(isResumeSpecificFailure(new Error("fetch failed"))).toBe(false);
   });
 });
