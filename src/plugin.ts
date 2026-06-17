@@ -462,6 +462,20 @@ export function maybeEvictResumeChatId(
   return true;
 }
 
+function isSuccessfulResultEvent(event: StreamJsonEvent): boolean {
+  return isResult(event) && event.is_error !== true && event.subtype !== "error";
+}
+
+function shouldTreatCursorAgentFailureAsDiagnostic(
+  errSource: string,
+  sawSuccessfulStreamOutput: boolean,
+): boolean {
+  if (!sawSuccessfulStreamOutput) {
+    return false;
+  }
+  return parseAgentError(errSource).type === "quota";
+}
+
 /**
  * Warn once per request when session resume is enabled but cursor-agent did
  * not emit a usable `session_id`. Keeps the warning logic in one place across
@@ -1337,6 +1351,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         async start(controller) {
           let streamTerminated = false;
           let firstTokenReceived = false;
+          let sawSuccessfulStreamOutput = false;
           let usage: OpenAiUsage | undefined;
           try {
             const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
@@ -1403,6 +1418,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
                 if (isResult(event)) {
                   usage = extractOpenAiUsageFromResult(event) ?? usage;
+                  if (isSuccessfulResultEvent(event)) {
+                    sawSuccessfulStreamOutput = true;
+                  }
                 }
 
                 if (event.type === "tool_call") {
@@ -1456,7 +1474,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   }
                 }
 
-                for (const sse of converter.handleEvent(event)) {
+                const sseChunks = converter.handleEvent(event);
+                if (sseChunks.length > 0 && (isAssistantText(event) || isThinking(event))) {
+                  sawSuccessfulStreamOutput = true;
+                }
+                for (const sse of sseChunks) {
                   controller.enqueue(encoder.encode(sse));
                 }
               }
@@ -1482,6 +1504,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               );
               if (isResult(event)) {
                 usage = extractOpenAiUsageFromResult(event) ?? usage;
+                if (isSuccessfulResultEvent(event)) {
+                  sawSuccessfulStreamOutput = true;
+                }
               }
               if (event.type === "tool_call") {
                 const result = await handleToolLoopEventWithFallback({
@@ -1531,7 +1556,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   continue;
                 }
               }
-              for (const sse of converter.handleEvent(event)) {
+              const sseChunks = converter.handleEvent(event);
+              if (sseChunks.length > 0 && (isAssistantText(event) || isThinking(event))) {
+                sawSuccessfulStreamOutput = true;
+              }
+              for (const sse of sseChunks) {
                 controller.enqueue(encoder.encode(sse));
               }
             }
@@ -1544,24 +1573,31 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               const stderrText = await new Response(child.stderr).text();
               const errSource = (stderrText || "").trim()
                 || `cursor-agent exited with code ${String(exitCode ?? "unknown")} and no output`;
-              // Only evict the cached chat ID when the failure indicates the resumed
-              // session itself is gone. Transient errors (network/auth/OOM/signals)
-              // should not discard a valid resume ID.
-              maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
-                code: exitCode,
-                failureTextHash: hashForLog(errSource),
-              });
-              const parsed = parseAgentError(errSource);
-              const msg = formatErrorForUser(parsed);
-              log.error("cursor-cli streaming failed", {
-                type: parsed.type,
-                code: exitCode,
-                failureTextHash: hashForLog(parsed.message),
-              });
-              const errChunk = createChatCompletionChunk(id, created, model, msg, true);
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
-              controller.enqueue(encoder.encode(formatSseDone()));
-              return;
+              if (shouldTreatCursorAgentFailureAsDiagnostic(errSource, sawSuccessfulStreamOutput)) {
+                log.warn("cursor-agent exited non-zero after successful streamed output; treating quota text as diagnostic", {
+                  code: exitCode,
+                  failureTextHash: hashForLog(errSource),
+                });
+              } else {
+                // Only evict the cached chat ID when the failure indicates the resumed
+                // session itself is gone. Transient errors (network/auth/OOM/signals)
+                // should not discard a valid resume ID.
+                maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+                  code: exitCode,
+                  failureTextHash: hashForLog(errSource),
+                });
+                const parsed = parseAgentError(errSource);
+                const msg = formatErrorForUser(parsed);
+                log.error("cursor-cli streaming failed", {
+                  type: parsed.type,
+                  code: exitCode,
+                  failureTextHash: hashForLog(parsed.message),
+                });
+                const errChunk = createChatCompletionChunk(id, created, model, msg, true);
+                controller.enqueue(encoder.encode(`data: ${JSON.stringify(errChunk)}\n\n`));
+                controller.enqueue(encoder.encode(formatSseDone()));
+                return;
+              }
             }
 
             log.debug("cursor-agent completed (bun stream)", {
@@ -1889,6 +1925,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         const stderrChunks: Buffer[] = [];
         let streamTerminated = false;
         let firstTokenReceived = false;
+        let sawSuccessfulStreamOutput = false;
         let usage: OpenAiUsage | undefined;
         child.stderr.on("data", (chunk) => {
           stderrChunks.push(Buffer.from(chunk));
@@ -1971,6 +2008,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
             if (isResult(event)) {
               usage = extractOpenAiUsageFromResult(event) ?? usage;
+              if (isSuccessfulResultEvent(event)) {
+                sawSuccessfulStreamOutput = true;
+              }
             }
 
             if (event.type === "tool_call") {
@@ -2019,7 +2059,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             }
 
             if (streamTerminated || res.writableEnded) break;
-            for (const sse of converter.handleEvent(event)) {
+            const sseChunks = converter.handleEvent(event);
+            if (sseChunks.length > 0 && (isAssistantText(event) || isThinking(event))) {
+              sawSuccessfulStreamOutput = true;
+            }
+            for (const sse of sseChunks) {
               res.write(sse);
             }
           }
@@ -2052,21 +2096,28 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 const errSource =
                   stderrText
                   || `cursor-agent exited with code ${String(childExitCode ?? "unknown")} and no output`;
-                // Only evict the cached chat ID when the failure indicates the resumed
-                // session itself is gone. Transient errors (network/auth/OOM/signals)
-                // should not discard a valid resume ID.
-                maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
-                  code: childExitCode,
-                  failureTextHash: hashForLog(errSource),
-                });
-                const parsed = parseAgentError(errSource);
-                const msg = formatErrorForUser(parsed);
-                const errChunk = createChatCompletionChunk(id, created, model, msg, true);
-                res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
-                res.write(formatSseDone());
-                streamTerminated = true;
-                res.end();
-                return;
+                if (shouldTreatCursorAgentFailureAsDiagnostic(errSource, sawSuccessfulStreamOutput)) {
+                  log.warn("cursor-agent exited non-zero after successful streamed output; treating quota text as diagnostic", {
+                    code: childExitCode,
+                    failureTextHash: hashForLog(errSource),
+                  });
+                } else {
+                  // Only evict the cached chat ID when the failure indicates the resumed
+                  // session itself is gone. Transient errors (network/auth/OOM/signals)
+                  // should not discard a valid resume ID.
+                  maybeEvictResumeChatId(errSource, resumeChatId, sessionResumeKey, {
+                    code: childExitCode,
+                    failureTextHash: hashForLog(errSource),
+                  });
+                  const parsed = parseAgentError(errSource);
+                  const msg = formatErrorForUser(parsed);
+                  const errChunk = createChatCompletionChunk(id, created, model, msg, true);
+                  res.write(`data: ${JSON.stringify(errChunk)}\n\n`);
+                  res.write(formatSseDone());
+                  streamTerminated = true;
+                  res.end();
+                  return;
+                }
               }
 
               warnIfResumeNotCaptured(

@@ -216,6 +216,12 @@ process.stdin.on("end", () => {
   for (const event of events) {
     process.stdout.write(JSON.stringify(event) + "\\n");
   }
+
+  if (scenario === "assistant-text-quota-exit") {
+    process.stderr.write("You've hit your Cursor usage limit\\n");
+    process.exitCode = 1;
+    return;
+  }
 });
 `;
 
@@ -585,6 +591,31 @@ describe("OpenCode-owned tool loop integration", () => {
 
     const promptText = readFileSync(promptFile, "utf8");
     expect(promptText).toContain("TOOL_RESULT (call_id: c1): {\"content\":\"file contents here\"}");
+  });
+
+  it("does not append quota error after successful streamed output", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-text-quota-exit";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      messages: [{ role: "user", content: "Say hello" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+
+    expect(allContent).toContain("The file contains...");
+    expect(allContent).not.toContain("cursor-acp error");
+    expect(allContent).not.toContain("Cursor usage limit");
+    expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
   });
 
   it("normalizes provider-prefixed model ids before invoking cursor-agent", async () => {
