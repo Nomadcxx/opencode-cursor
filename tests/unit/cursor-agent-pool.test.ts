@@ -6,6 +6,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PassThrough } from "node:stream";
 import {
+  _getCursorAgentPoolSizeForTests,
   _resetCursorAgentPoolForTests,
   createCursorAgentPoolNodeChild,
   stopCursorAgentPool,
@@ -71,6 +72,7 @@ describe("cursor-agent pool: cancellation + demux", () => {
     stopCursorAgentPool();
     _resetCursorAgentPoolForTests();
     delete process.env.CURSOR_AGENT_EXECUTABLE;
+    delete process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS;
   });
 
   it("runner cancels an in-flight request and emits done promptly", async () => {
@@ -193,5 +195,20 @@ describe("cursor-agent pool: cancellation + demux", () => {
     expect(await closePromise).toBe(true);
 
     delete process.env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH;
+  });
+
+  it("evicts idle runners after the configured idle timeout", async () => {
+    process.env.CURSOR_AGENT_EXECUTABLE = mockPath;
+    process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS = "25";
+
+    const child = createCursorAgentPoolNodeChild({ model: "m", prompt: "hi", cwd: tmpdir() });
+    const first = await firstChunk(child.stdout as unknown as PassThrough, 3000);
+    expect(first?.toString("utf8")).toContain("mock-chat-1");
+    child.kill();
+    expect(await waitForEvent(child, "close", 3000)).toBe(true);
+    expect(_getCursorAgentPoolSizeForTests()).toBe(1);
+
+    const evicted = await waitFor(() => _getCursorAgentPoolSizeForTests() === 0, 1000);
+    expect(evicted).toBe(true);
   });
 });

@@ -19,10 +19,19 @@ import { extractEventJson } from "./sdk-child.js";
 const log = createLogger("cursor-agent-child");
 
 const DEFAULT_MAX_POOL_ENTRIES = 16;
+const DEFAULT_IDLE_MS = 15 * 60 * 1000;
 
 export function isAgentPoolEnabled(): boolean {
   const value = process.env.CURSOR_ACP_AGENT_POOL?.toLowerCase();
   return value === "1" || value === "true" || value === "on" || value === "yes";
+}
+
+export function parseAgentPoolIdleMs(): number {
+  const value = process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS?.trim();
+  if (value == null || value === "") return DEFAULT_IDLE_MS;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_IDLE_MS;
+  return Math.floor(parsed);
 }
 
 /** Pool key: workspace + model (null-byte separated). */
@@ -92,9 +101,11 @@ class CursorAgentPoolRunner {
   private lineBuffer = "";
   private starting: Promise<void> | null = null;
   private readonly poolKey: string;
+  private readonly onIdle: (poolKey: string) => void;
 
-  constructor(poolKey: string) {
+  constructor(poolKey: string, onIdle: (poolKey: string) => void) {
     this.poolKey = poolKey;
+    this.onIdle = onIdle;
   }
 
   async ensureRunning(): Promise<void> {
@@ -213,6 +224,7 @@ class CursorAgentPoolRunner {
           pending.controller.closeStderr();
           pending.promiseResolver(wrapped.exitCode ?? 0);
           this.pendingRequests.delete(requestId);
+          this.notifyIdleIfEmpty();
         } else if (wrapped.stderr != null) {
           const text = typeof wrapped.stderr === "string" ? wrapped.stderr : String(wrapped.stderr);
           pending.controller.enqueueStderr(new TextEncoder().encode(text));
@@ -226,6 +238,16 @@ class CursorAgentPoolRunner {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+  }
+
+  isIdle(): boolean {
+    return this.pendingRequests.size === 0;
+  }
+
+  private notifyIdleIfEmpty(): void {
+    if (this.pendingRequests.size === 0) {
+      this.onIdle(this.poolKey);
     }
   }
 
@@ -265,23 +287,62 @@ class CursorAgentPoolRunner {
 
 class CursorAgentPoolManager {
   private runners = new Map<string, CursorAgentPoolRunner>();
+  private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   getRunner(poolKey: string): CursorAgentPoolRunner {
+    this.clearIdleTimer(poolKey);
     let runner = this.runners.get(poolKey);
     if (!runner) {
       while (this.runners.size >= DEFAULT_MAX_POOL_ENTRIES) {
         const oldest = this.runners.keys().next().value;
         if (oldest === undefined) break;
+        this.clearIdleTimer(oldest);
         this.runners.get(oldest)?.kill();
         this.runners.delete(oldest);
       }
-      runner = new CursorAgentPoolRunner(poolKey);
+      runner = new CursorAgentPoolRunner(poolKey, (idlePoolKey) => {
+        this.scheduleIdleEviction(idlePoolKey);
+      });
       this.runners.set(poolKey, runner);
     }
     return runner;
   }
 
+  size(): number {
+    return this.runners.size;
+  }
+
+  private clearIdleTimer(poolKey: string): void {
+    const timer = this.idleTimers.get(poolKey);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.idleTimers.delete(poolKey);
+  }
+
+  private scheduleIdleEviction(poolKey: string): void {
+    this.clearIdleTimer(poolKey);
+    const idleMs = parseAgentPoolIdleMs();
+    if (idleMs <= 0) return;
+    const timer = setTimeout(() => {
+      this.idleTimers.delete(poolKey);
+      const runner = this.runners.get(poolKey);
+      if (!runner || !runner.isIdle()) return;
+      runner.kill();
+      this.runners.delete(poolKey);
+      log.debug("evicted idle cursor-agent runner", {
+        poolKeyHash: poolKey.slice(0, 8) + "…",
+        idleMs,
+      });
+    }, idleMs);
+    timer.unref?.();
+    this.idleTimers.set(poolKey, timer);
+  }
+
   stopAll(): void {
+    for (const timer of this.idleTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.idleTimers.clear();
     for (const runner of this.runners.values()) {
       runner.kill();
     }
@@ -293,6 +354,12 @@ const poolManager = new CursorAgentPoolManager();
 
 export function stopCursorAgentPool(): void {
   poolManager.stopAll();
+}
+
+/** @internal Testing only. */
+export function _getCursorAgentPoolSizeForTests(): number {
+  if (process.env.NODE_ENV !== "test") return 0;
+  return poolManager.size();
 }
 
 /** @internal Testing only. */
