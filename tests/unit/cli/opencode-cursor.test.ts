@@ -127,6 +127,73 @@ describe("cli/opencode-cursor status", () => {
     expect(result).toHaveProperty("provider");
     expect(result).toHaveProperty("aiSdk");
   });
+
+  it("reports the resolved default log directory", () => {
+    const originalLogDir = process.env.CURSOR_ACP_LOG_DIR;
+    delete process.env.CURSOR_ACP_LOG_DIR;
+
+    try {
+      const result = getStatusResult("/tmp/test-config.json", "/tmp/test-plugin");
+
+      expect(result.runtime.logging.dir).toBe(join(homedir(), ".opencode-cursor"));
+    } finally {
+      if (originalLogDir === undefined) {
+        delete process.env.CURSOR_ACP_LOG_DIR;
+      } else {
+        process.env.CURSOR_ACP_LOG_DIR = originalLogDir;
+      }
+    }
+  });
+
+  it("reports runtime settings that affect request performance", () => {
+    const originalEnv = {
+      CURSOR_ACP_AGENT_POOL: process.env.CURSOR_ACP_AGENT_POOL,
+      CURSOR_ACP_AGENT_POOL_IDLE_MS: process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS,
+      CURSOR_ACP_SESSION_RESUME: process.env.CURSOR_ACP_SESSION_RESUME,
+      CURSOR_ACP_BACKEND: process.env.CURSOR_ACP_BACKEND,
+      CURSOR_ACP_LOG_LEVEL: process.env.CURSOR_ACP_LOG_LEVEL,
+      CURSOR_ACP_LOG_CONSOLE: process.env.CURSOR_ACP_LOG_CONSOLE,
+      CURSOR_ACP_LOG_DIR: process.env.CURSOR_ACP_LOG_DIR,
+    };
+
+    process.env.CURSOR_ACP_AGENT_POOL = "1";
+    process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS = "0";
+    process.env.CURSOR_ACP_SESSION_RESUME = "yes";
+    process.env.CURSOR_ACP_BACKEND = "sdk";
+    process.env.CURSOR_ACP_LOG_LEVEL = "debug";
+    process.env.CURSOR_ACP_LOG_CONSOLE = "1";
+    process.env.CURSOR_ACP_LOG_DIR = "/tmp/open-cursor-logs";
+
+    try {
+      const result = getStatusResult("/tmp/test-config.json", "/tmp/test-plugin");
+
+      expect(result.runtime).toEqual({
+        backend: {
+          preference: "sdk",
+        },
+        agentPool: {
+          enabled: true,
+          idleMs: 0,
+        },
+        sessionResume: {
+          enabled: true,
+        },
+        logging: {
+          level: "debug",
+          console: true,
+          dir: "/tmp/open-cursor-logs",
+        },
+      });
+    } finally {
+      for (const [key, value] of Object.entries(originalEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
 });
 
 describe("cli/opencode-cursor path resolution", () => {

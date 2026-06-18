@@ -22,8 +22,10 @@ import {
 import { resolveCursorAgentBinary } from "../utils/binary.js";
 import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
+import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent-child.js";
 import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
+import { isSessionResumeEnabled } from "../proxy/session-resume.js";
 import type { DiscoveredModel } from "./model-discovery.js";
 
 const BRANDING_HEADER = `
@@ -64,6 +66,23 @@ type StatusResult = {
     legacyCursorAuthFile: boolean;
     sdkApiKey: boolean;
     sdkApiKeySource?: "CURSOR_API_KEY" | "provider.options.apiKey";
+  };
+  runtime: {
+    backend: {
+      preference: "auto" | "cursor-agent" | "sdk";
+    };
+    agentPool: {
+      enabled: boolean;
+      idleMs: number;
+    };
+    sessionResume: {
+      enabled: boolean;
+    };
+    logging: {
+      level: string;
+      console: boolean;
+      dir: string;
+    };
   };
 };
 
@@ -142,6 +161,26 @@ function resolveCliSdkAuthSource(config: unknown): StatusResult["auth"]["sdkApiK
     return "provider.options.apiKey";
   }
   return undefined;
+}
+
+function getRuntimeStatus(): StatusResult["runtime"] {
+  return {
+    backend: {
+      preference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference,
+    },
+    agentPool: {
+      enabled: isAgentPoolEnabled(),
+      idleMs: parseAgentPoolIdleMs(),
+    },
+    sessionResume: {
+      enabled: isSessionResumeEnabled(),
+    },
+    logging: {
+      level: process.env.CURSOR_ACP_LOG_LEVEL || "info",
+      console: process.env.CURSOR_ACP_LOG_CONSOLE === "1",
+      dir: process.env.CURSOR_ACP_LOG_DIR || join(homedir(), ".opencode-cursor"),
+    },
+  };
 }
 
 function checkSdkApiKey(config: unknown): CheckResult {
@@ -895,6 +934,7 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
       sdkApiKey: sdkApiKeySource !== undefined,
       sdkApiKeySource,
     },
+    runtime: getRuntimeStatus(),
   };
 }
 
@@ -1046,6 +1086,16 @@ function commandStatus(options: Options) {
   console.log(
     `  Cursor SDK API key: ${result.auth.sdkApiKey ? `found via ${result.auth.sdkApiKeySource}` : "not configured"}`,
   );
+
+  console.log("");
+  console.log("Runtime");
+  console.log(`  Backend preference: ${result.runtime.backend.preference}`);
+  console.log(`  Agent pool: ${result.runtime.agentPool.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Agent pool idle: ${result.runtime.agentPool.idleMs}ms`);
+  console.log(`  Session resume: ${result.runtime.sessionResume.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Log level: ${result.runtime.logging.level}`);
+  console.log(`  Console logging: ${result.runtime.logging.console ? "enabled" : "disabled"}`);
+  console.log(`  Log dir: ${result.runtime.logging.dir}`);
 }
 
 function commandDoctor(options: Options) {
