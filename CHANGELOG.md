@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.14] - 2026-06-18
+
+### Added
+- Request timing markers for runtime diagnostics.
+- Status output now shows runtime settings.
+
+### Fixed
+- Quota banners are suppressed after a successful stream.
+- Quota-exit tests now let mocked stdio flush before termination.
+
 ## [2.4.13] - 2026-06-18
 
 ### Added
