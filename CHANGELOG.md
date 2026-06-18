@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.13] - 2026-06-18
+
+### Added
+- Cursor-agent runner pool behind `CURSOR_ACP_AGENT_POOL`, including request cancellation via runner control messages.
+
+### Fixed
+- Session resume now validates branch matching, tool fingerprints, prompt anchor hashes, and stale chat IDs more defensively.
+- Runner pool lifecycle now evicts idle runners and hardens cancellation, CI registration, and log safety.
+- Issue #92 verification cleanup now uses safer test paths.
+
+## [2.4.12] - 2026-06-17
+
+### Added
+- Session resume for multi-turn cursor-agent requests.
+
+### Changed
+- Reduced per-request proxy overhead by caching tool schema blocks, reusing config path resolution, replacing synchronous file logging with a write stream, avoiding SDK demux re-stringify, and disabling Nagle on SSE sockets.
+
+### Fixed
+- `OPENCODE_CONFIG` is now respected by the `open-cursor` CLI.
+- Logger stream handling is guarded after rotation failures.
+- Tool schema cache fingerprints now include stronger request-shape details.
+- Subagent cache gating now uses a nullish check.
+
+## [2.4.11] - 2026-06-14
+
+### Fixed
+- Content edit payloads are guarded before being forwarded, avoiding unsafe malformed edit requests.
+
+## [2.4.10] - 2026-06-14
+
+### Added
+- Model refresh controls for compact model updates.
+
+### Fixed
+- Guarded stream-content edits and partial file overwrite paths so malformed Cursor edits do not accidentally replace whole files.
+
+## [2.4.9] - 2026-06-14
+
+### Fixed
+- OpenCode plugin imports now use the tool subpath expected by newer plugin packaging.
+
+## [2.4.8] - 2026-06-14
+
+### Fixed
+- Proxy health checks now time out instead of hanging indefinitely.
+- Empty `edit.old_string` values are rejected before execution.
+
+### Changed
+- README install flow and ACP/MCP roadmap documentation were streamlined.
+
+## [2.4.7] - 2026-06-12
+
 ### BREAKING
 
 - **Authentication:** API key authentication now supports three methods with priority: (1) `CURSOR_API_KEY` environment variable, (2) OpenCode auth store (`opencode auth login --provider cursor-acp`), (3) provider options in `opencode.json`. Get your API key from [cursor.com/settings](https://cursor.com/settings). Legacy OAuth flow via `cursor-agent login` is no longer supported.
@@ -23,11 +76,149 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Issue #76 (ECONNREFUSED on 127.0.0.1:32124):** the proxy failed to start because the plugin spawned the removed `cursor-agent` binary. The plugin now works without `cursor-agent` installed.
 - The system prompt no longer suggests an ambiguous `mcp` tool name; full tool names are listed explicitly, and a defensive guard logs any remaining bare `mcp` calls.
+- Local tool hooks now register `oc_*` aliases and use safe context defaults.
+- AskQuestion calls are routed to the OpenCode `question` tool.
 
 ### Known limitations
 
 - Per-request latency is bound by `@cursor/sdk` itself (`Agent.create` + `send` take ~6s even standalone). Each request uses a fresh Agent by design: conversation state stays in OpenCode and is never persisted on Cursor's side.
 - Node.js >= 20 must be available in `PATH` (the SDK runner requires it).
+
+## [2.4.6] - 2026-05-24
+
+### Changed
+- MCP tool guidance now recommends direct `mcp__<server>__<tool>` calls instead of the `mcptool` CLI, and prompts list exact MCP tool names.
+
+### Fixed
+- Malformed full-file edits are rerouted to `write` instead of being treated as partial edits.
+
+## [2.4.5] - 2026-05-20
+
+### Fixed
+- Windows binary paths are quoted before execution.
+- Mixed partial stream output is handled correctly.
+- Duplicate streaming output from `cursor-agent` is prevented.
+
+## [2.4.4] - 2026-05-11
+
+### Fixed
+- Native `grep` behavior is preserved when falling back through tool compatibility layers.
+
+## [2.4.3] - 2026-05-11
+
+### Fixed
+- Empty edit replacements are rejected to prevent destructive file rewrites.
+
+## [2.4.2] - 2026-05-10
+
+### Fixed
+- CLI startup now handles symlinked `bin` entrypoints.
+
+## [2.4.1] - 2026-05-10
+
+### Fixed
+- Command tool execution now uses the platform shell, improving Windows compatibility.
+
+## [2.4.0] - 2026-05-05
+
+### Added
+- Windows platform support, including executable path resolution, spawn compatibility, case-insensitive workspace comparisons, and Node.js fallback `grep`/`glob` implementations.
+- Cursor usage metrics forwarding.
+- Official Cursor model pricing metadata and a pricing coverage check.
+- Runtime support for Cursor model variants.
+
+### Changed
+- Refreshed the model lineup and pointed users to the sync-models CLI workflow.
+- `sync` preserves user-set model costs and trims npm package files.
+
+### Fixed
+- Workspace detection rejects `/` as a Cursor workspace and falls back to `$HOME`.
+- Final thinking snapshots are deduplicated and final thinking text is replaced for parity with assistant messages.
+- `z.record()` usage is compatible with Zod v4.
+- Windows docs and provider tests were corrected.
+
+## [2.3.20] - 2026-03-17
+
+### Added
+- Task tool subtype values are injected into system messages so Cursor emits valid task calls.
+- Available task execution targets can now be listed from config.
+
+### Changed
+- Task tool loop-guard handling now uses a higher exploration threshold and soft-blocks on first trigger instead of killing the stream immediately.
+
+### Fixed
+- Regenerated a complete `package-lock.json`.
+
+## [2.3.18] - 2026-03-16
+
+### Fixed
+- `@opencode-ai/plugin` and `zod` are externalized to prevent bundled Zod v4 class conflicts.
+
+## [2.3.17] - 2026-03-11
+
+### Fixed
+- Bash tool execution now uses `spawn()`, correct timeout units, and proper non-zero exit handling.
+
+## [2.3.16] - 2026-03-11
+
+### Added
+- MCP tool bridge with `mcptool` CLI for Shell-based MCP tool execution.
+
+### Changed
+- README now documents the MCP tool bridge and updates the roadmap and architecture diagram.
+
+## [2.3.15] - 2026-03-10
+
+### Added
+- Model list auto-refresh at plugin startup.
+
+## [2.3.14] - 2026-02-27
+
+### Fixed
+- Partial streaming detection now only sets the partial-output flag when the partial has content.
+
+## [2.3.13] - 2026-02-27
+
+### Fixed
+- `StreamJsonAssistantEvent` now includes `timestamp_ms` without relying on `as any` casts.
+
+## [2.3.12] - 2026-02-27
+
+### Fixed
+- Cursor-agent partial delta events no longer produce duplicated responses.
+
+## [2.3.11] - 2026-02-25
+
+### Fixed
+- `DeltaTracker` no longer duplicates output when accumulated prefixes drift.
+
+## [2.3.10] - 2026-02-18
+
+### Fixed
+- `webfetch` is classified as an exploration tool for loop-guard handling.
+
+## [2.3.9] - 2026-02-18
+
+### Fixed
+- `bash` and `shell` are classified as exploration tools for loop-guard fingerprinting.
+
+## [2.3.8] - 2026-02-17
+
+### Fixed
+- Success-path loop-guard tests now account for the exploration tools multiplier.
+
+## [2.3.7] - 2026-02-17
+
+### Fixed
+- Exploration tool multiplier is applied to successful tool-call loop-guard paths.
+
+## [2.3.6] - 2026-02-17
+
+### Added
+- Discovered pass-through tools are treated as known-success tools for loop-guard accounting.
+
+### Fixed
+- Exploration tools are exempt from coarse fingerprint tracking to avoid false loop detections.
 
 ## [2.3.5] - 2026-02-17
 
