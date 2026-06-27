@@ -45,6 +45,37 @@ function buildEditWriteSchemaMap(writeUsesFilePath = false): Map<string, unknown
   ]);
 }
 
+function buildOpencodeEditWriteSchemaMap(): Map<string, unknown> {
+  return new Map([
+    [
+      "edit",
+      {
+        type: "object",
+        properties: {
+          filePath: { type: "string" },
+          oldString: { type: "string" },
+          newString: { type: "string" },
+          replaceAll: { type: "boolean" },
+        },
+        required: ["filePath", "oldString", "newString"],
+        additionalProperties: false,
+      },
+    ],
+    [
+      "write",
+      {
+        type: "object",
+        properties: {
+          filePath: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["filePath", "content"],
+        additionalProperties: false,
+      },
+    ],
+  ]);
+}
+
 function buildQuestionSchemaMap(): Map<string, unknown> {
   return new Map([
     [
@@ -755,6 +786,28 @@ describe("tool schema compatibility", () => {
       const args = JSON.parse(rerouted?.function.arguments ?? "{}");
       expect(args.filePath).toBe("/tmp/x");
       expect(args.content).toBe("body");
+      expect(args.path).toBeUndefined();
+    });
+
+    it("tryRerouteEditToWrite handles opencode path plus streamContent edit payloads", () => {
+      const toolSchemaMap = buildOpencodeEditWriteSchemaMap();
+      const call = editToolCall({
+        path: "/tmp/x",
+        streamContent: "49\ntest\n51",
+      });
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["edit", "write"]),
+        toolSchemaMap,
+      );
+
+      expect(compat.validation.missing).toEqual(["oldString"]);
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("49\ntest\n51");
       expect(args.path).toBeUndefined();
     });
 

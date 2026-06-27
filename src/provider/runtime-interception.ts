@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "fs";
 import type { ToolUpdate, ToolMapper } from "../acp/tools.js";
 import { extractOpenAiToolCall, type OpenAiToolCall, type ToolCallExtractionResult } from "../proxy/tool-loop.js";
 import type { StreamJsonToolCallEvent } from "../streaming/types.js";
@@ -6,6 +7,7 @@ import { createLogger } from "../utils/logger.js";
 import {
   applyToolSchemaCompat,
   tryRerouteEditToWrite,
+  type ToolSchemaCompatResult,
   type ToolSchemaValidationResult,
 } from "./tool-schema-compat.js";
 import type { ToolLoopGuard } from "./tool-loop-guard.js";
@@ -408,6 +410,24 @@ export async function handleToolLoopEventV1(
       toolSchemaMap,
     );
     if (reroutedWrite) {
+      const suspiciousOverwrite = detectSuspiciousStreamContentWrite(compat, reroutedWrite);
+      if (suspiciousOverwrite) {
+        const hintChunk = createNonFatalSchemaValidationHintChunk(
+          responseMeta,
+          normalizedToolCall,
+          compat.validation,
+        );
+        log.debug("Skipping suspicious streamContent edit-to-write reroute", {
+          filePath: suspiciousOverwrite.filePath,
+          existingLines: suspiciousOverwrite.existingLines,
+          nextLines: suspiciousOverwrite.nextLines,
+        });
+        await onToolResult(hintChunk);
+        return {
+          intercepted: false,
+          skipConverter: true,
+        };
+      }
       log.debug("Rerouting malformed edit call to write", {
         missing: compat.validation.missing,
         typeErrors: compat.validation.typeErrors,
@@ -681,7 +701,12 @@ function shouldEmitNonFatalSchemaValidationHint(
     return false;
   }
   const missing = new Set(validation.missing);
-  return missing.has("old_string") || missing.has("new_string") || missing.has("path");
+  return missing.has("old_string")
+    || missing.has("oldString")
+    || missing.has("new_string")
+    || missing.has("newString")
+    || missing.has("path")
+    || missing.has("filePath");
 }
 
 function shouldTerminateOnSchemaValidation(
@@ -695,6 +720,70 @@ function shouldTerminateOnSchemaValidation(
     return true;
   }
   return false;
+}
+
+function detectSuspiciousStreamContentWrite(
+  compat: ToolSchemaCompatResult,
+  reroutedWrite: OpenAiToolCall,
+): { filePath: string; existingLines: number; nextLines: number } | null {
+  if (!hasStreamContentArg(compat.originalArgs)) {
+    return null;
+  }
+
+  let args: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(reroutedWrite.function.arguments);
+    if (!isRecord(parsed)) {
+      return null;
+    }
+    args = parsed;
+  } catch {
+    return null;
+  }
+
+  const filePath = typeof args.path === "string"
+    ? args.path
+    : typeof args.filePath === "string"
+      ? args.filePath
+      : null;
+  const content = typeof args.content === "string"
+    ? args.content
+    : typeof args.fileText === "string"
+      ? args.fileText
+      : null;
+  if (!filePath || content === null || !existsSync(filePath)) {
+    return null;
+  }
+
+  const existing = readFileSync(filePath, "utf-8");
+  if (existing.length === 0) {
+    return null;
+  }
+
+  const existingLines = countLogicalLines(existing);
+  const nextLines = countLogicalLines(content);
+  if (existingLines < 5) {
+    return null;
+  }
+
+  const lineShrink = nextLines <= Math.max(3, Math.floor(existingLines * 0.1));
+  const byteShrink = content.length <= Math.max(120, Math.floor(existing.length * 0.1));
+  return lineShrink && byteShrink ? { filePath, existingLines, nextLines } : null;
+}
+
+function hasStreamContentArg(args: Record<string, unknown>): boolean {
+  return Object.keys(args).some((key) => key.toLowerCase().replace(/[^a-z0-9]/g, "") === "streamcontent");
+}
+
+function countLogicalLines(value: string): number {
+  if (value.length === 0) {
+    return 0;
+  }
+  const withoutTrailingNewline = value.endsWith("\n") ? value.slice(0, -1) : value;
+  if (withoutTrailingNewline.length === 0) {
+    return 1;
+  }
+  return withoutTrailingNewline.split("\n").length;
 }
 
 function createNonFatalSchemaValidationHintChunk(

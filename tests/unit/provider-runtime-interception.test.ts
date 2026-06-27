@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { OpenAiToolCall } from "../../src/proxy/tool-loop";
 import { createProviderBoundary } from "../../src/provider/boundary";
 import { createToolLoopGuard } from "../../src/provider/tool-loop-guard";
@@ -444,6 +447,79 @@ describe("provider runtime interception fallback", () => {
     expect(args.filePath).toBe("/tmp/project/test.txt");
     expect(args.content).toBe("full rewrite");
     expect(args.path).toBeUndefined();
+  });
+
+  it("reroutes opencode path+streamContent edit payloads to write in v1", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_path_stream_content",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: "/tmp/project/test.txt",
+                streamContent: "49\ntest\n51",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("write");
+    const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
+    expect(args.filePath).toBe("/tmp/project/test.txt");
+    expect(args.content).toBe("49\ntest\n51");
+    expect(args.path).toBeUndefined();
+  });
+
+  it("skips suspicious streamContent write reroutes that would shrink an existing file", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "runtime-stream-content-shrink-"));
+    const target = join(projectDir, "test.txt");
+    writeFileSync(target, Array.from({ length: 100 }, (_, index) => String(index + 1)).join("\n") + "\n");
+    const toolResults: any[] = [];
+    let interceptedCount = 0;
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_path_stream_content_shrink",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: target,
+                streamContent: "49\ntest\n51",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+        onInterceptedToolCall: async () => {
+          interceptedCount += 1;
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    expect(interceptedCount).toBe(0);
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]?.choices?.[0]?.delta?.content).toContain("Skipped malformed tool call");
+    expect(readFileSync(target, "utf-8").split("\n").slice(47, 52)).toEqual(["48", "49", "50", "51", "52"]);
   });
 
   it("reroutes path+content edit missing old_string to write in legacy", async () => {

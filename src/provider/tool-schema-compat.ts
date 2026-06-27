@@ -363,6 +363,32 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: 
   const schemaProperties = getSchemaPropertyNames(schema);
   const newKey = schemaProperties.has("newString") ? "newString" : "new_string";
   const oldKey = schemaProperties.has("oldString") ? "oldString" : "old_string";
+
+  if (
+    schemaProperties.has("filePath")
+    && repaired.filePath === undefined
+    && typeof repaired.path === "string"
+  ) {
+    repaired.filePath = repaired.path;
+    delete repaired.path;
+  }
+  if (
+    oldKey === "oldString"
+    && repaired.oldString === undefined
+    && typeof repaired.old_string === "string"
+  ) {
+    repaired.oldString = repaired.old_string;
+    delete repaired.old_string;
+  }
+  if (
+    newKey === "newString"
+    && repaired.newString === undefined
+    && typeof repaired.new_string === "string"
+  ) {
+    repaired.newString = repaired.new_string;
+    delete repaired.new_string;
+  }
+
   const hasStringNew = typeof repaired[newKey] === "string";
   const hasStringOld = typeof repaired[oldKey] === "string";
 
