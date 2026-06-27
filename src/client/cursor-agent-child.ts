@@ -15,7 +15,7 @@ import { dirname, resolve } from "node:path";
 import { createLogger } from "../utils/logger.js";
 import { resolveCursorAgentBinary, resolveCursorAgentBinaryStrict } from "../utils/binary.js";
 import { BinaryNotFoundError } from "../utils/errors.js";
-import { extractEventJson, createSdkNodeChild } from "./sdk-child.js";
+import { extractEventJson, createSdkNodeChild, SdkNodeChild } from "./sdk-child.js";
 
 const log = createLogger("cursor-agent-child");
 
@@ -398,10 +398,15 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
   private runner: CursorAgentPoolRunner | null = null;
   private sdkChild: ReturnType<typeof createSdkNodeChild> | null = null;
   private readonly sdkApiKey: string | undefined;
+  private readonly createSdkChildFn: ((options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild) | undefined;
 
-  constructor(sdkApiKey?: string) {
+  constructor(
+    sdkApiKey?: string,
+    createSdkChild?: (options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild,
+  ) {
     super();
     this.sdkApiKey = sdkApiKey;
+    this.createSdkChildFn = createSdkChild;
   }
 
   spawn(options: AgentPoolRequest & { poolKey: string }): void {
@@ -422,7 +427,8 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
           );
         }
         try {
-          const sdkChild = createSdkNodeChild({
+          const sdkChildFactory = this.createSdkChildFn ?? createSdkNodeChild;
+          const sdkChild = sdkChildFactory({
             apiKey: this.sdkApiKey,
             model: options.model,
             prompt: options.prompt,
@@ -442,9 +448,13 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
             this.emit("close", code);
           });
           sdkChild.on("error", (err: Error) => {
-            throw new Error(
+            const combinedErr = new Error(
               `Pool binary unavailable (${runner.attemptedPath}); SDK fallback also failed: ${err.message}`,
             );
+            this.emit("error", combinedErr);
+            this.stderr?.end?.();
+            this.stdout?.end?.();
+            this.emit("close", 1);
           });
 
           log.debug("cursor-agent pool fallback to SDK runner", {
@@ -529,9 +539,10 @@ export function createCursorAgentPoolNodeChild(options: {
   resumeChatId?: string;
   force?: boolean;
   sdkApiKey?: string;
+  createSdkChild?: (options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild;
 }): CursorAgentPoolNodeChild {
   const poolKey = buildAgentPoolKey(options.cwd, options.model);
-  const child = new CursorAgentPoolNodeChild(options.sdkApiKey);
+  const child = new CursorAgentPoolNodeChild(options.sdkApiKey, options.createSdkChild);
   child.spawn({ ...options, poolKey });
   return child;
 }
