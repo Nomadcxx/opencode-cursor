@@ -2778,6 +2778,13 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
 
     async "experimental.chat.system.transform"(input: any, output: { system: string[] }) {
       if (!toolsEnabled) return;
+      const boundaryContext = createBoundaryRuntimeContext("experimental.chat.system.transform");
+      const providerMatch = boundaryContext.run("matchesProvider", (boundary) =>
+        boundary.matchesProvider(input.model),
+      );
+      if (!providerMatch) {
+        return;
+      }
       const subagentNames = readSubagentNames();
       const systemMessage = buildAvailableToolsSystemMessage(
         lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries,
