@@ -66,7 +66,7 @@ import { LocalExecutor } from "./tools/executors/local.js";
 import { SdkExecutor } from "./tools/executors/sdk.js";
 import { McpExecutor } from "./tools/executors/mcp.js";
 import { executeWithChain } from "./tools/core/executor.js";
-import { registerDefaultTools } from "./tools/defaults.js";
+import { WRITE_TOOL_TARGETED_EDIT_CONTRACT, registerDefaultTools } from "./tools/defaults.js";
 import type { IToolExecutor } from "./tools/core/types.js";
 import {
   createProviderBoundary,
@@ -817,13 +817,63 @@ const {
   FORWARD_TOOL_CALLS,
   EMIT_TOOL_UPDATES,
 );
-
 export function resolveChatParamTools(
   mode: ToolLoopMode,
   existingTools: unknown,
   refreshedTools: Array<any>,
 ): ToolOptionResolution {
   return PROVIDER_BOUNDARY.resolveChatParamTools(mode, existingTools, refreshedTools);
+}
+
+export function applyCursorWriteToolContract(tools: unknown): unknown {
+  if (!Array.isArray(tools)) {
+    return tools;
+  }
+
+  let changed = false;
+  const patched = tools.map((tool) => {
+    if (!tool || typeof tool !== "object") {
+      return tool;
+    }
+
+    const record = tool as Record<string, any>;
+    const functionRecord = record.function;
+    const isFunctionWrite =
+      functionRecord && typeof functionRecord === "object" && functionRecord.name === "write";
+    const isTopLevelWrite = record.name === "write";
+
+    if (!isFunctionWrite && !isTopLevelWrite) {
+      return tool;
+    }
+
+    const target = isFunctionWrite ? functionRecord : record;
+    const description = typeof target.description === "string" ? target.description : "";
+    if (description.includes(WRITE_TOOL_TARGETED_EDIT_CONTRACT)) {
+      return tool;
+    }
+
+    changed = true;
+    const nextDescription = description
+      ? `${description.trim()} ${WRITE_TOOL_TARGETED_EDIT_CONTRACT}`
+      : WRITE_TOOL_TARGETED_EDIT_CONTRACT;
+
+    if (isFunctionWrite) {
+      return {
+        ...record,
+        function: {
+          ...functionRecord,
+          description: nextDescription,
+        },
+      };
+    }
+
+    return {
+      ...record,
+      description: nextDescription,
+    };
+  });
+
+  return changed ? patched : tools;
 }
 
 function createChatCompletionResponse(
@@ -2431,14 +2481,20 @@ function applyToolContextDefaults(
 /**
  * Build tool hook entries from local registry
  */
-const NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["grep"]);
+const TOOL_HOOK_EXCLUSIONS = new Set(["grep"]);
+const OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["write"]);
+
+// Exported for mode-boundary tests without initializing the full plugin runtime.
+export function shouldRegisterNativeToolHook(toolName: string, mode: ToolLoopMode): boolean {
+  return !(mode === "opencode" && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(toolName));
+}
 
 function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string): Record<string, any> {
   const entries: Record<string, any> = {};
   const sessionWorkspaceBySession = new Map<string, string>();
   const tools = registry.list();
   for (const t of tools) {
-    if (NATIVE_TOOL_HOOK_EXCLUSIONS.has(t.name)) continue;
+    if (TOOL_HOOK_EXCLUSIONS.has(t.name)) continue;
 
     const handler = registry.getHandler(t.name);
     if (!handler) continue;
@@ -2465,7 +2521,9 @@ function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string):
         },
       });
 
-    entries[t.name] = createEntry(t.name);
+    if (shouldRegisterNativeToolHook(t.name, TOOL_LOOP_MODE)) {
+      entries[t.name] = createEntry(t.name);
+    }
 
     const ocAlias = `oc_${t.id}`;
     if (!entries[ocAlias]) {
@@ -2747,9 +2805,10 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           );
 
           if (resolved.action === "override" || resolved.action === "fallback") {
-            output.options.tools = resolved.tools;
+            output.options.tools = applyCursorWriteToolContract(resolved.tools);
           } else if (resolved.action === "preserve") {
             const count = Array.isArray(existingTools) ? existingTools.length : 0;
+            output.options.tools = applyCursorWriteToolContract(existingTools);
             log.debug("Using OpenCode-provided tools from chat.params", { count });
           }
         } catch (err) {

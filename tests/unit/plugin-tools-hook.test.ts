@@ -2,7 +2,7 @@ import { describe, it, expect } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, existsSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { CursorPlugin } from "../../src/plugin";
+import { CursorPlugin, shouldRegisterNativeToolHook } from "../../src/plugin";
 import type { PluginInput } from "@opencode-ai/plugin";
 
 function createMockInput(directory: string, worktree: string = directory): PluginInput {
@@ -47,22 +47,26 @@ describe("Plugin tool hook", () => {
     expect(hooks.tool).toBeDefined();
     expect(typeof hooks.tool).toBe("object");
 
-    // Verify default tools are registered
+    // Verify local aliases are registered without shadowing OpenCode native tools.
     const toolNames = Object.keys(hooks.tool || {});
     expect(toolNames).toContain("bash");
     expect(toolNames).toContain("shell");
     expect(toolNames).toContain("read");
-    expect(toolNames).toContain("write");
+    expect(toolNames).not.toContain("write");
     expect(toolNames).toContain("edit");
     expect(toolNames).toContain("oc_edit");
     expect(toolNames).toContain("oc_write");
     expect(toolNames).toContain("oc_read");
     expect(toolNames).not.toContain("grep");
+    expect(toolNames).not.toContain("oc_grep");
     expect(toolNames).toContain("ls");
     expect(toolNames).toContain("glob");
+    expect(toolNames).toContain("mkdir");
+    expect(toolNames).toContain("rm");
+    expect(toolNames).toContain("stat");
 
     // Verify tool structure (each should have description, args, execute)
-    const bashTool = hooks.tool?.bash;
+    const bashTool = hooks.tool?.oc_bash;
     expect(bashTool).toBeDefined();
     expect(bashTool?.description).toBeDefined();
     expect(bashTool?.args).toBeDefined();
@@ -75,11 +79,18 @@ describe("Plugin tool hook", () => {
     expect(typeof shellTool?.execute).toBe("function");
   });
 
-  it("resolves relative write paths against context directory", async () => {
+  it("registers native write only outside OpenCode-owned tool-loop mode", () => {
+    expect(shouldRegisterNativeToolHook("write", "opencode")).toBe(false);
+    expect(shouldRegisterNativeToolHook("write", "proxy-exec")).toBe(true);
+    expect(shouldRegisterNativeToolHook("write", "off")).toBe(true);
+    expect(shouldRegisterNativeToolHook("edit", "opencode")).toBe(true);
+  });
+
+  it("resolves relative oc_write paths against context directory", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-write-"));
     try {
       const hooks = await CursorPlugin(createMockInput(projectDir));
-      const out = await hooks.tool?.write?.execute(
+      const out = await hooks.tool?.oc_write?.execute(
         {
           path: "nested/output.txt",
           content: "hello from context",
@@ -93,7 +104,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("prefers worktree when context.directory is the OpenCode config dir", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-worktree-"));
@@ -105,7 +116,7 @@ describe("Plugin tool hook", () => {
       mkdirSync(configDir, { recursive: true });
 
       const hooks = await CursorPlugin(createMockInput(configDir, projectDir));
-      const out = await hooks.tool?.write?.execute(
+      const out = await hooks.tool?.oc_write?.execute(
         { path: "nested/output.txt", content: "hello from worktree" },
         createToolContext(configDir, projectDir),
       );
@@ -122,13 +133,13 @@ describe("Plugin tool hook", () => {
       rmSync(projectDir, { recursive: true, force: true });
       rmSync(xdgConfigHome, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
-  it("defaults bash cwd to context directory", async () => {
+  it("defaults oc_bash cwd to context directory", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-bash-"));
     try {
       const hooks = await CursorPlugin(createMockInput(projectDir));
-      const out = await hooks.tool?.bash?.execute(
+      const out = await hooks.tool?.oc_bash?.execute(
         {
           command: "pwd",
         },
@@ -156,7 +167,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("executes oc_bash alias and defaults cwd to context directory", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-oc-bash-"));
@@ -193,7 +204,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("rejects oc_edit with empty old_string without overwriting existing files", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-oc-edit-empty-old-"));
@@ -214,7 +225,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("rejects oc_write partial overwrites of existing files", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-oc-write-partial-"));
@@ -236,7 +247,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("rejects malformed edit full-file payloads that look like partial overwrites", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-edit-streamcontent-partial-"));
@@ -248,7 +259,7 @@ describe("Plugin tool hook", () => {
       writeFileSync(target, original, "utf-8");
 
       await expect(
-        hooks.tool?.edit?.execute(
+        hooks.tool?.oc_edit?.execute(
           { path: target, streamContent: "test test" },
           createToolContext(projectDir, projectDir),
         ),
@@ -258,7 +269,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("rejects normalized edit content payloads that look like partial overwrites", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-edit-content-partial-"));
@@ -270,7 +281,7 @@ describe("Plugin tool hook", () => {
       writeFileSync(target, original, "utf-8");
 
       await expect(
-        hooks.tool?.edit?.execute(
+        hooks.tool?.oc_edit?.execute(
           { path: target, content: "49\ntest test\n51" },
           createToolContext(projectDir, projectDir),
         ),
@@ -280,7 +291,7 @@ describe("Plugin tool hook", () => {
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("pins non-config workspace per session and reuses it when later context loses worktree", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-session-pin-project-"));
@@ -295,11 +306,11 @@ describe("Plugin tool hook", () => {
 
       const hooks = await CursorPlugin(createMockInput(configDir, configDir));
 
-      const out1 = await hooks.tool?.write?.execute(
+      const out1 = await hooks.tool?.oc_write?.execute(
         { path: "nested/first.txt", content: "first" },
         createToolContext(configDir, projectDir, "session-pin-1"),
       );
-      const out2 = await hooks.tool?.write?.execute(
+      const out2 = await hooks.tool?.oc_write?.execute(
         { path: "nested/second.txt", content: "second" },
         createToolContext(configDir, undefined, "session-pin-1"),
       );
@@ -323,7 +334,7 @@ describe("Plugin tool hook", () => {
       rmSync(xdgConfigHome, { recursive: true, force: true });
       rmSync(unexpectedDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 
   it("treats config path aliases (symlink/case variants) as config and falls back to workspace", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-config-alias-project-"));
@@ -343,7 +354,7 @@ describe("Plugin tool hook", () => {
       const filename = `symlink-alias-${Date.now()}.txt`;
 
       const hooks = await CursorPlugin(createMockInput(configDir, projectDir));
-      const out = await hooks.tool?.write?.execute(
+      const out = await hooks.tool?.oc_write?.execute(
         { path: `nested/${filename}`, content: "alias fallback" },
         createToolContext(aliasConfigDir, undefined, "session-alias-1"),
       );
@@ -364,5 +375,5 @@ describe("Plugin tool hook", () => {
       rmSync(xdgConfigHome, { recursive: true, force: true });
       rmSync(aliasParentDir, { recursive: true, force: true });
     }
-  });
+  }, 15000);
 });

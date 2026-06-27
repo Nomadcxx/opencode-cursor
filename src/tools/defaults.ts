@@ -1,6 +1,9 @@
 import type { ToolRegistry } from "./core/registry.js";
 import { createLogger } from "../utils/logger.js";
 
+export const WRITE_TOOL_TARGETED_EDIT_CONTRACT =
+  "Use only for new files or intentional full-file replacement. For targeted edits to existing files, use edit with old_string and new_string.";
+
 /**
  * Register default OpenCode tools in the registry
  */
@@ -124,7 +127,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
   registry.register({
     id: "write",
     name: "write",
-    description: "Write content to a file (creates or overwrites). Prefer this over using bash redirection/heredocs for file creation.",
+    description: `Write content to a file. ${WRITE_TOOL_TARGETED_EDIT_CONTRACT}`,
     parameters: {
       type: "object",
       properties: {
@@ -546,8 +549,9 @@ function writeFullFileWithOverwriteGuard(
       throw new Error(
         `${toolName}: refusing suspicious partial overwrite of existing file ${filePath} `
           + `(${suspicious.existingLines} lines -> ${suspicious.nextLines} lines). `
-          + "write/edit full-file replacement overwrites the whole file; use edit with old_string/new_string "
-          + "for targeted changes, or pass force: true only when intentionally replacing the full file.",
+          + `${WRITE_TOOL_TARGETED_EDIT_CONTRACT} `
+          + "Do not retry write for this targeted change; call edit with path, old_string, and new_string. "
+          + "Pass force: true only when intentionally replacing the full file.",
       );
     }
   }

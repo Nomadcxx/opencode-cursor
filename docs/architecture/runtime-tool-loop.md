@@ -86,6 +86,10 @@ The OpenCode plugin tool hook (`buildToolHookEntries` in `src/plugin.ts`) regist
 
 When tool-hook execution is used, path/cwd defaults are normalized against tool context (`worktree` / `directory`) to keep file and shell behavior workspace-aware.
 
+In default `opencode` mode, OpenCode owns the native `write` tool. The plugin does not register its own native-name `write` hook in that mode, because duplicate native `write` handling can turn a successful OpenCode write into a plugin guard error. The plugin still exposes `oc_write` for compatibility paths and direct local-tool execution.
+
+When debugging tool loops, isolate the failing boundary before changing behavior: the model may emit a malformed tool call, `cursor-agent` may transport an unexpected shape, the plugin may normalize or intercept it incorrectly, or OpenCode may execute/report it differently than the model expects. For post-tool stalls, first verify that a second turn containing the prior `role: "tool"` result can reach a normal assistant `stop`.
+
 ## Usage Metrics
 
 `cursor-agent --output-format stream-json` emits a final `result` event with token usage when Cursor reports it. The proxy maps that payload to OpenAI-compatible usage so OpenCode can emit `step-finish` token data for tools such as OpenCode TokenSpeed Monitor.

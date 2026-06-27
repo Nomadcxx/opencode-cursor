@@ -200,6 +200,17 @@ process.stdin.on("end", () => {
         },
       },
     ];
+  } else if (scenario === "assistant-done") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "DONE" }],
+        },
+      },
+    ];
   } else {
     events = [
       {
@@ -656,6 +667,56 @@ describe("OpenCode-owned tool loop integration", () => {
 
     const promptText = readFileSync(promptFile, "utf8");
     expect(promptText).toContain("TOOL_RESULT (call_id: c1): {\"content\":\"file contents here\"}");
+  });
+
+  it("continues after a successful write tool result and can stop with DONE", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-done";
+    process.env.MOCK_CURSOR_PROMPT_FILE = promptFile;
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [WRITE_TOOL],
+      messages: [
+        { role: "user", content: "Change line 50 and reply DONE after saving" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "c-write-1",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: "{\"path\":\"test.txt\",\"content\":\"updated\"}",
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "c-write-1",
+          content: "Wrote file successfully.",
+        },
+      ],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const contentTexts = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string");
+    expect(contentTexts.join("")).toContain("DONE");
+
+    const finishReasons = chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean);
+    expect(finishReasons).toContain("stop");
+    expect(finishReasons).not.toContain("tool_calls");
+    expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
+
+    const promptText = readFileSync(promptFile, "utf8");
+    expect(promptText).toContain("TOOL_RESULT (call_id: c-write-1): Wrote file successfully.");
   });
 
   it("does not append quota error after successful streamed output", async () => {

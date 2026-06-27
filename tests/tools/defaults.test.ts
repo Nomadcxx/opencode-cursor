@@ -1,6 +1,11 @@
 import { describe, it, expect } from "bun:test";
 import { ToolRegistry } from "../../src/tools/core/registry.js";
-import { registerDefaultTools, getDefaultToolNames, resolveShellOption } from "../../src/tools/defaults.js";
+import {
+  WRITE_TOOL_TARGETED_EDIT_CONTRACT,
+  registerDefaultTools,
+  getDefaultToolNames,
+  resolveShellOption,
+} from "../../src/tools/defaults.js";
 import { executeWithChain } from "../../src/tools/core/executor.js";
 import { LocalExecutor } from "../../src/tools/executors/local.js";
 
@@ -48,6 +53,7 @@ describe("Default Tools", () => {
 
     const write = registry.getTool("write");
     expect(write?.name).toBe("write");
+    expect(write?.description).toContain(WRITE_TOOL_TARGETED_EDIT_CONTRACT);
 
     const edit = registry.getTool("edit");
     expect(edit?.name).toBe("edit");
@@ -172,6 +178,8 @@ describe("Default Tools", () => {
 
       expect(result.status).toBe("error");
       expect(result.error).toContain("refusing suspicious partial overwrite");
+      expect(result.error).toContain("Do not retry write for this targeted change");
+      expect(result.error).toContain("call edit with path, old_string, and new_string");
       expect(fs.readFileSync(tmpFile, "utf-8")).toBe(original);
     } finally {
       fs.unlinkSync(tmpFile);

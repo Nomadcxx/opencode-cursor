@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { resolveChatParamTools } from "../../src/plugin";
+import { applyCursorWriteToolContract, resolveChatParamTools } from "../../src/plugin";
 
 describe("resolveChatParamTools", () => {
   it("preserves existing tools in opencode mode", () => {
@@ -33,5 +33,79 @@ describe("resolveChatParamTools", () => {
 
     expect(resolved.action).toBe("none");
     expect(resolved.tools).toBe(existing);
+  });
+});
+
+describe("applyCursorWriteToolContract", () => {
+  it("adds the cursor write contract to preserved OpenCode write tools without mutating input", () => {
+    const existing = [
+      {
+        type: "function",
+        function: {
+          name: "write",
+          description: "Write a file",
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "read",
+          description: "Read a file",
+        },
+      },
+    ];
+
+    const patched = applyCursorWriteToolContract(existing) as typeof existing;
+
+    expect(patched).not.toBe(existing);
+    expect(patched[0]).not.toBe(existing[0]);
+    expect(patched[0].function).not.toBe(existing[0].function);
+    expect(patched[0].function.description).toContain(
+      "Use only for new files or intentional full-file replacement.",
+    );
+    expect(patched[0].function.description).toContain(
+      "For targeted edits to existing files, use edit with old_string and new_string.",
+    );
+    expect(patched[1]).toBe(existing[1]);
+    expect(existing[0].function.description).toBe("Write a file");
+  });
+
+  it("does not duplicate the cursor write contract", () => {
+    const existing = [
+      {
+        function: {
+          name: "write",
+          description:
+            "Write a file. Use only for new files or intentional full-file replacement. For targeted edits to existing files, use edit with old_string and new_string.",
+        },
+      },
+    ];
+
+    const patched = applyCursorWriteToolContract(existing) as typeof existing;
+
+    expect(patched[0].function.description).toBe(existing[0].function.description);
+  });
+
+  it("adds the cursor write contract to top-level write tool definitions", () => {
+    const existing = [
+      {
+        name: "write",
+        description: "Write a file",
+      },
+    ];
+
+    const patched = applyCursorWriteToolContract(existing) as typeof existing;
+
+    expect(patched).not.toBe(existing);
+    expect(patched[0]).not.toBe(existing[0]);
+    expect(patched[0].description).toContain(
+      "Use only for new files or intentional full-file replacement.",
+    );
+  });
+
+  it("leaves non-array tool payloads unchanged", () => {
+    const existing = { function: { name: "write" } };
+
+    expect(applyCursorWriteToolContract(existing)).toBe(existing);
   });
 });
