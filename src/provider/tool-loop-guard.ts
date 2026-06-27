@@ -352,6 +352,19 @@ function classifyToolResult(content: unknown): ToolLoopErrorClass {
   if (containsAny(text, ["timeout", "timed out"])) {
     return "timeout";
   }
+  if (
+    containsAny(text, [
+      "refused to overwrite",
+      "refusing suspicious partial overwrite",
+      "partial overwrite",
+      "suspicious partial",
+      "would reduce",
+      "would partially overwrite",
+      "much smaller",
+    ])
+  ) {
+    return "tool_error";
+  }
   if (containsAny(text, ["# todos", "\n[ ] ", "\n[x] ", "\n[x]"])) {
     return "success";
   }

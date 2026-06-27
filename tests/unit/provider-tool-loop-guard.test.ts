@@ -309,6 +309,97 @@ describe("tool loop guard", () => {
     expect(decision.repeatCount).toBe(2);
   });
 
+  it("classifies refused partial-overwrite writes as tool errors", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "prev-write",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({
+                  path: "test.txt",
+                  content: "test",
+                }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "prev-write",
+          content:
+            "The write tool refused to overwrite the existing file test.txt because it would reduce 100 lines to 1.",
+        },
+      ],
+      1,
+    );
+
+    const decision = guard.evaluate({
+      id: "next-write",
+      type: "function",
+      function: {
+        name: "write",
+        arguments: JSON.stringify({
+          path: "test.txt",
+          content: "test",
+        }),
+      },
+    });
+
+    expect(decision.errorClass).toBe("tool_error");
+    expect(decision.triggered).toBe(true);
+    expect(decision.repeatCount).toBe(2);
+  });
+
+  it("does not classify unrelated refusal text as a write tool error", () => {
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "prev-write",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({
+                  path: "test.txt",
+                  content: "test",
+                }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "prev-write",
+          content: "I refuse to explain unrelated code.",
+        },
+      ],
+      1,
+    );
+
+    const decision = guard.evaluate({
+      id: "next-write",
+      type: "function",
+      function: {
+        name: "write",
+        arguments: JSON.stringify({
+          path: "test.txt",
+          content: "test",
+        }),
+      },
+    });
+
+    expect(decision.errorClass).toBe("success");
+  });
+
   it("stops repeated successful full-replace edits even when new_string varies", () => {
     const guard = createToolLoopGuard(
       [

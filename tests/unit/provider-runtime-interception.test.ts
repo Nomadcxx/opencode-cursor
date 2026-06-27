@@ -791,6 +791,85 @@ describe("provider runtime interception fallback", () => {
     expect(result.terminate?.errorClass).toBe("success");
   });
 
+  it("emits a non-silent loop hint for repeated refused write calls", async () => {
+    let fallbackCalled = false;
+    const toolResults: any[] = [];
+    const guard = createToolLoopGuard(
+      [
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "write-1",
+              type: "function",
+              function: {
+                name: "write",
+                arguments: JSON.stringify({
+                  path: "test.txt",
+                  content: "test",
+                }),
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "write-1",
+          content:
+            "The write tool refused to overwrite test.txt because the new content is much smaller than the existing file.",
+        },
+      ],
+      1,
+    );
+
+    const result = await handleToolLoopEventWithFallback({
+      ...createBaseOptions({
+        toolLoopGuard: guard,
+        event: {
+          type: "tool_call",
+          call_id: "write-2",
+          tool_call: {
+            writeToolCall: {
+              args: { path: "test.txt", content: "test" },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["write"]),
+        toolSchemaMap: new Map([
+          [
+            "write",
+            {
+              type: "object",
+              properties: {
+                path: { type: "string" },
+                content: { type: "string" },
+              },
+              required: ["path", "content"],
+              additionalProperties: false,
+            },
+          ],
+        ]),
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundaryMode: "v1",
+      autoFallbackToLegacy: true,
+      onFallbackToLegacy: () => {
+        fallbackCalled = true;
+      },
+    });
+
+    expect(fallbackCalled).toBe(false);
+    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    expect(toolResults).toHaveLength(1);
+    const hint = toolResults[0]?.choices?.[0]?.delta?.content ?? "";
+    expect(hint).toContain("Tool \"write\" has been temporarily blocked");
+    expect(hint).toContain("tool_error");
+  });
+
   it("does not fallback on multi-tool success loop-guard termination (write + context_info history)", async () => {
     let fallbackCalled = false;
     const guard = createToolLoopGuard(
