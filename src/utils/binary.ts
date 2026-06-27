@@ -11,6 +11,7 @@ import { existsSync as fsExistsSync } from "fs";
 import * as pathModule from "path";
 import { homedir as osHomedir } from "os";
 import { createLogger } from "./logger.js";
+import { BinaryNotFoundError } from "./errors.js";
 
 const log = createLogger("binary");
 
@@ -55,6 +56,37 @@ export function resolveCursorAgentBinary(deps: BinaryDeps = {}): string {
 
   log.warn("cursor-agent not found at known paths, falling back to PATH", { checkedPaths: knownPaths });
   return "cursor-agent";
+}
+
+/**
+ * Strict variant of resolveCursorAgentBinary for use by the pool runner.
+ * On win32, throws BinaryNotFoundError when the known install path does not
+ * exist and no CURSOR_AGENT_EXECUTABLE env override is set. On non-win32,
+ * behaves identically to resolveCursorAgentBinary (no throw).
+ */
+export function resolveCursorAgentBinaryStrict(deps: BinaryDeps = {}): string {
+  const platform = deps.platform ?? process.platform;
+  const env = deps.env ?? process.env;
+  const checkExists = deps.existsSync ?? fsExistsSync;
+  const home = (deps.homedir ?? osHomedir)();
+
+  const envOverride = env.CURSOR_AGENT_EXECUTABLE;
+  if (envOverride && envOverride.length > 0) {
+    return envOverride;
+  }
+
+  if (platform === "win32") {
+    const pathJoin = pathModule.win32.join;
+    const localAppData = env.LOCALAPPDATA ?? pathJoin(home, "AppData", "Local");
+    const knownPath = pathJoin(localAppData, "cursor-agent", "cursor-agent.cmd");
+    if (checkExists(knownPath)) {
+      return knownPath;
+    }
+    throw new BinaryNotFoundError(knownPath);
+  }
+
+  // Non-win32: delegate to the plain resolver (no throw).
+  return resolveCursorAgentBinary(deps);
 }
 
 export function formatShellCommandForPlatform(
