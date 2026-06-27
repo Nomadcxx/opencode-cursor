@@ -80,6 +80,35 @@ const EDIT_WRITE_SCHEMA_MAP = new Map([
   ],
 ]);
 
+const OPENCODE_EDIT_WRITE_SCHEMA_MAP = new Map([
+  [
+    "edit",
+    {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        oldString: { type: "string" },
+        newString: { type: "string" },
+        replaceAll: { type: "boolean" },
+      },
+      required: ["filePath", "oldString", "newString"],
+      additionalProperties: false,
+    },
+  ],
+  [
+    "write",
+    {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["filePath", "content"],
+      additionalProperties: false,
+    },
+  ],
+]);
+
 function createEditPathContentRerouteOverrides(
   overrides: Partial<EventOptions> = {},
 ): Partial<EventOptions> {
@@ -384,6 +413,37 @@ describe("provider runtime interception fallback", () => {
     const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
     expect(args.path).toBe("TODO.md");
     expect(args.content).toBe("full rewrite");
+  });
+
+  it("reroutes opencode-style filePath+content edit payloads to write in v1", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_file_path_content",
+          tool_call: {
+            editToolCall: {
+              args: { filePath: "/tmp/project/test.txt", content: "full rewrite" },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("write");
+    const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
+    expect(args.filePath).toBe("/tmp/project/test.txt");
+    expect(args.content).toBe("full rewrite");
+    expect(args.path).toBeUndefined();
   });
 
   it("reroutes path+content edit missing old_string to write in legacy", async () => {

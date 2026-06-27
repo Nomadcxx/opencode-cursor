@@ -87,9 +87,9 @@ export function applyToolSchemaCompat(
 ): ToolSchemaCompatResult {
   const parsedArgs = parseArguments(toolCall.function.arguments);
   const originalArgKeys = Object.keys(parsedArgs);
-  const { normalizedArgs, collisionKeys } = normalizeArgumentKeys(parsedArgs);
-  const toolSpecificArgs = normalizeToolSpecificArgs(toolCall.function.name, normalizedArgs);
   const schema = toolSchemaMap.get(toolCall.function.name);
+  const { normalizedArgs, collisionKeys } = normalizeArgumentKeys(parsedArgs, schema);
+  const toolSpecificArgs = normalizeToolSpecificArgs(toolCall.function.name, normalizedArgs, schema);
   const sanitization = sanitizeArgumentsForSchema(toolSpecificArgs, schema);
   const validation = validateToolArguments(
     toolCall.function.name,
@@ -223,16 +223,20 @@ function parseArguments(rawArguments: string): JsonRecord {
   }
 }
 
-function normalizeArgumentKeys(args: JsonRecord): {
+function normalizeArgumentKeys(args: JsonRecord, schema?: unknown): {
   normalizedArgs: JsonRecord;
   collisionKeys: string[];
 } {
   const normalizedArgs: JsonRecord = { ...args };
   const collisionKeys: string[] = [];
+  const schemaProperties = getSchemaPropertyNames(schema);
 
   for (const [rawKey, rawValue] of Object.entries(args)) {
     const canonicalKey = resolveCanonicalArgKey(rawKey);
     if (!canonicalKey || canonicalKey === rawKey) {
+      continue;
+    }
+    if (schemaProperties.has(rawKey)) {
       continue;
     }
 
@@ -251,12 +255,19 @@ function normalizeArgumentKeys(args: JsonRecord): {
   return { normalizedArgs, collisionKeys };
 }
 
+function getSchemaPropertyNames(schema: unknown): Set<string> {
+  if (!isRecord(schema) || !isRecord(schema.properties)) {
+    return new Set();
+  }
+  return new Set(Object.keys(schema.properties));
+}
+
 function resolveCanonicalArgKey(rawKey: string): string | null {
   const token = rawKey.toLowerCase().replace(/[^a-z0-9]/g, "");
   return ARG_KEY_ALIASES.get(token) ?? null;
 }
 
-function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonRecord {
+function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: unknown): JsonRecord {
   const normalizedToolName = toolName.toLowerCase();
   if (normalizedToolName === "question" && QUESTION_COMPAT_REPAIR_ENABLED) {
     return normalizeQuestionArgs(args);
@@ -349,8 +360,11 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
   }
 
   const repaired: JsonRecord = { ...args };
-  const hasStringNew = typeof repaired.new_string === "string";
-  const hasStringOld = typeof repaired.old_string === "string";
+  const schemaProperties = getSchemaPropertyNames(schema);
+  const newKey = schemaProperties.has("newString") ? "newString" : "new_string";
+  const oldKey = schemaProperties.has("oldString") ? "oldString" : "old_string";
+  const hasStringNew = typeof repaired[newKey] === "string";
+  const hasStringOld = typeof repaired[oldKey] === "string";
 
   // Coerce non-string content/streamContent into a string before repair.
   // Models frequently emit array-of-chunks (streamContent) or object payloads.
@@ -365,10 +379,10 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord): JsonReco
 
   // Guarded compatibility repair for models that send full-content edit payloads.
   if (!hasStringNew && typeof content === "string") {
-    repaired.new_string = content;
+    repaired[newKey] = content;
   }
-  if (hasStringOld && repaired.old_string === "") {
-    delete repaired.old_string;
+  if (hasStringOld && repaired[oldKey] === "") {
+    delete repaired[oldKey];
   }
 
   return repaired;

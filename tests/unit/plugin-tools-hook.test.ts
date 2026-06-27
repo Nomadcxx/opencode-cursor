@@ -53,7 +53,7 @@ describe("Plugin tool hook", () => {
     expect(toolNames).toContain("shell");
     expect(toolNames).toContain("read");
     expect(toolNames).not.toContain("write");
-    expect(toolNames).toContain("edit");
+    expect(toolNames).not.toContain("edit");
     expect(toolNames).toContain("oc_edit");
     expect(toolNames).toContain("oc_write");
     expect(toolNames).toContain("oc_read");
@@ -83,7 +83,9 @@ describe("Plugin tool hook", () => {
     expect(shouldRegisterNativeToolHook("write", "opencode")).toBe(false);
     expect(shouldRegisterNativeToolHook("write", "proxy-exec")).toBe(true);
     expect(shouldRegisterNativeToolHook("write", "off")).toBe(true);
-    expect(shouldRegisterNativeToolHook("edit", "opencode")).toBe(true);
+    expect(shouldRegisterNativeToolHook("edit", "opencode")).toBe(false);
+    expect(shouldRegisterNativeToolHook("edit", "proxy-exec")).toBe(true);
+    expect(shouldRegisterNativeToolHook("edit", "off")).toBe(true);
   });
 
   it("resolves relative oc_write paths against context directory", async () => {

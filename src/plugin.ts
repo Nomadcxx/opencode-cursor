@@ -2482,7 +2482,7 @@ function applyToolContextDefaults(
  * Build tool hook entries from local registry
  */
 const TOOL_HOOK_EXCLUSIONS = new Set(["grep"]);
-const OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["write"]);
+const OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["edit", "write"]);
 
 // Exported for mode-boundary tests without initializing the full plugin runtime.
 export function shouldRegisterNativeToolHook(toolName: string, mode: ToolLoopMode): boolean {
