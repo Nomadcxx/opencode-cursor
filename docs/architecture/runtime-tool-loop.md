@@ -14,7 +14,7 @@ This document describes the current runtime architecture on `main`, with the def
 4. `tool_call` events are intercepted at the provider boundary.
 5. Intercepted calls are normalized and guarded, then returned as OpenAI `tool_calls`.
 6. OpenCode executes tools locally and sends results back as `role: "tool"` messages in the next turn.
-7. Prompt builder renders tool results into `TOOL_RESULT (call_id: ...)` blocks for the next `cursor-agent` invocation.
+7. Prompt builder renders named tool results into `TOOL_RESULT (name: ..., call_id: ...)` blocks for the next `cursor-agent` invocation.
 
 ## Tool Ownership Model
 

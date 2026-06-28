@@ -666,7 +666,7 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(finishReasons).not.toContain("tool_calls");
 
     const promptText = readFileSync(promptFile, "utf8");
-    expect(promptText).toContain("TOOL_RESULT (call_id: c1): {\"content\":\"file contents here\"}");
+    expect(promptText).toContain("TOOL_RESULT (name: read, call_id: c1): {\"content\":\"file contents here\"}");
   });
 
   it("continues after a successful write tool result and can stop with DONE", async () => {
@@ -716,7 +716,7 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
 
     const promptText = readFileSync(promptFile, "utf8");
-    expect(promptText).toContain("TOOL_RESULT (call_id: c-write-1): Wrote file successfully.");
+    expect(promptText).toContain("TOOL_RESULT (name: write, call_id: c-write-1): Wrote file successfully.");
   });
 
   it("does not append quota error after successful streamed output", async () => {
