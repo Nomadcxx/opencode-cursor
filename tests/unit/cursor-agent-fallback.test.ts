@@ -20,9 +20,11 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // Mock binary module: resolveCursorAgentBinaryStrict always throws BinaryNotFoundError,
 // simulating win32 + binary missing. Plain resolver returns a bare fallback string.
 const FAKE_ATTEMPTED_PATH = "C:\\Users\\test\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
+let strictResolveCalls = 0;
 
 mock.module(resolve(__dirname, "../../src/utils/binary.js"), () => ({
   resolveCursorAgentBinaryStrict: () => {
+    strictResolveCalls += 1;
     throw new BinaryNotFoundError(FAKE_ATTEMPTED_PATH);
   },
   resolveCursorAgentBinary: () => "cursor-agent.cmd",
@@ -89,6 +91,7 @@ function settle(ms = 50): Promise<void> {
 describe("cursor-agent pool: Windows binary-missing fallback", () => {
   beforeEach(() => {
     warnCalls.length = 0;
+    strictResolveCalls = 0;
   });
 
   afterEach(() => {
@@ -96,17 +99,15 @@ describe("cursor-agent pool: Windows binary-missing fallback", () => {
     _resetCursorAgentPoolForTests();
   });
 
-  it("warn-once: log.warn is called exactly once when two children share the same poolKey", async () => {
-    const mockSdk = createMockSdkChild();
-
-    // Two children with identical poolKey (same cwd + model) share one runner.
+  it("warn-once: log.warn is called exactly once when repeated children share the same poolKey", async () => {
     const child1 = createCursorAgentPoolNodeChild({
       model: "m",
       prompt: "hi-1",
       cwd: "/ws",
       sdkApiKey: "test-key",
-      createSdkChild: () => mockSdk,
+      createSdkChild: () => createMockSdkChild(),
     });
+    await settle(100);
 
     const child2 = createCursorAgentPoolNodeChild({
       model: "m",
@@ -115,19 +116,10 @@ describe("cursor-agent pool: Windows binary-missing fallback", () => {
       sdkApiKey: "test-key",
       createSdkChild: () => createMockSdkChild(),
     });
-
-    // Let both async spawnInternal() calls settle.
     await settle(100);
 
-    // Structural verification: both children share one runner (pool size = 1).
-    // The runner's ensureRunning() short-circuits on the second call, so doSpawn()
-    // (and thus log.warn) fires exactly once. Both children see binaryMissing=true
-    // and route to SDK fallback.
     expect(_getCursorAgentPoolSizeForTests()).toBe(1);
-
-    // Both children entered the fallback path (same runner, same binaryMissing flag).
-    // This proves doSpawn() ran once (warn logged once) and both children observed it.
-    // If doSpawn() ran twice, the pool would have been reset or the runner would differ.
+    expect(strictResolveCalls).toBe(1);
 
     // Clean up
     child1.kill();
