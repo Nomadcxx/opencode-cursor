@@ -26,6 +26,7 @@ import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent
 import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { isSessionResumeEnabled } from "../proxy/session-resume.js";
+import { BRIDGE_JSON_CONTEXT } from "../proxy/bridge-json.js";
 import type { DiscoveredModel } from "./model-discovery.js";
 
 const BRANDING_HEADER = `
@@ -356,6 +357,8 @@ type Options = {
   baseUrl?: string;
   copy?: boolean;
   skipModels?: boolean;
+  skipCursorBridge?: boolean;
+  cursorBridgeScope?: "project" | "user" | "both";
   noBackup?: boolean;
   variants?: boolean;
   compact?: boolean;
@@ -411,6 +414,9 @@ Options:
   --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
   --copy                Copy plugin instead of symlink
   --skip-models         Skip model sync during install
+  --skip-cursor-bridge  Do not write the project .cursor bridge hook during install
+  --cursor-bridge-scope <scope>
+                       Cursor hook scope: project, user, or both (default: project)
   --variants            Generate compact OpenCode model variants from Cursor models
   --compact             With --variants, remove raw grouped Cursor model entries
   --dry-run             Preview sync/install config changes without writing files
@@ -432,6 +438,11 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
       options.copy = true;
     } else if (arg === "--skip-models") {
       options.skipModels = true;
+    } else if (arg === "--skip-cursor-bridge") {
+      options.skipCursorBridge = true;
+    } else if (arg === "--cursor-bridge-scope" && rest[i + 1]) {
+      options.cursorBridgeScope = parseCursorBridgeScope(rest[i + 1]);
+      i += 1;
     } else if (arg === "--variants") {
       options.variants = true;
     } else if (arg === "--compact") {
@@ -461,6 +472,13 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
   }
 
   return { command, options };
+}
+
+function parseCursorBridgeScope(value: string): "project" | "user" | "both" {
+  if (value === "project" || value === "user" || value === "both") {
+    return value;
+  }
+  throw new Error(`Invalid --cursor-bridge-scope: ${value}`);
 }
 
 function normalizeCommand(value: string | undefined): Command {
@@ -721,6 +739,136 @@ function installAiSdk(opencodeDir: string) {
   }
 }
 
+export const CURSOR_BRIDGE_HOOK_COMMAND = "node .cursor/hooks/opencode-bridge-context.mjs";
+export const CURSOR_BRIDGE_USER_HOOK_COMMAND = "node ./hooks/opencode-bridge-context.mjs";
+
+type CursorBridgeScope = "project" | "user";
+
+type CursorBridgeInstallResult = {
+  changed: boolean;
+  hooksPath: string;
+  scriptPath: string;
+};
+
+export function ensureCursorBridgeHook(
+  rootDir: string,
+  options: { dryRun?: boolean; scope?: CursorBridgeScope } = {},
+): CursorBridgeInstallResult {
+  const scope = options.scope ?? "project";
+  const cursorDir = join(rootDir, ".cursor");
+  const hooksDir = join(cursorDir, "hooks");
+  const hooksPath = join(cursorDir, "hooks.json");
+  const scriptPath = join(hooksDir, "opencode-bridge-context.mjs");
+  const script = buildCursorBridgeHookScript();
+  const current = readCursorHooksConfig(hooksPath);
+  const next = mergeCursorBridgeHook(current, scope);
+  const currentJson = JSON.stringify(current);
+  const nextJson = JSON.stringify(next);
+  const scriptChanged = !existsSync(scriptPath) || readFileSync(scriptPath, "utf8") !== script;
+  const changed = currentJson !== nextJson || scriptChanged;
+
+  if (!options.dryRun && changed) {
+    mkdirSync(hooksDir, { recursive: true });
+    writeFileSync(scriptPath, script, "utf8");
+    writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  }
+
+  return { changed, hooksPath, scriptPath };
+}
+
+function removeCursorBridgeHook(
+  rootDir: string,
+  options: { scope?: CursorBridgeScope } = {},
+): CursorBridgeInstallResult {
+  const scope = options.scope ?? "project";
+  const cursorDir = join(rootDir, ".cursor");
+  const hooksPath = join(cursorDir, "hooks.json");
+  const scriptPath = join(cursorDir, "hooks", "opencode-bridge-context.mjs");
+  const current = readCursorHooksConfig(hooksPath);
+  const next = removeCursorBridgeHookEntry(current, scope);
+  const changed = JSON.stringify(current) !== JSON.stringify(next) || existsSync(scriptPath);
+
+  rmSync(scriptPath, { force: true });
+  if (existsSync(hooksPath)) {
+    writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  }
+
+  return { changed, hooksPath, scriptPath };
+}
+
+function buildCursorBridgeHookScript(): string {
+  return [
+    "#!/usr/bin/env node",
+    `const context = ${JSON.stringify(BRIDGE_JSON_CONTEXT)};`,
+    "process.stdout.write(JSON.stringify({ additional_context: context }) + \"\\n\");",
+    "",
+  ].join("\n");
+}
+
+function readCursorHooksConfig(hooksPath: string): any {
+  if (!existsSync(hooksPath)) {
+    return { version: 1, hooks: {} };
+  }
+  const raw = readFileSync(hooksPath, "utf8");
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : { version: 1, hooks: {} };
+  } catch (error) {
+    throw new Error(`Invalid JSON in Cursor hooks config: ${hooksPath} (${String(error)})`);
+  }
+}
+
+function mergeCursorBridgeHook(config: any, scope: CursorBridgeScope): any {
+  const next = {
+    ...config,
+    version: typeof config.version === "number" ? config.version : 1,
+    hooks: config.hooks && typeof config.hooks === "object" && !Array.isArray(config.hooks)
+      ? { ...config.hooks }
+      : {},
+  };
+  const sessionStart = Array.isArray(next.hooks.sessionStart)
+    ? [...next.hooks.sessionStart]
+    : [];
+  const command = scope === "user" ? CURSOR_BRIDGE_USER_HOOK_COMMAND : CURSOR_BRIDGE_HOOK_COMMAND;
+  if (!sessionStart.some((hook: any) => hook?.command === command)) {
+    sessionStart.push({ command });
+  }
+  next.hooks.sessionStart = sessionStart;
+  return next;
+}
+
+function removeCursorBridgeHookEntry(config: any, scope: CursorBridgeScope): any {
+  const next = {
+    ...config,
+    hooks: config.hooks && typeof config.hooks === "object" && !Array.isArray(config.hooks)
+      ? { ...config.hooks }
+      : {},
+  };
+  const command = scope === "user" ? CURSOR_BRIDGE_USER_HOOK_COMMAND : CURSOR_BRIDGE_HOOK_COMMAND;
+  if (Array.isArray(next.hooks.sessionStart)) {
+    next.hooks.sessionStart = next.hooks.sessionStart.filter(
+      (hook: any) => hook?.command !== command,
+    );
+  }
+  return next;
+}
+
+function getCursorBridgeRoots(scope: Options["cursorBridgeScope"]): Array<{ label: string; root: string; scope: CursorBridgeScope }> {
+  const requested = scope ?? "project";
+  if (requested === "user") {
+    return [{ label: "user", root: homedir(), scope: "user" }];
+  }
+  if (requested === "both") {
+    return [
+      { label: "project", root: process.cwd(), scope: "project" },
+      { label: "user", root: homedir(), scope: "user" },
+    ];
+  }
+  return [{ label: "project", root: process.cwd(), scope: "project" }];
+}
+
 function commandInstall(options: Options) {
   const { opencodeDir, configPath, pluginPath } = resolvePaths(options);
   const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
@@ -744,6 +892,17 @@ function commandInstall(options: Options) {
   } else {
     writeConfig(configPath, config, options.noBackup === true);
     installAiSdk(opencodeDir);
+  }
+  if (options.skipCursorBridge) {
+    console.log("Cursor bridge hook: skipped (--skip-cursor-bridge)");
+  } else {
+    for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
+      const bridge = ensureCursorBridgeHook(target.root, {
+        dryRun: options.dryRun,
+        scope: target.scope,
+      });
+      console.log(`${options.dryRun ? "Would write" : "Cursor bridge hook"} (${target.label}): ${bridge.hooksPath}`);
+    }
   }
 
   console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);
@@ -855,6 +1014,12 @@ function commandUninstall(options: Options) {
 
   console.log(`Removed plugin link: ${pluginPath}`);
   console.log(`Removed provider "${PROVIDER_ID}" from ${configPath}`);
+  for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
+    const bridge = removeCursorBridgeHook(target.root, { scope: target.scope });
+    if (bridge.changed) {
+      console.log(`Removed Cursor bridge hook (${target.label}): ${bridge.hooksPath}`);
+    }
+  }
 }
 
 export function getStatusResult(configPath: string, pluginPath: string): StatusResult {

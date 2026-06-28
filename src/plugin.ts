@@ -28,6 +28,12 @@ import { createLogger } from "./utils/logger.js";
 import { RequestPerf } from "./utils/perf.js";
 import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure } from "./utils/errors.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
+import {
+  applyBridgeJsonPrompt,
+  extractBridgeToolCallFromStreamOutput,
+  extractBridgeToolCallFromText,
+  isBridgeJsonEnabled,
+} from "./proxy/bridge-json.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
 import {
   buildSessionKey,
@@ -1222,6 +1228,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       });
 
       const allowedToolNames = extractAllowedToolNames(tools);
+      const bridgeJsonEnabled = isBridgeJsonEnabled();
       const toolSchemaMap = buildToolSchemaMap(tools);
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("bun-handler");
@@ -1234,16 +1241,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
       const backend = resolveBackendForRequest(sdkApiKey);
       reqPerf.mark("backend-resolved");
-      const {
-        prompt,
-        resumeChatId,
-        sessionKey: sessionResumeKey,
-        usedIncremental,
-        contentPrefix: sessionResumeContentPrefix,
-        recordContentPrefix: sessionResumeRecordContentPrefix,
-        toolFingerprint: sessionResumeToolFingerprint,
-        subagentFingerprint: sessionResumeSubagentFingerprint,
-      } = resolvePromptForBackend({
+      const resolvedPrompt = resolvePromptForBackend({
         backend,
         messages,
         tools,
@@ -1251,6 +1249,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         model,
         workspaceDirectory,
       });
+      const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
+      const {
+        resumeChatId,
+        sessionKey: sessionResumeKey,
+        usedIncremental,
+        contentPrefix: sessionResumeContentPrefix,
+        recordContentPrefix: sessionResumeRecordContentPrefix,
+        toolFingerprint: sessionResumeToolFingerprint,
+        subagentFingerprint: sessionResumeSubagentFingerprint,
+      } = resolvedPrompt;
       reqPerf.mark("prompt-built");
       const sessionResumeKeyHash = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
       const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
@@ -1341,13 +1349,34 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         }
 
         if (intercepted.toolCall) {
+          const toolCall = intercepted.toolCall;
           log.debug("Intercepted OpenCode tool call (non-stream)", {
-            name: intercepted.toolCall.function.name,
-            callId: intercepted.toolCall.id,
+            name: toolCall.function.name,
+            callId: toolCall.id,
           });
           const payload = boundaryContext.run(
             "createNonStreamToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, intercepted.toolCall),
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+          );
+          return new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        const completion = extractCompletionFromStream(stdout);
+        const bridgeToolCall = bridgeJsonEnabled
+          ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames)
+          : null;
+        if (bridgeToolCall) {
+          const toolCall = bridgeToolCall;
+          log.debug("Intercepted bridge JSON tool call (non-stream)", {
+            name: toolCall.function.name,
+            callId: toolCall.id,
+          });
+          const payload = boundaryContext.run(
+            "createNonStreamBridgeToolCallResponse",
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1382,7 +1411,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           });
         }
 
-        const completion = extractCompletionFromStream(stdout);
         const payload = createChatCompletionResponse(
           model,
           completion.assistantText || stdout || stderr,
@@ -1491,6 +1519,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   }
                 }
 
+                if (bridgeJsonEnabled && isAssistantText(event)) {
+                  const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+                  if (bridgeToolCall) {
+                    emitToolCallAndTerminate(bridgeToolCall);
+                    break;
+                  }
+                }
+
                 if (event.type === "tool_call") {
                   perf.mark("tool-call");
                   const result = await handleToolLoopEventWithFallback({
@@ -1574,6 +1610,13 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 usage = extractOpenAiUsageFromResult(event) ?? usage;
                 if (isSuccessfulResultEvent(event)) {
                   sawSuccessfulStreamOutput = true;
+                }
+              }
+              if (bridgeJsonEnabled && isAssistantText(event)) {
+                const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+                if (bridgeToolCall) {
+                  emitToolCallAndTerminate(bridgeToolCall);
+                  break;
                 }
               }
               if (event.type === "tool_call") {
@@ -1794,6 +1837,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const stream = bodyData?.stream === true;
       const tools = Array.isArray(bodyData?.tools) ? bodyData.tools : [];
       const allowedToolNames = extractAllowedToolNames(tools);
+      const bridgeJsonEnabled = isBridgeJsonEnabled();
       const toolSchemaMap = buildToolSchemaMap(tools);
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
@@ -1806,16 +1850,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const backend = resolveBackendForRequest(sdkApiKeyNode);
       reqPerf.mark("backend-resolved");
-      const {
-        prompt,
-        resumeChatId,
-        sessionKey: sessionResumeKey,
-        usedIncremental,
-        contentPrefix: sessionResumeContentPrefix,
-        recordContentPrefix: sessionResumeRecordContentPrefix,
-        toolFingerprint: sessionResumeToolFingerprint,
-        subagentFingerprint: sessionResumeSubagentFingerprint,
-      } = resolvePromptForBackend({
+      const resolvedPrompt = resolvePromptForBackend({
         backend,
         messages,
         tools,
@@ -1823,6 +1858,16 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         model,
         workspaceDirectory,
       });
+      const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
+      const {
+        resumeChatId,
+        sessionKey: sessionResumeKey,
+        usedIncremental,
+        contentPrefix: sessionResumeContentPrefix,
+        recordContentPrefix: sessionResumeRecordContentPrefix,
+        toolFingerprint: sessionResumeToolFingerprint,
+        subagentFingerprint: sessionResumeSubagentFingerprint,
+      } = resolvedPrompt;
       reqPerf.mark("prompt-built");
       const sessionResumeKeyHashNode = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
       const resumeChatIdHashNode = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
@@ -1921,13 +1966,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           }
 
           if (intercepted.toolCall) {
+            const toolCall = intercepted.toolCall;
             log.debug("Intercepted OpenCode tool call (non-stream)", {
-              name: intercepted.toolCall.function.name,
-              callId: intercepted.toolCall.id,
+              name: toolCall.function.name,
+              callId: toolCall.id,
             });
             const payload = boundaryContext.run(
               "createNonStreamToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, intercepted.toolCall),
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -1935,6 +1981,23 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           }
 
           const completion = extractCompletionFromStream(stdout);
+          const bridgeToolCall = bridgeJsonEnabled
+            ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames)
+            : null;
+          if (bridgeToolCall) {
+            const toolCall = bridgeToolCall;
+            log.debug("Intercepted bridge JSON tool call (non-stream)", {
+              name: toolCall.function.name,
+              callId: toolCall.id,
+            });
+            const payload = boundaryContext.run(
+              "createNonStreamBridgeToolCallResponse",
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            );
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(payload));
+            return;
+          }
 
           if (code !== 0 || spawnErrorText) {
             const errSource =
@@ -2091,6 +2154,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               usage = extractOpenAiUsageFromResult(event) ?? usage;
               if (isSuccessfulResultEvent(event)) {
                 sawSuccessfulStreamOutput = true;
+              }
+            }
+
+            if (bridgeJsonEnabled && isAssistantText(event)) {
+              const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+              if (bridgeToolCall) {
+                emitToolCallAndTerminate(bridgeToolCall);
+                break;
               }
             }
 

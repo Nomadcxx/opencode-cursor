@@ -35,6 +35,16 @@ Cursor CLI flags did not provide a drop-in fix:
 - `--sandbox enabled` still allowed Cursor's edit tool to change the file.
 - `--mode plan` kept the file unchanged, but returned planning/read-only behavior instead of an OpenCode-owned edit request.
 
+### Cursor bridge JSON
+
+`open-cursor install` writes a project Cursor hook at `.cursor/hooks.json` plus `.cursor/hooks/opencode-bridge-context.mjs`, unless the user passes `--skip-cursor-bridge`. Use `--cursor-bridge-scope user` for `~/.cursor/hooks.json`, or `--cursor-bridge-scope both` to write both project and user hooks. The hook adds a short `additional_context` instruction that asks Cursor models to return one literal JSON object for complete-file writes:
+
+```json
+{"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
+```
+
+At runtime, the proxy prepends the same instruction when OpenCode offers the `write` tool. The proxy accepts only a whole assistant response that is either that JSON object or a single fenced JSON block. It then converts the payload into an OpenAI `write` tool call and returns it to OpenCode. Set `CURSOR_ACP_BRIDGE_JSON=0` to disable runtime bridge parsing and prompt injection.
+
 ### `proxy-exec` mode (legacy/compat mode)
 
 - `cursor-acp` can inject tool definitions and execute via internal router:

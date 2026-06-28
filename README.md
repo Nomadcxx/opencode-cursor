@@ -10,18 +10,14 @@ No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Y
 
 ## Installation
 
-### Option A — One-line installer
+### Option A — npm global + install
 
-**Linux & macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
-```
-
-**Windows:**
-```powershell
 npm install -g @rama_nigg/open-cursor
 open-cursor install
 ```
+
+`open-cursor install` writes OpenCode config and installs a Cursor bridge hook at `.cursor/hooks.json` in the current workspace. Use `open-cursor install --skip-cursor-bridge` to leave `.cursor` untouched, or `--cursor-bridge-scope user` to write `~/.cursor/hooks.json` instead.
 
 Then authenticate and verify:
 ```bash
@@ -29,14 +25,18 @@ cursor-agent login
 opencode models | grep cursor-acp
 ```
 
-### Option B — npm global + CLI
+Upgrade: `npm update -g @rama_nigg/open-cursor`
+
+<details>
+<summary><b>Option B</b> — shell installer</summary>
+
+**Linux & macOS:**
 
 ```bash
-npm install -g @rama_nigg/open-cursor
-open-cursor install
+curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
 ```
 
-Upgrade: `npm update -g @rama_nigg/open-cursor`
+</details>
 
 <details>
 <summary><b>Option C</b> — Add to opencode.json</summary>

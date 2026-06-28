@@ -211,6 +211,22 @@ process.stdin.on("end", () => {
         },
       },
     ];
+  } else if (scenario === "assistant-bridge-write") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "text",
+              text: "{\\"name\\":\\"write\\",\\"arguments\\":{\\"path\\":\\"TODO.md\\",\\"content\\":\\"bridge rewrite\\"}}",
+            },
+          ],
+        },
+      },
+    ];
   } else {
     events = [
       {
@@ -544,6 +560,56 @@ describe("OpenCode-owned tool loop integration", () => {
       .join("");
     expect(allContent).not.toContain("Skipped malformed tool call");
     expect(allContent).not.toContain("edit fallback text");
+  });
+
+  it("converts non-stream bridge JSON into a write tool call", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-write";
+    process.env.MOCK_CURSOR_PROMPT_FILE = promptFile;
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [READ_TOOL, WRITE_TOOL],
+      messages: [{ role: "user", content: "Update TODO.md" }],
+    });
+
+    const json: any = await response.json();
+    const toolCall = json.choices?.[0]?.message?.tool_calls?.[0];
+    expect(toolCall?.function?.name).toBe("write");
+    expect(JSON.parse(toolCall?.function?.arguments ?? "{}")).toEqual({
+      path: "TODO.md",
+      content: "bridge rewrite",
+    });
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+
+    const promptText = readFileSync(promptFile, "utf8");
+    expect(promptText).toContain("opencode bridge mode is active");
+  });
+
+  it("converts streaming bridge JSON into a write tool call without leaking JSON text", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-write";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [READ_TOOL, WRITE_TOOL],
+      messages: [{ role: "user", content: "Update TODO.md" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("write");
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments).toContain("bridge rewrite");
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain('"name":"write"');
   });
 
   it("skips streaming edit when write tool is not offered", async () => {
