@@ -17,7 +17,7 @@ npm install -g @rama_nigg/open-cursor
 open-cursor install
 ```
 
-`open-cursor install` writes OpenCode config and installs a Cursor bridge hook at `.cursor/hooks.json` in the current workspace. Use `open-cursor install --skip-cursor-bridge` to leave `.cursor` untouched, or `--cursor-bridge-scope user` to write `~/.cursor/hooks.json` instead.
+`open-cursor install` writes OpenCode config and installs a Cursor bridge hook and rule in the current workspace: `.cursor/hooks.json`, `.cursor/hooks/opencode-bridge-context.mjs`, and `.cursor/rules/opencode-bridge.mdc`. Use `open-cursor install --skip-cursor-bridge` to leave `.cursor` untouched, or `--cursor-bridge-scope user` to write under `~/.cursor` instead.
 
 Then authenticate and verify:
 ```bash
@@ -36,7 +36,7 @@ Upgrade: `npm update -g @rama_nigg/open-cursor`
 curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
 ```
 
-The shell installer prefers the npm package. If npm is not available, it falls back to the Go TUI or a shell-only path. All install paths write the project Cursor bridge hook unless you pass `--skip-cursor-bridge`.
+The shell installer prefers the npm package. If npm is not available, it falls back to the Go TUI or a shell-only path. All install paths write the project Cursor bridge hook and rule unless you pass `--skip-cursor-bridge`.
 
 </details>
 
@@ -63,7 +63,7 @@ Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\op
 }
 ```
 
-Manual config does not install the Cursor bridge hook. Run Option A or B from each workspace if you want the hook, or pass `--skip-cursor-bridge` if you only want provider config.
+Manual config does not install the Cursor bridge hook and rule. Run Option A or B from each workspace if you want those files, or pass `--skip-cursor-bridge` if you only want provider config.
 
 > **Refresh models anytime** with the bundled CLI:
 > ```bash
@@ -82,14 +82,14 @@ cd opencode-cursor
 go build -o ./installer ./cmd/installer && ./installer
 ```
 
-The TUI installs the project Cursor bridge hook by default. Use `./installer --skip-cursor-bridge` to leave `.cursor` untouched.
+The TUI installs the project Cursor bridge hook and rule by default. Use `./installer --skip-cursor-bridge` to leave `.cursor` untouched.
 </details>
 
 <details>
 <summary><b>Option E</b> — LLM paste</summary>
 
 ```
-Install open-cursor for OpenCode: run `npm install -g @rama_nigg/open-cursor`, then run `open-cursor install` from the workspace so it writes opencode config and `.cursor/hooks.json`. Auth with `cursor-agent login`. Verify with `opencode models | grep cursor-acp`. Use `open-cursor install --skip-cursor-bridge` if the project must not be modified.
+Install open-cursor for OpenCode: run `npm install -g @rama_nigg/open-cursor`, then run `open-cursor install` from the workspace so it writes opencode config plus `.cursor/hooks.json` and `.cursor/rules/opencode-bridge.mdc`. Auth with `cursor-agent login`. Verify with `opencode models | grep cursor-acp`. Use `open-cursor install --skip-cursor-bridge` if the project must not be modified.
 ```
 </details>
 
@@ -160,7 +160,7 @@ flowchart TB
     OC["OpenCode"] --> SDK["@ai-sdk/openai-compatible"]
     SDK -->|"POST /v1/chat/completions"| PROXY["open-cursor proxy :32124"]
     PROXY -->|"spawn request"| BACKEND["cursor-agent / SDK backend"]
-    HOOK[".cursor/hooks.json\nbridge context"] -. "additional_context" .-> BACKEND
+    HOOK[".cursor/hooks.json + rules\nbridge context"] -. "additional_context" .-> BACKEND
     BACKEND -->|"HTTPS"| CURSOR["Cursor API"]
     CURSOR --> BACKEND
 

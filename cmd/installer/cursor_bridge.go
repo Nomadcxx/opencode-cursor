@@ -15,11 +15,23 @@ For file changes through opencode-cursor, read any needed files first, then resp
 {"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
 Use this only for a single complete-file write. Otherwise answer normally or use the available tool format.`
 
+const cursorBridgeRuleContent = `---
+description: opencode-cursor bridge instructions for cursor-agent.
+alwaysApply: true
+---
+
+# opencode-cursor bridge
+
+Do not use cursor native edit, write, shell, or terminal tools to mutate files for opencode-cursor file changes. Read files if needed, then follow the active opencode bridge instruction for the response shape.
+`
+
 func installCursorBridgeHook(root string) error {
 	cursorDir := filepath.Join(root, ".cursor")
 	hooksDir := filepath.Join(cursorDir, "hooks")
+	rulesDir := filepath.Join(cursorDir, "rules")
 	hooksPath := filepath.Join(cursorDir, "hooks.json")
 	scriptPath := filepath.Join(hooksDir, "opencode-bridge-context.mjs")
+	rulePath := filepath.Join(rulesDir, "opencode-bridge.mdc")
 
 	config, err := readCursorHooksConfig(hooksPath)
 	if err != nil {
@@ -30,11 +42,17 @@ func installCursorBridgeHook(root string) error {
 	if err := os.MkdirAll(hooksDir, 0755); err != nil {
 		return fmt.Errorf("failed to create Cursor hooks directory: %w", err)
 	}
+	if err := os.MkdirAll(rulesDir, 0755); err != nil {
+		return fmt.Errorf("failed to create Cursor rules directory: %w", err)
+	}
 	script := "#!/usr/bin/env node\n" +
 		"const context = " + strconv.Quote(cursorBridgeContext) + ";\n" +
 		"process.stdout.write(JSON.stringify({ additional_context: context }) + \"\\n\");\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
 		return fmt.Errorf("failed to write Cursor bridge hook script: %w", err)
+	}
+	if err := os.WriteFile(rulePath, []byte(cursorBridgeRuleContent), 0644); err != nil {
+		return fmt.Errorf("failed to write Cursor bridge rule: %w", err)
 	}
 
 	output, err := json.MarshalIndent(next, "", "  ")

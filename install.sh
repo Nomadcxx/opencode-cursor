@@ -34,18 +34,30 @@ For file changes through opencode-cursor, read any needed files first, then resp
 {"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
 Use this only for a single complete-file write. Otherwise answer normally or use the available tool format.'
 
+BRIDGE_RULE='---
+description: opencode-cursor bridge instructions for cursor-agent.
+alwaysApply: true
+---
+
+# opencode-cursor bridge
+
+Do not use cursor native edit, write, shell, or terminal tools to mutate files for opencode-cursor file changes. Read files if needed, then follow the active opencode bridge instruction for the response shape.'
+
 install_cursor_bridge_hook() {
     local root="$1"
-    OPENCODE_CURSOR_BRIDGE_CONTEXT="$BRIDGE_CONTEXT" bun -e '
+    OPENCODE_CURSOR_BRIDGE_CONTEXT="$BRIDGE_CONTEXT" OPENCODE_CURSOR_BRIDGE_RULE="$BRIDGE_RULE" bun -e '
     const fs = require("fs");
     const path = require("path");
     const root = process.argv[1];
     const command = "node .cursor/hooks/opencode-bridge-context.mjs";
     const cursorDir = path.join(root, ".cursor");
     const hooksDir = path.join(cursorDir, "hooks");
+    const rulesDir = path.join(cursorDir, "rules");
     const hooksPath = path.join(cursorDir, "hooks.json");
     const scriptPath = path.join(hooksDir, "opencode-bridge-context.mjs");
+    const rulePath = path.join(rulesDir, "opencode-bridge.mdc");
     fs.mkdirSync(hooksDir, { recursive: true });
+    fs.mkdirSync(rulesDir, { recursive: true });
     let config = { version: 1, hooks: {} };
     if (fs.existsSync(hooksPath)) {
       config = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
@@ -62,6 +74,7 @@ install_cursor_bridge_hook() {
       "const context = " + JSON.stringify(context) + ";\n" +
       "process.stdout.write(JSON.stringify({ additional_context: context }) + \"\\n\");\n";
     fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(rulePath, (process.env.OPENCODE_CURSOR_BRIDGE_RULE || "") + "\n");
     fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + "\n");
     ' "$root"
 }
@@ -231,9 +244,10 @@ else
     if [ "$SKIP_CURSOR_BRIDGE" -eq 1 ]; then
         echo "Cursor bridge hook skipped (--skip-cursor-bridge)"
     else
-        echo "Installing Cursor bridge hook..."
+        echo "Installing Cursor bridge hook and rule..."
         install_cursor_bridge_hook "$BRIDGE_ROOT"
         echo "Cursor bridge hook: ${BRIDGE_ROOT}/.cursor/hooks.json"
+        echo "Cursor bridge rule: ${BRIDGE_ROOT}/.cursor/rules/opencode-bridge.mdc"
     fi
 
     echo ""

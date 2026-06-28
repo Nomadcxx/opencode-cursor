@@ -37,7 +37,7 @@ Cursor CLI flags did not provide a drop-in fix:
 
 ### Cursor bridge JSON
 
-`open-cursor install` writes a project Cursor hook at `.cursor/hooks.json` plus `.cursor/hooks/opencode-bridge-context.mjs`, unless the user passes `--skip-cursor-bridge`. Use `--cursor-bridge-scope user` for `~/.cursor/hooks.json`, or `--cursor-bridge-scope both` to write both project and user hooks. The hook adds a short `additional_context` instruction that asks Cursor models to return one literal JSON object for complete-file writes:
+`open-cursor install` writes a project Cursor hook and rule at `.cursor/hooks.json`, `.cursor/hooks/opencode-bridge-context.mjs`, and `.cursor/rules/opencode-bridge.mdc`, unless the user passes `--skip-cursor-bridge`. Use `--cursor-bridge-scope user` for `~/.cursor`, or `--cursor-bridge-scope both` to write both project and user files. The hook adds a short `additional_context` instruction that asks Cursor models to return one literal JSON object for complete-file writes. The rule reinforces that Cursor-native edit/write/shell tools should not mutate files for opencode-cursor changes:
 
 ```json
 {"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}

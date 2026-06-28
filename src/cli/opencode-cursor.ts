@@ -414,7 +414,7 @@ Options:
   --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
   --copy                Copy plugin instead of symlink
   --skip-models         Skip model sync during install
-  --skip-cursor-bridge  Do not write the project .cursor bridge hook during install
+  --skip-cursor-bridge  Do not write the project .cursor bridge hook and rule during install
   --cursor-bridge-scope <scope>
                        Cursor hook scope: project, user, or both (default: project)
   --variants            Generate compact OpenCode model variants from Cursor models
@@ -741,6 +741,15 @@ function installAiSdk(opencodeDir: string) {
 
 export const CURSOR_BRIDGE_HOOK_COMMAND = "node .cursor/hooks/opencode-bridge-context.mjs";
 export const CURSOR_BRIDGE_USER_HOOK_COMMAND = "node ./hooks/opencode-bridge-context.mjs";
+const CURSOR_BRIDGE_RULE_CONTENT = `---
+description: opencode-cursor bridge instructions for cursor-agent.
+alwaysApply: true
+---
+
+# opencode-cursor bridge
+
+Do not use cursor native edit, write, shell, or terminal tools to mutate files for opencode-cursor file changes. Read files if needed, then follow the active opencode bridge instruction for the response shape.
+`;
 
 type CursorBridgeScope = "project" | "user";
 
@@ -748,6 +757,7 @@ type CursorBridgeInstallResult = {
   changed: boolean;
   hooksPath: string;
   scriptPath: string;
+  rulePath: string;
 };
 
 export function ensureCursorBridgeHook(
@@ -757,23 +767,28 @@ export function ensureCursorBridgeHook(
   const scope = options.scope ?? "project";
   const cursorDir = join(rootDir, ".cursor");
   const hooksDir = join(cursorDir, "hooks");
+  const rulesDir = join(cursorDir, "rules");
   const hooksPath = join(cursorDir, "hooks.json");
   const scriptPath = join(hooksDir, "opencode-bridge-context.mjs");
+  const rulePath = join(rulesDir, "opencode-bridge.mdc");
   const script = buildCursorBridgeHookScript();
   const current = readCursorHooksConfig(hooksPath);
   const next = mergeCursorBridgeHook(current, scope);
   const currentJson = JSON.stringify(current);
   const nextJson = JSON.stringify(next);
   const scriptChanged = !existsSync(scriptPath) || readFileSync(scriptPath, "utf8") !== script;
-  const changed = currentJson !== nextJson || scriptChanged;
+  const ruleChanged = !existsSync(rulePath) || readFileSync(rulePath, "utf8") !== CURSOR_BRIDGE_RULE_CONTENT;
+  const changed = currentJson !== nextJson || scriptChanged || ruleChanged;
 
   if (!options.dryRun && changed) {
     mkdirSync(hooksDir, { recursive: true });
+    mkdirSync(rulesDir, { recursive: true });
     writeFileSync(scriptPath, script, "utf8");
+    writeFileSync(rulePath, CURSOR_BRIDGE_RULE_CONTENT, "utf8");
     writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   }
 
-  return { changed, hooksPath, scriptPath };
+  return { changed, hooksPath, scriptPath, rulePath };
 }
 
 function removeCursorBridgeHook(
@@ -784,16 +799,18 @@ function removeCursorBridgeHook(
   const cursorDir = join(rootDir, ".cursor");
   const hooksPath = join(cursorDir, "hooks.json");
   const scriptPath = join(cursorDir, "hooks", "opencode-bridge-context.mjs");
+  const rulePath = join(cursorDir, "rules", "opencode-bridge.mdc");
   const current = readCursorHooksConfig(hooksPath);
   const next = removeCursorBridgeHookEntry(current, scope);
-  const changed = JSON.stringify(current) !== JSON.stringify(next) || existsSync(scriptPath);
+  const changed = JSON.stringify(current) !== JSON.stringify(next) || existsSync(scriptPath) || existsSync(rulePath);
 
   rmSync(scriptPath, { force: true });
+  rmSync(rulePath, { force: true });
   if (existsSync(hooksPath)) {
     writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
   }
 
-  return { changed, hooksPath, scriptPath };
+  return { changed, hooksPath, scriptPath, rulePath };
 }
 
 function buildCursorBridgeHookScript(): string {
@@ -894,7 +911,7 @@ function commandInstall(options: Options) {
     installAiSdk(opencodeDir);
   }
   if (options.skipCursorBridge) {
-    console.log("Cursor bridge hook: skipped (--skip-cursor-bridge)");
+    console.log("Cursor bridge hook and rule: skipped (--skip-cursor-bridge)");
   } else {
     for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
       const bridge = ensureCursorBridgeHook(target.root, {
@@ -902,6 +919,7 @@ function commandInstall(options: Options) {
         scope: target.scope,
       });
       console.log(`${options.dryRun ? "Would write" : "Cursor bridge hook"} (${target.label}): ${bridge.hooksPath}`);
+      console.log(`${options.dryRun ? "Would write" : "Cursor bridge rule"} (${target.label}): ${bridge.rulePath}`);
     }
   }
 
@@ -1018,6 +1036,7 @@ function commandUninstall(options: Options) {
     const bridge = removeCursorBridgeHook(target.root, { scope: target.scope });
     if (bridge.changed) {
       console.log(`Removed Cursor bridge hook (${target.label}): ${bridge.hooksPath}`);
+      console.log(`Removed Cursor bridge rule (${target.label}): ${bridge.rulePath}`);
     }
   }
 }

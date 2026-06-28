@@ -17,6 +17,7 @@ func TestInstallCursorBridgeHookWritesProjectHook(t *testing.T) {
 
 	hooksPath := filepath.Join(root, ".cursor", "hooks.json")
 	scriptPath := filepath.Join(root, ".cursor", "hooks", "opencode-bridge-context.mjs")
+	rulePath := filepath.Join(root, ".cursor", "rules", "opencode-bridge.mdc")
 
 	raw, err := os.ReadFile(hooksPath)
 	if err != nil {
@@ -42,6 +43,14 @@ func TestInstallCursorBridgeHookWritesProjectHook(t *testing.T) {
 	}
 	if !strings.Contains(string(script), "opencode bridge mode is active") {
 		t.Fatalf("hook script missing bridge context")
+	}
+
+	rule, err := os.ReadFile(rulePath)
+	if err != nil {
+		t.Fatalf("read bridge rule: %v", err)
+	}
+	if !strings.Contains(string(rule), "Do not use cursor native edit") {
+		t.Fatalf("rule missing bridge guidance")
 	}
 }
 

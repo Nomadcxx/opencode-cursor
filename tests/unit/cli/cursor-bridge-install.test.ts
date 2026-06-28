@@ -16,10 +16,12 @@ describe("cli cursor bridge hook install", () => {
       const result = ensureCursorBridgeHook(dir, { dryRun: false });
       const hooksPath = join(dir, ".cursor", "hooks.json");
       const scriptPath = join(dir, ".cursor", "hooks", "opencode-bridge-context.mjs");
+      const rulePath = join(dir, ".cursor", "rules", "opencode-bridge.mdc");
       const hooks = JSON.parse(readFileSync(hooksPath, "utf8"));
 
       expect(result.changed).toBe(true);
       expect(existsSync(scriptPath)).toBe(true);
+      expect(readFileSync(rulePath, "utf8")).toContain("Do not use cursor native edit");
       expect(hooks.version).toBe(1);
       expect(hooks.hooks.sessionStart).toContainEqual({ command: CURSOR_BRIDGE_HOOK_COMMAND });
     } finally {
