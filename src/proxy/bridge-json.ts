@@ -58,7 +58,10 @@ export function extractBridgeToolCallFromText(
     return null;
   }
 
-  const { path, content } = parsed.arguments;
+  const { path } = parsed.arguments;
+  const content = typeof parsed.arguments.content === "string"
+    ? parsed.arguments.content
+    : parsed.arguments.contents;
   if (typeof path !== "string" || path.trim().length === 0 || typeof content !== "string") {
     return null;
   }

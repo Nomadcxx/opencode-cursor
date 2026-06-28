@@ -103,6 +103,16 @@ describe("proxy/bridge-json", () => {
     expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"after prose"}');
   });
 
+  it("accepts contents as a bridge write content alias", () => {
+    const toolCall = extractBridgeToolCallFromText(
+      '{"name":"write","arguments":{"path":"demo.txt","contents":"alias body"}}',
+      new Set(["write"]),
+    );
+
+    expect(toolCall?.function.name).toBe("write");
+    expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"alias body"}');
+  });
+
   it("appends bridge instructions unless the runtime env opts out", () => {
     const prompt = applyBridgeJsonPrompt("USER: update demo.txt", {
       allowedToolNames: new Set(["write"]),
