@@ -80,6 +80,29 @@ describe("proxy/bridge-json", () => {
     expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"after read"}');
   });
 
+  it("extracts trailing bridge JSON from a streamed assistant message with prose before it", () => {
+    const output = JSON.stringify({
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "The file will be written to demo.txt.",
+              '{"name":"write","arguments":{"path":"demo.txt","content":"after prose"}}',
+            ].join("\n"),
+          },
+        ],
+      },
+    });
+
+    const toolCall = extractBridgeToolCallFromStreamOutput(output, new Set(["write"]));
+
+    expect(toolCall?.function.name).toBe("write");
+    expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"after prose"}');
+  });
+
   it("appends bridge instructions unless the runtime env opts out", () => {
     const prompt = applyBridgeJsonPrompt("USER: update demo.txt", {
       allowedToolNames: new Set(["write"]),

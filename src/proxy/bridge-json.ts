@@ -86,13 +86,28 @@ export function extractBridgeToolCallFromStreamOutput(
     if (!event || !isAssistantText(event)) {
       continue;
     }
-    const toolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+    const text = extractText(event);
+    const toolCall = extractBridgeToolCallFromText(text, allowedToolNames)
+      ?? extractBridgeToolCallFromTrailingLine(text, allowedToolNames);
     if (toolCall) {
       return toolCall;
     }
   }
 
   return null;
+}
+
+function extractBridgeToolCallFromTrailingLine(
+  text: string,
+  allowedToolNames: Set<string>,
+): OpenAiToolCall | null {
+  const lines = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lastLine = lines.at(-1);
+  if (!lastLine || !lastLine.startsWith("{") || !lastLine.endsWith("}")) {
+    return null;
+  }
+
+  return extractBridgeToolCallFromText(lastLine, allowedToolNames);
 }
 
 function extractStrictJsonText(text: string): string | null {

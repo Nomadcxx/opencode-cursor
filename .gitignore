@@ -11,6 +11,7 @@ opencode-cursor-*.log
 
 # OpenCode local config
 .opencode/
+.cursor/
 .claude/
 .sisyphus/
 .worktrees/
