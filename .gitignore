@@ -6,7 +6,7 @@ bun.lock
 # Installer binaries (not source)
 cmd/installer/installer-binary
 opencode-cursor-installer
-installer
+/installer
 opencode-cursor-*.log
 
 # OpenCode local config
@@ -24,9 +24,17 @@ UNINSTALL_STEPS.md
 # Session logs and plans
 *-cd-*.txt
 docs/plans/
+docs/superpowers/
 
 # PR/agent review handovers (local only — never commit)
 docs/reviews/
+docs/REVIEW_*.md
+
+# Historical/local analysis docs
+docs/ACP_MIGRATION.md
+docs/AUTHHOOK_AUDIT.md
+docs/gap-analysis.md
+docs/tool-reliability-gap-*.md
 
 # Agent configuration (local only)
 AGENTS.md

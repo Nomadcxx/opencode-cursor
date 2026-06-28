@@ -3,6 +3,7 @@ package main
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -182,11 +183,12 @@ func (m model) renderWelcome() string {
 func (m model) renderSelectMode() string {
 	return "Choose installation method:\n\n" +
 		"  [1] Quick Install (recommended)\n" +
-		"      Adds the npm package to your opencode.json plugin array.\n" +
+		"      Adds the npm package to opencode.json and installs the Cursor bridge hook.\n" +
 		"      Fastest — no building required.\n\n" +
 		"  [2] Build from Source\n" +
-		"      Clones, builds, and symlinks the plugin locally.\n" +
+		"      Clones, builds, symlinks the plugin, and installs the Cursor bridge hook.\n" +
 		"      Use if you need to modify the source code.\n\n" +
+		"Use --skip-cursor-bridge to leave .cursor untouched.\n\n" +
 		"Press 1 or 2 to continue."
 }
 
@@ -313,6 +315,9 @@ func (m model) renderComplete() string {
 		pathStyle := lipgloss.NewStyle().Foreground(FgMuted).Italic(true)
 		b.WriteString(fmt.Sprintf("Plugin:  %s\n", pathStyle.Render(m.pluginDir+"/cursor-acp.js")))
 		b.WriteString(fmt.Sprintf("Config:  %s\n", pathStyle.Render(m.configPath)))
+		if !m.skipCursorBridge {
+			b.WriteString(fmt.Sprintf("Cursor:  %s\n", pathStyle.Render(filepath.Join(m.cursorBridgeRoot, ".cursor", "hooks.json"))))
+		}
 	}
 
 	b.WriteString("\n")

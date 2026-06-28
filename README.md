@@ -36,6 +36,8 @@ Upgrade: `npm update -g @rama_nigg/open-cursor`
 curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
 ```
 
+The shell installer prefers the npm package. If npm is not available, it falls back to the Go TUI or a shell-only path. All install paths write the project Cursor bridge hook unless you pass `--skip-cursor-bridge`.
+
 </details>
 
 <details>
@@ -54,50 +56,21 @@ Add to `~/.config/opencode/opencode.json` (or `%USERPROFILE%\.config\opencode\op
         "baseURL": "http://127.0.0.1:32124/v1"
       },
       "models": {
-        "cursor-acp/auto":              { "name": "Auto" },
-
-        "cursor-acp/claude-opus-4-7":   { "name": "Claude 4.7 Opus" },
-        "cursor-acp/claude-4.6-opus":   { "name": "Claude 4.6 Opus" },
-        "cursor-acp/claude-4.6-sonnet": { "name": "Claude 4.6 Sonnet" },
-        "cursor-acp/claude-4.5-opus":   { "name": "Claude 4.5 Opus" },
-        "cursor-acp/claude-4.5-sonnet": { "name": "Claude 4.5 Sonnet" },
-        "cursor-acp/claude-4.5-haiku":  { "name": "Claude 4.5 Haiku" },
-        "cursor-acp/claude-4-sonnet":   { "name": "Claude 4 Sonnet" },
-
-        "cursor-acp/gpt-5.5":           { "name": "GPT-5.5" },
-        "cursor-acp/gpt-5.4":           { "name": "GPT-5.4" },
-        "cursor-acp/gpt-5.4-mini":      { "name": "GPT-5.4 Mini" },
-        "cursor-acp/gpt-5.4-nano":      { "name": "GPT-5.4 Nano" },
-        "cursor-acp/gpt-5.3-codex":     { "name": "GPT-5.3 Codex" },
-        "cursor-acp/gpt-5.2":           { "name": "GPT-5.2" },
-        "cursor-acp/gpt-5.2-codex":     { "name": "GPT-5.2 Codex" },
-        "cursor-acp/gpt-5.1-codex":     { "name": "GPT-5.1 Codex" },
-        "cursor-acp/gpt-5.1-codex-max": { "name": "GPT-5.1 Codex Max" },
-        "cursor-acp/gpt-5.1-codex-mini":{ "name": "GPT-5.1 Codex Mini" },
-        "cursor-acp/gpt-5-mini":        { "name": "GPT-5 Mini" },
-
-        "cursor-acp/gemini-3.1-pro":    { "name": "Gemini 3.1 Pro" },
-        "cursor-acp/gemini-3-pro":      { "name": "Gemini 3 Pro" },
-        "cursor-acp/gemini-3-flash":    { "name": "Gemini 3 Flash" },
-
-        "cursor-acp/composer-2":        { "name": "Composer 2" },
-        "cursor-acp/composer-2-fast":   { "name": "Composer 2 Fast" },
-        "cursor-acp/composer-1.5":      { "name": "Composer 1.5" },
-
-        "cursor-acp/grok-4-20":         { "name": "Grok 4.20" },
-        "cursor-acp/kimi-k2.5":         { "name": "Kimi K2.5" }
+        "cursor-acp/auto": { "name": "Auto" }
       }
     }
   }
 }
 ```
 
+Manual config does not install the Cursor bridge hook. Run Option A or B from each workspace if you want the hook, or pass `--skip-cursor-bridge` if you only want provider config.
+
 > **Refresh models anytime** with the bundled CLI:
 > ```bash
 > open-cursor sync-models                       # plain list
 > open-cursor sync-models --variants --compact  # group thinking / fast / -low/-high variants under each base
 > ```
-> The `--variants --compact` form is recommended — it folds dozens of `*-thinking-fast`, `*-high-fast`, etc. into a single entry per family with a `variants` map, and includes `cost` from the official Cursor pricing table so OpenCode TokenSpeed can render usage correctly.
+> The `--variants --compact` form folds dozens of `*-thinking-fast`, `*-high-fast`, etc. into a single entry per family with a `variants` map, and includes `cost` from the Cursor pricing table so OpenCode TokenSpeed can render usage correctly.
 </details>
 
 <details>
@@ -108,13 +81,15 @@ git clone https://github.com/Nomadcxx/opencode-cursor.git
 cd opencode-cursor
 go build -o ./installer ./cmd/installer && ./installer
 ```
+
+The TUI installs the project Cursor bridge hook by default. Use `./installer --skip-cursor-bridge` to leave `.cursor` untouched.
 </details>
 
 <details>
 <summary><b>Option E</b> — LLM paste</summary>
 
 ```
-Install open-cursor for OpenCode: edit ~/.config/opencode/opencode.json, add "@rama_nigg/open-cursor@latest" to "plugin", add a "cursor-acp" provider with npm "@ai-sdk/openai-compatible" and a baseURL of http://127.0.0.1:32124/v1. Populate models by running `open-cursor sync-models --variants --compact` after install (or copy the model list from the README). Auth: `cursor-agent login`. Verify: `opencode models | grep cursor-acp`.
+Install open-cursor for OpenCode: run `npm install -g @rama_nigg/open-cursor`, then run `open-cursor install` from the workspace so it writes opencode config and `.cursor/hooks.json`. Auth with `cursor-agent login`. Verify with `opencode models | grep cursor-acp`. Use `open-cursor install --skip-cursor-bridge` if the project must not be modified.
 ```
 </details>
 
@@ -184,12 +159,12 @@ Any MCP server using stdio transport works. Tested with hybrid-memory, @modelcon
 flowchart TB
     OC["OpenCode"] --> SDK["@ai-sdk/openai-compatible"]
     SDK -->|"POST /v1/chat/completions"| PROXY["open-cursor proxy :32124"]
-    PROXY -->|"spawn persistent"| RUNNER["Node runner: sdk-runner.mjs"]
-    RUNNER -->|"stdin: {model, prompt, cwd}"| CURSORSDK["@cursor/sdk Agent.create + send()"]
-    CURSORSDK -->|"HTTPS"| CURSOR["Cursor API"]
-    CURSOR --> CURSORSDK
+    PROXY -->|"spawn request"| BACKEND["cursor-agent / SDK backend"]
+    HOOK[".cursor/hooks.json\nbridge context"] -. "additional_context" .-> BACKEND
+    BACKEND -->|"HTTPS"| CURSOR["Cursor API"]
+    CURSOR --> BACKEND
 
-    CURSORSDK -->|"stdout: NDJSON StreamJsonEvent"| PARSER["Parse + convert to SSE"]
+    BACKEND -->|"stream-json / SDK events"| PARSER["Parse + convert to SSE"]
     PARSER -->|"assistant / thinking events"| SSE["SSE content chunks"]
     PARSER -->|"tool_call event"| BOUNDARY["Provider boundary (v1 default)"]
     BOUNDARY --> COMPAT["Schema compat + alias normalization"]
@@ -199,12 +174,12 @@ flowchart TB
 
     OC -->|"execute tool locally"| TOOLRUN["OpenCode tool runtime"]
     TOOLRUN -->|"next request includes role:tool result"| SDK
-    SDK -->|"TOOL_RESULT prompt block"| RUNNER
+    SDK -->|"TOOL_RESULT prompt block"| BACKEND
 
-    RUNNER -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
+    BACKEND -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
     MCPTOOL -->|"stdio"| MCP["MCP Servers"]
     MCP --> MCPTOOL
-    MCPTOOL --> RUNNER
+    MCPTOOL --> BACKEND
 ```
 
 <details>
@@ -220,7 +195,7 @@ Startup model refresh is additive by default. Use `CURSOR_ACP_MODEL_AUTO_REFRESH
 </details>
 
 ## Alternatives
-THERE is currently not a single perfect plugin for cursor in opencode, my advice is stick with what is the LEAST worst option for you.
+Cursor integration in opencode still has tradeoffs. Pick the least bad option for your workflow.
 |                   |        open-cursor         | [yet-another-opencode-cursor-auth](https://github.com/Yukaii/yet-another-opencode-cursor-auth) | [opencode-cursor-auth](https://github.com/POSO-PocketSolutions/opencode-cursor-auth) | [cursor-opencode-auth](https://github.com/R44VC0RP/cursor-opencode-auth) |
 | ----------------- | :------------------------: | :--------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------: | :----------------------------------------------------------------------: |
 | **Architecture**  | HTTP proxy via cursor-agent |                                       Direct Connect-RPC                                       |                             HTTP proxy via cursor-agent                              |                       Direct Connect-RPC/protobuf                        |

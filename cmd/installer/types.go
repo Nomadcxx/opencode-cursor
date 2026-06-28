@@ -70,6 +70,7 @@ type model struct {
 	selectedOption   int
 	debugMode        bool
 	noRollback       bool
+	skipCursorBridge bool
 	logFile          *os.File
 
 	// Animations
@@ -81,13 +82,14 @@ type model struct {
 	checksComplete bool
 
 	// Installation paths
-	projectDir    string
-	pluginEntry   string
-	pluginDir     string
-	configPath    string
-	existingSetup bool
-	isUninstall   bool
-	npmTag        string
+	projectDir       string
+	pluginEntry      string
+	pluginDir        string
+	configPath       string
+	cursorBridgeRoot string
+	existingSetup    bool
+	isUninstall      bool
+	npmTag           string
 
 	// Context for cancellation
 	ctx    context.Context

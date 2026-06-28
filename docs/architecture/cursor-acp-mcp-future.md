@@ -171,7 +171,7 @@ Repros: [#153623](https://forum.cursor.com/t/acp-agent-silently-ignores-mcpserve
 
 Ship the bridge: install via README, dual backend, OpenCode tool loop, MCP via `mcptool`. Roadmap phase **ACP + MCP** stays unchecked — deferral, not cancellation.
 
-See [runtime-tool-loop.md](runtime-tool-loop.md), [ACP_MIGRATION.md](../ACP_MIGRATION.md).
+See [runtime-tool-loop.md](runtime-tool-loop.md).
 
 ---
 

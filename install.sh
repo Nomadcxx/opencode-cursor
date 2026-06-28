@@ -19,8 +19,52 @@ else
 fi
 PLUGIN_DIR="${CONFIG_HOME}/opencode/plugin"
 CONFIG_PATH="${CONFIG_HOME}/opencode/opencode.json"
+BRIDGE_ROOT="${OPENCODE_CURSOR_BRIDGE_ROOT:-$PWD}"
 
 NPM_PKG="@rama_nigg/open-cursor"
+SKIP_CURSOR_BRIDGE=0
+for arg in "$@"; do
+    if [ "$arg" = "--skip-cursor-bridge" ]; then
+        SKIP_CURSOR_BRIDGE=1
+    fi
+done
+
+BRIDGE_CONTEXT='SYSTEM: opencode bridge mode is active.
+For file changes through opencode-cursor, read any needed files first, then respond with exactly one JSON object and no prose:
+{"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
+Use this only for a single complete-file write. Otherwise answer normally or use the available tool format.'
+
+install_cursor_bridge_hook() {
+    local root="$1"
+    OPENCODE_CURSOR_BRIDGE_CONTEXT="$BRIDGE_CONTEXT" bun -e '
+    const fs = require("fs");
+    const path = require("path");
+    const root = process.argv[1];
+    const command = "node .cursor/hooks/opencode-bridge-context.mjs";
+    const cursorDir = path.join(root, ".cursor");
+    const hooksDir = path.join(cursorDir, "hooks");
+    const hooksPath = path.join(cursorDir, "hooks.json");
+    const scriptPath = path.join(hooksDir, "opencode-bridge-context.mjs");
+    fs.mkdirSync(hooksDir, { recursive: true });
+    let config = { version: 1, hooks: {} };
+    if (fs.existsSync(hooksPath)) {
+      config = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
+    }
+    config.version = typeof config.version === "number" ? config.version : 1;
+    config.hooks = config.hooks && typeof config.hooks === "object" && !Array.isArray(config.hooks) ? config.hooks : {};
+    const sessionStart = Array.isArray(config.hooks.sessionStart) ? config.hooks.sessionStart : [];
+    if (!sessionStart.some((hook) => hook && hook.command === command)) {
+      sessionStart.push({ command });
+    }
+    config.hooks.sessionStart = sessionStart;
+    const context = process.env.OPENCODE_CURSOR_BRIDGE_CONTEXT || "";
+    const script = "#!/usr/bin/env node\n" +
+      "const context = " + JSON.stringify(context) + ";\n" +
+      "process.stdout.write(JSON.stringify({ additional_context: context }) + \"\\n\");\n";
+    fs.writeFileSync(scriptPath, script);
+    fs.writeFileSync(hooksPath, JSON.stringify(config, null, 2) + "\n");
+    ' "$root"
+}
 
 # If npm is available, install/upgrade the published package and run its installer.
 # This produces a plugin symlink pointing at the globally-installed package, so
@@ -69,6 +113,7 @@ fi
 if command -v go &>/dev/null; then
     echo "Installing to: ${INSTALL_DIR}"
     mkdir -p "$INSTALL_DIR"
+    export OPENCODE_CURSOR_BRIDGE_ROOT="$BRIDGE_ROOT"
     cd "$INSTALL_DIR"
 
     echo "Downloading opencode-cursor..."
@@ -180,6 +225,15 @@ else
         fs.writeFileSync(p,JSON.stringify(c,null,2));
         " "$CONFIG_PATH" "$NPM_PLUGIN"
         echo "Note: jq not found; models not synced. Run ./scripts/sync-models.sh or cursor-agent models to populate."
+    fi
+
+    echo ""
+    if [ "$SKIP_CURSOR_BRIDGE" -eq 1 ]; then
+        echo "Cursor bridge hook skipped (--skip-cursor-bridge)"
+    else
+        echo "Installing Cursor bridge hook..."
+        install_cursor_bridge_hook "$BRIDGE_ROOT"
+        echo "Cursor bridge hook: ${BRIDGE_ROOT}/.cursor/hooks.json"
     fi
 
     echo ""

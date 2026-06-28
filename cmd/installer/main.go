@@ -20,7 +20,7 @@ const (
 	modeBuildFromSource
 )
 
-func newModel(debugMode, noRollback bool, logFile *os.File) model {
+func newModel(debugMode, noRollback, skipCursorBridge bool, logFile *os.File) model {
 	s := spinner.New()
 	s.Style = lipgloss.NewStyle().Foreground(Secondary)
 	s.Spinner = spinner.Dot
@@ -30,6 +30,10 @@ func newModel(debugMode, noRollback bool, logFile *os.File) model {
 	// Detect paths
 	configDir, _ := getConfigDir()
 	projectDir := getProjectDir()
+	cursorBridgeRoot := os.Getenv("OPENCODE_CURSOR_BRIDGE_ROOT")
+	if cursorBridgeRoot == "" {
+		cursorBridgeRoot = projectDir
+	}
 	existingSetup, configPath := detectExistingSetup()
 	npmTag := os.Getenv("CURSOR_ACP_NPM_TAG")
 	if npmTag == "" {
@@ -37,24 +41,26 @@ func newModel(debugMode, noRollback bool, logFile *os.File) model {
 	}
 
 	m := model{
-		step:          stepWelcome,
-		tasks:         []installTask{},
-		spinner:       s,
-		errors:        []string{},
-		warnings:      []string{},
-		mode:          modeQuickInstall,
-		debugMode:     debugMode,
-		noRollback:    noRollback,
-		logFile:       logFile,
-		ctx:           ctx,
-		cancel:        cancel,
-		projectDir:    projectDir,
-		pluginEntry:   "",
-		pluginDir:     filepath.Join(configDir, "opencode", "plugin"),
-		configPath:    configPath,
-		existingSetup: existingSetup,
-		backupFiles:   make(map[string][]byte),
-		npmTag:        npmTag,
+		step:             stepWelcome,
+		tasks:            []installTask{},
+		spinner:          s,
+		errors:           []string{},
+		warnings:         []string{},
+		mode:             modeQuickInstall,
+		debugMode:        debugMode,
+		noRollback:       noRollback,
+		skipCursorBridge: skipCursorBridge,
+		logFile:          logFile,
+		ctx:              ctx,
+		cancel:           cancel,
+		projectDir:       projectDir,
+		pluginEntry:      "",
+		pluginDir:        filepath.Join(configDir, "opencode", "plugin"),
+		configPath:       configPath,
+		cursorBridgeRoot: cursorBridgeRoot,
+		existingSetup:    existingSetup,
+		backupFiles:      make(map[string][]byte),
+		npmTag:           npmTag,
 
 		beams:  nil,
 		ticker: NewTypewriterTicker(),
@@ -132,6 +138,7 @@ func tickCmd() tea.Cmd {
 func main() {
 	debugMode := false
 	noRollback := false
+	skipCursorBridge := false
 
 	for _, arg := range os.Args[1:] {
 		switch arg {
@@ -139,6 +146,8 @@ func main() {
 			debugMode = true
 		case "--no-rollback":
 			noRollback = true
+		case "--skip-cursor-bridge":
+			skipCursorBridge = true
 		}
 	}
 
@@ -153,7 +162,7 @@ func main() {
 		logFile.WriteString(fmt.Sprintf("Debug Mode: %v\n\n", debugMode))
 	}
 
-	m := newModel(debugMode, noRollback, logFile)
+	m := newModel(debugMode, noRollback, skipCursorBridge, logFile)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	globalProgram = p
 

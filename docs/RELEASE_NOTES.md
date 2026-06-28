@@ -39,7 +39,7 @@
 ### Migration
 
 - No action required (automatic)
-- See `docs/ACP_MIGRATION.md` for details
+- Current architecture notes live in `docs/architecture/cursor-acp-mcp-future.md`
 
 ### Dependencies
 
