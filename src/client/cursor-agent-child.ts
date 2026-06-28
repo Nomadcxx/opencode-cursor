@@ -13,8 +13,9 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createLogger } from "../utils/logger.js";
-import { resolveCursorAgentBinary } from "../utils/binary.js";
-import { extractEventJson } from "./sdk-child.js";
+import { resolveCursorAgentBinary, resolveCursorAgentBinaryStrict } from "../utils/binary.js";
+import { BinaryNotFoundError } from "../utils/errors.js";
+import { extractEventJson, createSdkNodeChild, SdkNodeChild } from "./sdk-child.js";
 
 const log = createLogger("cursor-agent-child");
 
@@ -102,6 +103,10 @@ class CursorAgentPoolRunner {
   private starting: Promise<void> | null = null;
   private readonly poolKey: string;
   private readonly onIdle: (poolKey: string) => void;
+  /** True when resolveCursorAgentBinaryStrict() threw BinaryNotFoundError on win32. */
+  binaryMissing = false;
+  /** The path that was attempted when binaryMissing is true. */
+  attemptedPath: string | null = null;
 
   constructor(poolKey: string, onIdle: (poolKey: string) => void) {
     this.poolKey = poolKey;
@@ -121,6 +126,24 @@ class CursorAgentPoolRunner {
   }
 
   private async doSpawn(): Promise<void> {
+    // On Windows, check strictly whether the binary exists before spawning.
+    // If not found, set binaryMissing flag and return without spawning.
+    try {
+      resolveCursorAgentBinaryStrict();
+    } catch (err) {
+      if (err instanceof BinaryNotFoundError) {
+        this.binaryMissing = true;
+        this.attemptedPath = err.attemptedPath;
+        log.warn("cursor-agent binary not found on Windows, falling back to SDK runner", {
+          attemptedPath: err.attemptedPath,
+          platform: process.platform,
+          fallback: "sdk-runner",
+        });
+        return;
+      }
+      throw err;
+    }
+
     const nodeBin = resolveNodeBinary();
     const runnerPath = resolveCursorAgentRunnerPath();
 
@@ -373,6 +396,18 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
   public readonly stderr: PassThrough = new PassThrough();
   private requestId: string | null = null;
   private runner: CursorAgentPoolRunner | null = null;
+  private sdkChild: ReturnType<typeof createSdkNodeChild> | null = null;
+  private readonly sdkApiKey: string | undefined;
+  private readonly createSdkChildFn: ((options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild) | undefined;
+
+  constructor(
+    sdkApiKey?: string,
+    createSdkChild?: (options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild,
+  ) {
+    super();
+    this.sdkApiKey = sdkApiKey;
+    this.createSdkChildFn = createSdkChild;
+  }
 
   spawn(options: AgentPoolRequest & { poolKey: string }): void {
     void this.spawnInternal(options);
@@ -383,6 +418,55 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
       const runner = poolManager.getRunner(options.poolKey);
       this.runner = runner;
       await runner.ensureRunning();
+
+      // If binary is missing on Windows, fall back to SDK runner
+      if (runner.binaryMissing) {
+        if (!this.sdkApiKey) {
+          throw new Error(
+            `Pool binary unavailable (${runner.attemptedPath}); SDK fallback also failed: no sdkApiKey provided.`,
+          );
+        }
+        try {
+          const sdkChildFactory = this.createSdkChildFn ?? createSdkNodeChild;
+          const sdkChild = sdkChildFactory({
+            apiKey: this.sdkApiKey,
+            model: options.model,
+            prompt: options.prompt,
+            cwd: options.cwd,
+          });
+          this.sdkChild = sdkChild;
+
+          // Pipe SDK child streams to our streams
+          sdkChild.stdout.on("data", (chunk: Buffer) => {
+            this.stdout.write(chunk);
+          });
+          sdkChild.stderr.on("data", (chunk: Buffer) => {
+            this.stderr.write(chunk);
+          });
+          sdkChild.on("close", (code: unknown) => {
+            this.stderr.end();
+            this.emit("close", code);
+          });
+          sdkChild.on("error", (err: Error) => {
+            const combinedErr = new Error(
+              `Pool binary unavailable (${runner.attemptedPath}); SDK fallback also failed: ${err.message}`,
+            );
+            this.emit("error", combinedErr);
+            this.stderr?.end?.();
+            this.stdout?.end?.();
+            this.emit("close", 1);
+          });
+
+          log.debug("cursor-agent pool fallback to SDK runner", {
+            poolKeyHash: options.poolKey.slice(0, 8) + "…",
+          });
+          return;
+        } catch (sdkErr) {
+          throw new Error(
+            `Pool binary unavailable (${runner.attemptedPath}); SDK fallback also failed: ${sdkErr instanceof Error ? sdkErr.message : String(sdkErr)}`,
+          );
+        }
+      }
 
       const controller = {
         enqueue: (data: Uint8Array) => {
@@ -442,6 +526,9 @@ export class CursorAgentPoolNodeChild extends EventEmitter {
     } else if (this.requestId) {
       log.debug(`kill() called before runner ready for ${this.requestId}`);
     }
+    if (this.sdkChild) {
+      this.sdkChild.kill();
+    }
   }
 }
 
@@ -451,9 +538,11 @@ export function createCursorAgentPoolNodeChild(options: {
   cwd: string;
   resumeChatId?: string;
   force?: boolean;
+  sdkApiKey?: string;
+  createSdkChild?: (options: { apiKey: string; model: string; prompt: string; cwd: string }) => SdkNodeChild;
 }): CursorAgentPoolNodeChild {
   const poolKey = buildAgentPoolKey(options.cwd, options.model);
-  const child = new CursorAgentPoolNodeChild();
+  const child = new CursorAgentPoolNodeChild(options.sdkApiKey, options.createSdkChild);
   child.spawn({ ...options, poolKey });
   return child;
 }

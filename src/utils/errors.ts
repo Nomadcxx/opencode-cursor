@@ -2,6 +2,23 @@
 
 export type ErrorType = "quota" | "auth" | "network" | "model" | "unknown";
 
+/**
+ * Thrown when the cursor-agent binary cannot be found at the expected Windows
+ * install path and no CURSOR_AGENT_EXECUTABLE env override is set.
+ */
+export class BinaryNotFoundError extends Error {
+  readonly attemptedPath: string;
+
+  constructor(attemptedPath: string) {
+    super(
+      `cursor-agent binary not found on Windows. Expected at: ${attemptedPath}. ` +
+        `Install Cursor or set CURSOR_AGENT_EXECUTABLE env var.`,
+    );
+    this.name = "BinaryNotFoundError";
+    this.attemptedPath = attemptedPath;
+  }
+}
+
 export interface ParsedError {
   type: ErrorType;
   recoverable: boolean;

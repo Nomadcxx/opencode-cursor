@@ -606,6 +606,7 @@ function createNodeChildForBackend(input: {
       cwd: input.workspaceDirectory,
       resumeChatId: input.resumeChatId,
       force: FORCE_TOOL_MODE,
+      sdkApiKey: input.sdkApiKey,
     });
   }
 
