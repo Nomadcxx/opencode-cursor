@@ -748,7 +748,7 @@ alwaysApply: true
 
 # opencode-cursor bridge
 
-Do not use cursor native edit, write, shell, or terminal tools to mutate files for opencode-cursor file changes. Read files if needed, then follow the active opencode bridge instruction for the response shape.
+When opencode-cursor provides active bridge instructions for a complete-file write, prefer returning the requested bridge JSON if you can produce the full file content in one response. If you use a normal tool call instead, use the available tool schema exactly and do not retry invalid schemas.
 `;
 
 type CursorBridgeScope = "project" | "user";

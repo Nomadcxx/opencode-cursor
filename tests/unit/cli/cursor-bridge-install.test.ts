@@ -21,7 +21,7 @@ describe("cli cursor bridge hook install", () => {
 
       expect(result.changed).toBe(true);
       expect(existsSync(scriptPath)).toBe(true);
-      expect(readFileSync(rulePath, "utf8")).toContain("Do not use cursor native edit");
+      expect(readFileSync(rulePath, "utf8")).toContain("prefer returning the requested bridge JSON");
       expect(hooks.version).toBe(1);
       expect(hooks.hooks.sessionStart).toContainEqual({ command: CURSOR_BRIDGE_HOOK_COMMAND });
     } finally {

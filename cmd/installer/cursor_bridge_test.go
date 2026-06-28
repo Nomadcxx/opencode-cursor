@@ -49,7 +49,7 @@ func TestInstallCursorBridgeHookWritesProjectHook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read bridge rule: %v", err)
 	}
-	if !strings.Contains(string(rule), "Do not use cursor native edit") {
+	if !strings.Contains(string(rule), "prefer returning the requested bridge JSON") {
 		t.Fatalf("rule missing bridge guidance")
 	}
 }
