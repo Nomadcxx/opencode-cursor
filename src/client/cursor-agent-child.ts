@@ -114,7 +114,7 @@ class CursorAgentPoolRunner {
   }
 
   async ensureRunning(): Promise<void> {
-    if (this.runnerProcess) return;
+    if (this.runnerProcess || this.binaryMissing) return;
     if (this.starting) return this.starting;
 
     this.starting = this.doSpawn();
