@@ -789,6 +789,55 @@ describe("tool schema compatibility", () => {
       expect(args.path).toBeUndefined();
     });
 
+    it("tryRerouteEditToWrite defaults to filePath when write schema is absent", () => {
+      const toolSchemaMap = new Map([
+        [
+          "edit",
+          {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              oldString: { type: "string" },
+              newString: { type: "string" },
+            },
+            required: ["filePath", "oldString", "newString"],
+          },
+        ],
+      ]);
+      const call = editToolCall({ path: "/tmp/x", content: "body" });
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["edit", "write"]),
+        toolSchemaMap,
+      );
+
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("body");
+      expect(args.path).toBeUndefined();
+    });
+
+    it("tryRerouteEditToWrite handles full-file edits when edit schema is absent", () => {
+      const toolSchemaMap = new Map<string, unknown>();
+      const call = editToolCall({ path: "/tmp/x", content: "body" });
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["edit", "write"]),
+        toolSchemaMap,
+      );
+
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("body");
+      expect(args.path).toBeUndefined();
+    });
+
     it("tryRerouteEditToWrite handles opencode path plus streamContent edit payloads", () => {
       const toolSchemaMap = buildOpencodeEditWriteSchemaMap();
       const call = editToolCall({
@@ -811,6 +860,56 @@ describe("tool schema compatibility", () => {
       expect(args.path).toBeUndefined();
     });
 
+    it("tryRerouteEditToWrite uses oc_write when fallback tools are active", () => {
+      const toolSchemaMap = new Map([
+        [
+          "oc_edit",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              old_string: { type: "string" },
+              new_string: { type: "string" },
+              streamContent: { type: "string" },
+            },
+            required: ["path", "old_string", "new_string"],
+          },
+        ],
+        [
+          "oc_write",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        ],
+      ]);
+      const call: OpenAiToolCall = {
+        id: "c_oc_edit",
+        type: "function",
+        function: {
+          name: "oc_edit",
+          arguments: JSON.stringify({ path: "/tmp/x", streamContent: "body" }),
+        },
+      };
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["oc_edit", "oc_write"]),
+        toolSchemaMap,
+      );
+
+      expect(rerouted?.function.name).toBe("oc_write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.path).toBe("/tmp/x");
+      expect(args.content).toBe("body");
+      expect(args.filePath).toBeUndefined();
+    });
+
     it("tryRerouteEditToWrite returns null when write not in allowedToolNames", () => {
       const toolSchemaMap = buildEditWriteSchemaMap(false);
       const call = editToolCall({ path: "/tmp/x", content: "body" });
@@ -820,7 +919,7 @@ describe("tool schema compatibility", () => {
       expect(compat.validation.ok).toBe(false);
     });
 
-    it("tryRerouteEditToWrite returns null when write missing from schema map", () => {
+    it("tryRerouteEditToWrite still reroutes when write is allowed but missing from schema map", () => {
       const editOnlyMap = new Map([
         [
           "edit",
@@ -843,7 +942,10 @@ describe("tool schema compatibility", () => {
         new Set(["edit", "write"]),
         editOnlyMap,
       );
-      expect(rerouted).toBeNull();
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("body");
     });
 
     it("tryRerouteEditToWrite returns null for explicit old_string empty", () => {
@@ -1054,6 +1156,25 @@ describe("tool schema compatibility", () => {
     expect(args.path).toBe("/tmp/b.txt");
     expect(args.content).toBe("hello");
     expect(args.new_string).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
+  it("preserves OpenCode edit keys when schema is absent", () => {
+    const result = applyToolSchemaCompat(
+      editToolCall({
+        filePath: "/tmp/native.txt",
+        oldString: "before",
+        newString: "after",
+      }),
+      new Map(),
+    );
+
+    expect(result.normalizedArgs.filePath).toBe("/tmp/native.txt");
+    expect(result.normalizedArgs.oldString).toBe("before");
+    expect(result.normalizedArgs.newString).toBe("after");
+    expect(result.normalizedArgs.path).toBeUndefined();
+    expect(result.normalizedArgs.old_string).toBeUndefined();
+    expect(result.normalizedArgs.new_string).toBeUndefined();
     expect(result.validation.ok).toBe(true);
   });
 

@@ -22,10 +22,12 @@ CONFIG_PATH="${CONFIG_HOME}/opencode/opencode.json"
 BRIDGE_ROOT="${OPENCODE_CURSOR_BRIDGE_ROOT:-$PWD}"
 
 NPM_PKG="@rama_nigg/open-cursor"
-SKIP_CURSOR_BRIDGE=0
+INSTALL_CURSOR_BRIDGE=0
 for arg in "$@"; do
-    if [ "$arg" = "--skip-cursor-bridge" ]; then
-        SKIP_CURSOR_BRIDGE=1
+    if [ "$arg" = "--install-cursor-bridge" ]; then
+        INSTALL_CURSOR_BRIDGE=1
+    elif [ "$arg" = "--skip-cursor-bridge" ]; then
+        INSTALL_CURSOR_BRIDGE=0
     fi
 done
 
@@ -241,13 +243,13 @@ else
     fi
 
     echo ""
-    if [ "$SKIP_CURSOR_BRIDGE" -eq 1 ]; then
-        echo "Cursor bridge hook skipped (--skip-cursor-bridge)"
-    else
+    if [ "$INSTALL_CURSOR_BRIDGE" -eq 1 ]; then
         echo "Installing Cursor bridge hook and rule..."
         install_cursor_bridge_hook "$BRIDGE_ROOT"
         echo "Cursor bridge hook: ${BRIDGE_ROOT}/.cursor/hooks.json"
         echo "Cursor bridge rule: ${BRIDGE_ROOT}/.cursor/rules/opencode-bridge.mdc"
+    else
+        echo "Cursor bridge hook and rule not installed (.cursor files are opt-in)"
     fi
 
     echo ""

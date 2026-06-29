@@ -73,6 +73,23 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.arguments).toBe("{\"path\":\"foo.txt\"}");
   });
 
+  it("maps bare cursor edit calls to fallback oc_edit when native edit is absent", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_oc_edit",
+      tool_call: {
+        editToolCall: {
+          args: { path: "foo.txt", streamContent: "body" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["oc_edit", "oc_write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("oc_edit");
+    expect(result.toolCall?.function.arguments).toBe("{\"path\":\"foo.txt\",\"streamContent\":\"body\"}");
+  });
+
   it("extracts args from flat payload without args wrapper", () => {
     const event: any = {
       type: "tool_call",

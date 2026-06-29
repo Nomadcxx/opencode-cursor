@@ -37,13 +37,17 @@ Cursor CLI flags did not provide a drop-in fix:
 
 ### Cursor bridge JSON
 
-`open-cursor install` writes a project Cursor hook and rule at `.cursor/hooks.json`, `.cursor/hooks/opencode-bridge-context.mjs`, and `.cursor/rules/opencode-bridge.mdc`, unless the user passes `--skip-cursor-bridge`. Use `--cursor-bridge-scope user` for `~/.cursor`, or `--cursor-bridge-scope both` to write both project and user files. The hook adds a short `additional_context` instruction that asks Cursor models to return one literal JSON object for complete-file writes. The rule reinforces that Cursor-native edit/write/shell tools should not mutate files for opencode-cursor changes:
+The runtime bridge is built into the plugin and stays on by default. It prepends a short instruction when OpenCode offers the `write` tool:
 
 ```json
 {"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
 ```
 
-At runtime, the proxy prepends the same instruction when OpenCode offers the `write` tool. The proxy accepts only a whole assistant response that is either that JSON object or a single fenced JSON block. It then converts the payload into an OpenAI `write` tool call and returns it to OpenCode. Set `CURSOR_ACP_BRIDGE_JSON=0` to disable runtime bridge parsing and prompt injection.
+The proxy accepts only a whole assistant response that is either that JSON object or a single fenced JSON block. It then converts the payload into an OpenAI `write` tool call and returns it to OpenCode. Set `CURSOR_ACP_BRIDGE_JSON=0` to disable runtime bridge parsing and prompt injection.
+
+The `.cursor` hook/rule fallback is opt-in. Use `open-cursor install --install-cursor-bridge` to write `.cursor/hooks.json`, `.cursor/hooks/opencode-bridge-context.mjs`, and `.cursor/rules/opencode-bridge.mdc`. Use `--cursor-bridge-scope user` for `~/.cursor`, or `--cursor-bridge-scope both` to write both project and user files.
+
+Live Composer 2.5 testing showed both hook-only and rule-only setups can push cursor-agent toward native Cursor edit/write tools. Those tool calls may fail before opencode-cursor can repair them, so the installer does not write `.cursor` files by default.
 
 ### `proxy-exec` mode (legacy/compat mode)
 

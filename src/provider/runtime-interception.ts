@@ -186,6 +186,34 @@ export async function handleToolLoopEventLegacy(
       validationOk: compat.validation.ok,
     });
 
+    const reroutedWrite = tryRerouteEditToWrite(
+      normalizedToolCall,
+      compat,
+      allowedToolNames,
+      toolSchemaMap,
+    );
+    if (reroutedWrite) {
+      log.debug("Rerouting full-file edit call to write (legacy)", {
+        missing: compat.validation.missing,
+      });
+      await onInterceptedToolCall(reroutedWrite);
+      return { intercepted: true, skipConverter: true };
+    }
+
+    const schemaAbsentEditValidation = buildSchemaAbsentEditValidation(normalizedToolCall, compat);
+    if (schemaAbsentEditValidation) {
+      const hintChunk = createNonFatalSchemaValidationHintChunk(
+        responseMeta,
+        normalizedToolCall,
+        schemaAbsentEditValidation,
+      );
+      log.debug("Skipping schema-absent malformed edit call in legacy", {
+        missing: schemaAbsentEditValidation.missing,
+      });
+      await onToolResult(hintChunk);
+      return { intercepted: false, skipConverter: true };
+    }
+
     if (compat.validation.hasSchema && !compat.validation.ok) {
       const validationTermination = evaluateSchemaValidationLoopGuard(
         toolLoopGuard,
@@ -203,20 +231,6 @@ export async function handleToolLoopEventLegacy(
           return { intercepted: false, skipConverter: true };
         }
         return { intercepted: false, skipConverter: true, terminate: validationTermination };
-      }
-
-      const reroutedWrite = tryRerouteEditToWrite(
-        normalizedToolCall,
-        compat,
-        allowedToolNames,
-        toolSchemaMap,
-      );
-      if (reroutedWrite) {
-        log.debug("Rerouting malformed edit call to write (legacy)", {
-          missing: compat.validation.missing,
-        });
-        await onInterceptedToolCall(reroutedWrite);
-        return { intercepted: true, skipConverter: true };
       }
 
       if (shouldEmitNonFatalSchemaValidationHint(normalizedToolCall, compat.validation)) {
@@ -362,6 +376,57 @@ export async function handleToolLoopEventV1(
     validationOk: compat.validation.ok,
     ...(editDiag ? { editDiag } : {}),
   });
+
+  const reroutedWrite = tryRerouteEditToWrite(
+    normalizedToolCall,
+    compat,
+    allowedToolNames,
+    toolSchemaMap,
+  );
+  if (reroutedWrite) {
+    const suspiciousOverwrite = detectSuspiciousStreamContentWrite(compat, reroutedWrite);
+    if (suspiciousOverwrite) {
+      const cursorOwnedMutation = detectCursorOwnedMutation(event, normalizedToolCall.function.name);
+      log.debug("Skipping suspicious streamContent edit-to-write reroute", {
+        filePath: suspiciousOverwrite.filePath,
+        existingLines: suspiciousOverwrite.existingLines,
+        nextLines: suspiciousOverwrite.nextLines,
+        ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
+      });
+      return {
+        intercepted: false,
+        skipConverter: true,
+        ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
+      };
+    }
+    log.debug("Rerouting full-file edit call to write", {
+      missing: compat.validation.missing,
+      typeErrors: compat.validation.typeErrors,
+    });
+    await onInterceptedToolCall(reroutedWrite);
+    return {
+      intercepted: true,
+      skipConverter: true,
+    };
+  }
+
+  const schemaAbsentEditValidation = buildSchemaAbsentEditValidation(normalizedToolCall, compat);
+  if (schemaAbsentEditValidation) {
+    const hintChunk = createNonFatalSchemaValidationHintChunk(
+      responseMeta,
+      normalizedToolCall,
+      schemaAbsentEditValidation,
+    );
+    log.debug("Skipping schema-absent malformed edit call", {
+      missing: schemaAbsentEditValidation.missing,
+    });
+    await onToolResult(hintChunk);
+    return {
+      intercepted: false,
+      skipConverter: true,
+    };
+  }
+
   if (compat.validation.hasSchema && !compat.validation.ok) {
     log.debug("Tool schema compatibility validation failed", {
       tool: normalizedToolCall.function.name,
@@ -410,38 +475,6 @@ export async function handleToolLoopEventV1(
         intercepted: false,
         skipConverter: true,
         terminate: createSchemaValidationTermination(normalizedToolCall, compat.validation),
-      };
-    }
-    const reroutedWrite = tryRerouteEditToWrite(
-      normalizedToolCall,
-      compat,
-      allowedToolNames,
-      toolSchemaMap,
-    );
-    if (reroutedWrite) {
-      const suspiciousOverwrite = detectSuspiciousStreamContentWrite(compat, reroutedWrite);
-      if (suspiciousOverwrite) {
-        const cursorOwnedMutation = detectCursorOwnedMutation(event, normalizedToolCall.function.name);
-        log.debug("Skipping suspicious streamContent edit-to-write reroute", {
-          filePath: suspiciousOverwrite.filePath,
-          existingLines: suspiciousOverwrite.existingLines,
-          nextLines: suspiciousOverwrite.nextLines,
-          ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
-        });
-        return {
-          intercepted: false,
-          skipConverter: true,
-          ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
-        };
-      }
-      log.debug("Rerouting malformed edit call to write", {
-        missing: compat.validation.missing,
-        typeErrors: compat.validation.typeErrors,
-      });
-      await onInterceptedToolCall(reroutedWrite);
-      return {
-        intercepted: true,
-        skipConverter: true,
       };
     }
     if (
@@ -641,6 +674,39 @@ function createSchemaValidationTermination(
     missing: validation.missing,
     unexpected: validation.unexpected,
     typeErrors: validation.typeErrors,
+  };
+}
+
+function buildSchemaAbsentEditValidation(
+  toolCall: OpenAiToolCall,
+  compat: ToolSchemaCompatResult,
+): ToolSchemaValidationResult | null {
+  if (toolCall.function.name.toLowerCase() !== "edit" || compat.validation.hasSchema) {
+    return null;
+  }
+
+  const args = compat.normalizedArgs;
+  const missing: string[] = [];
+  if (typeof args.filePath !== "string" || args.filePath.trim().length === 0) {
+    missing.push("filePath");
+  }
+  if (typeof args.oldString !== "string") {
+    missing.push("oldString");
+  }
+  if (typeof args.newString !== "string") {
+    missing.push("newString");
+  }
+  if (missing.length === 0) {
+    return null;
+  }
+
+  return {
+    hasSchema: true,
+    ok: false,
+    missing,
+    unexpected: [],
+    typeErrors: [],
+    repairHint: "edit requires filePath, oldString, and newString",
   };
 }
 

@@ -119,10 +119,14 @@ func (m model) startInstallation() (tea.Model, tea.Cmd) {
 		{name: "Install AI SDK", description: "Adding @ai-sdk/openai-compatible to opencode", execute: installAiSdk, status: statusPending},
 		{name: "Create symlink", description: "Linking to OpenCode plugin directory", execute: createSymlink, status: statusPending},
 		{name: "Update config", description: "Adding cursor-acp plugin to opencode.json", execute: updateConfig, status: statusPending},
-		{name: "Install Cursor bridge hook", description: "Writing .cursor hook context", execute: installCursorBridgeHookTask, optional: true, status: statusPending},
-		{name: "Validate config", description: "Checking JSON syntax", execute: validateConfig, status: statusPending},
-		{name: "Verify plugin loads", description: "Checking if plugin appears in opencode", execute: verifyPostInstall, optional: true, status: statusPending},
 	}
+	if !m.skipCursorBridge {
+		m.tasks = append(m.tasks, installTask{name: "Install Cursor bridge hook", description: "Writing .cursor hook context", execute: installCursorBridgeHookTask, optional: true, status: statusPending})
+	}
+	m.tasks = append(m.tasks,
+		installTask{name: "Validate config", description: "Checking JSON syntax", execute: validateConfig, status: statusPending},
+		installTask{name: "Verify plugin loads", description: "Checking if plugin appears in opencode", execute: verifyPostInstall, optional: true, status: statusPending},
+	)
 
 	m.currentTaskIndex = 0
 	m.tasks[0].status = statusRunning
@@ -137,9 +141,11 @@ func (m model) startQuickInstallation() (tea.Model, tea.Cmd) {
 		{name: "Install AI SDK", description: "Adding @ai-sdk/openai-compatible to opencode", execute: installAiSdk, status: statusPending},
 		{name: "Update config", description: "Adding npm package to opencode.json", execute: updateConfigQuick, status: statusPending},
 		{name: "Fetch models", description: "Fetching models from cursor-agent", execute: fetchAndAddModels, status: statusPending},
-		{name: "Install Cursor bridge hook", description: "Writing .cursor hook context", execute: installCursorBridgeHookTask, optional: true, status: statusPending},
-		{name: "Verify plugin loads", description: "Checking if plugin appears in opencode", execute: verifyPostInstall, optional: true, status: statusPending},
 	}
+	if !m.skipCursorBridge {
+		m.tasks = append(m.tasks, installTask{name: "Install Cursor bridge hook", description: "Writing .cursor hook context", execute: installCursorBridgeHookTask, optional: true, status: statusPending})
+	}
+	m.tasks = append(m.tasks, installTask{name: "Verify plugin loads", description: "Checking if plugin appears in opencode", execute: verifyPostInstall, optional: true, status: statusPending})
 
 	m.currentTaskIndex = 0
 	m.tasks[0].status = statusRunning

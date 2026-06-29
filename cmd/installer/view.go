@@ -183,12 +183,12 @@ func (m model) renderWelcome() string {
 func (m model) renderSelectMode() string {
 	return "Choose installation method:\n\n" +
 		"  [1] Quick Install (recommended)\n" +
-		"      Adds the npm package to opencode.json and installs the Cursor bridge hook.\n" +
-		"      Fastest — no building required.\n\n" +
+		"      Adds the npm package to opencode.json.\n" +
+		"      Fastest - no building required.\n\n" +
 		"  [2] Build from Source\n" +
-		"      Clones, builds, symlinks the plugin, and installs the Cursor bridge hook.\n" +
+		"      Clones, builds, and symlinks the plugin.\n" +
 		"      Use if you need to modify the source code.\n\n" +
-		"Use --skip-cursor-bridge to leave .cursor untouched.\n\n" +
+		"Use --install-cursor-bridge to write the optional .cursor hook and rule.\n\n" +
 		"Press 1 or 2 to continue."
 }
 

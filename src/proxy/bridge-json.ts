@@ -25,7 +25,7 @@ export function isBridgeJsonEnabled(env: Record<string, string | undefined> = pr
 }
 
 export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptions): string {
-  if (!isBridgeJsonEnabled(options.env) || !options.allowedToolNames.has("write")) {
+  if (!isBridgeJsonEnabled(options.env) || !resolveAllowedWriteToolName(options.allowedToolNames)) {
     return prompt;
   }
   if (prompt.includes("opencode bridge mode is active")) {
@@ -37,8 +37,10 @@ export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptio
 export function extractBridgeToolCallFromText(
   text: string,
   allowedToolNames: Set<string>,
+  writeSchema?: unknown,
 ): OpenAiToolCall | null {
-  if (!allowedToolNames.has("write")) {
+  const writeToolName = resolveAllowedWriteToolName(allowedToolNames);
+  if (!writeToolName) {
     return null;
   }
 
@@ -70,8 +72,8 @@ export function extractBridgeToolCallFromText(
     id: `call_bridge_${shortHash(jsonText)}`,
     type: "function",
     function: {
-      name: "write",
-      arguments: JSON.stringify({ path, content }),
+      name: writeToolName,
+      arguments: JSON.stringify(buildWriteArguments(path, content, writeSchema)),
     },
   };
 }
@@ -79,8 +81,9 @@ export function extractBridgeToolCallFromText(
 export function extractBridgeToolCallFromStreamOutput(
   output: string,
   allowedToolNames: Set<string>,
+  writeSchema?: unknown,
 ): OpenAiToolCall | null {
-  if (!output || !allowedToolNames.has("write")) {
+  if (!output || !resolveAllowedWriteToolName(allowedToolNames)) {
     return null;
   }
 
@@ -90,8 +93,8 @@ export function extractBridgeToolCallFromStreamOutput(
       continue;
     }
     const text = extractText(event);
-    const toolCall = extractBridgeToolCallFromText(text, allowedToolNames)
-      ?? extractBridgeToolCallFromTrailingLine(text, allowedToolNames);
+    const toolCall = extractBridgeToolCallFromText(text, allowedToolNames, writeSchema)
+      ?? extractBridgeToolCallFromTrailingLine(text, allowedToolNames, writeSchema);
     if (toolCall) {
       return toolCall;
     }
@@ -103,6 +106,7 @@ export function extractBridgeToolCallFromStreamOutput(
 function extractBridgeToolCallFromTrailingLine(
   text: string,
   allowedToolNames: Set<string>,
+  writeSchema?: unknown,
 ): OpenAiToolCall | null {
   const lines = text.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const lastLine = lines.at(-1);
@@ -110,7 +114,31 @@ function extractBridgeToolCallFromTrailingLine(
     return null;
   }
 
-  return extractBridgeToolCallFromText(lastLine, allowedToolNames);
+  return extractBridgeToolCallFromText(lastLine, allowedToolNames, writeSchema);
+}
+
+function buildWriteArguments(path: string, content: string, writeSchema: unknown): Record<string, string> {
+  if (isRecord(writeSchema) && isRecord(writeSchema.properties)) {
+    const properties = writeSchema.properties;
+    const required = Array.isArray(writeSchema.required)
+      ? writeSchema.required.filter((value): value is string => typeof value === "string")
+      : [];
+    if (required.includes("filePath") || ("filePath" in properties && !("path" in properties))) {
+      return { filePath: path, content };
+    }
+  }
+
+  return { path, content };
+}
+
+function resolveAllowedWriteToolName(allowedToolNames: Set<string>): string | null {
+  if (allowedToolNames.has("write")) {
+    return "write";
+  }
+  if (allowedToolNames.has("oc_write")) {
+    return "oc_write";
+  }
+  return null;
 }
 
 function extractStrictJsonText(text: string): string | null {

@@ -138,7 +138,7 @@ func tickCmd() tea.Cmd {
 func main() {
 	debugMode := false
 	noRollback := false
-	skipCursorBridge := false
+	skipCursorBridge := true
 
 	for _, arg := range os.Args[1:] {
 		switch arg {
@@ -146,6 +146,8 @@ func main() {
 			debugMode = true
 		case "--no-rollback":
 			noRollback = true
+		case "--install-cursor-bridge":
+			skipCursorBridge = false
 		case "--skip-cursor-bridge":
 			skipCursorBridge = true
 		}

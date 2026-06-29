@@ -38,6 +38,9 @@ const TOOL_NAME_ALIASES = new Map<string, string>([
   ["runbash", "bash"],
   ["executebash", "bash"],
   // edit/write aliases
+  ["edit", "oc_edit"],
+  ["write", "oc_write"],
+  ["read", "oc_read"],
   ["ocedit", "edit"],
   ["strreplace", "edit"],
   ["ocwrite", "write"],

@@ -358,6 +358,7 @@ type Options = {
   copy?: boolean;
   skipModels?: boolean;
   skipCursorBridge?: boolean;
+  installCursorBridge?: boolean;
   cursorBridgeScope?: "project" | "user" | "both";
   noBackup?: boolean;
   variants?: boolean;
@@ -414,9 +415,11 @@ Options:
   --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
   --copy                Copy plugin instead of symlink
   --skip-models         Skip model sync during install
-  --skip-cursor-bridge  Do not write the project .cursor bridge hook and rule during install
+  --install-cursor-bridge
+                       Also write the optional .cursor bridge hook and rule
+  --skip-cursor-bridge  Legacy no-op; .cursor bridge files are opt-in
   --cursor-bridge-scope <scope>
-                       Cursor hook scope: project, user, or both (default: project)
+                       Cursor hook scope: project, user, or both; implies --install-cursor-bridge
   --variants            Generate compact OpenCode model variants from Cursor models
   --compact             With --variants, remove raw grouped Cursor model entries
   --dry-run             Preview sync/install config changes without writing files
@@ -438,6 +441,8 @@ function parseArgs(argv: string[]): { command: Command; options: Options } {
       options.copy = true;
     } else if (arg === "--skip-models") {
       options.skipModels = true;
+    } else if (arg === "--install-cursor-bridge") {
+      options.installCursorBridge = true;
     } else if (arg === "--skip-cursor-bridge") {
       options.skipCursorBridge = true;
     } else if (arg === "--cursor-bridge-scope" && rest[i + 1]) {
@@ -886,6 +891,15 @@ function getCursorBridgeRoots(scope: Options["cursorBridgeScope"]): Array<{ labe
   return [{ label: "project", root: process.cwd(), scope: "project" }];
 }
 
+export function shouldInstallCursorBridge(
+  options: Pick<Options, "installCursorBridge" | "skipCursorBridge" | "cursorBridgeScope">,
+): boolean {
+  if (options.skipCursorBridge) {
+    return false;
+  }
+  return options.installCursorBridge === true || options.cursorBridgeScope !== undefined;
+}
+
 function commandInstall(options: Options) {
   const { opencodeDir, configPath, pluginPath } = resolvePaths(options);
   const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
@@ -910,9 +924,7 @@ function commandInstall(options: Options) {
     writeConfig(configPath, config, options.noBackup === true);
     installAiSdk(opencodeDir);
   }
-  if (options.skipCursorBridge) {
-    console.log("Cursor bridge hook and rule: skipped (--skip-cursor-bridge)");
-  } else {
+  if (shouldInstallCursorBridge(options)) {
     for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
       const bridge = ensureCursorBridgeHook(target.root, {
         dryRun: options.dryRun,
@@ -921,6 +933,8 @@ function commandInstall(options: Options) {
       console.log(`${options.dryRun ? "Would write" : "Cursor bridge hook"} (${target.label}): ${bridge.hooksPath}`);
       console.log(`${options.dryRun ? "Would write" : "Cursor bridge rule"} (${target.label}): ${bridge.rulePath}`);
     }
+  } else {
+    console.log("Cursor bridge hook and rule: not installed (.cursor files are opt-in)");
   }
 
   console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);

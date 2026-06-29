@@ -838,6 +838,7 @@ export function applyCursorWriteToolContract(tools: unknown): unknown {
   }
 
   let changed = false;
+  const writeContract = buildCursorWriteToolContract(tools);
   const patched = tools.map((tool) => {
     if (!tool || typeof tool !== "object") {
       return tool;
@@ -855,14 +856,13 @@ export function applyCursorWriteToolContract(tools: unknown): unknown {
 
     const target = isFunctionWrite ? functionRecord : record;
     const description = typeof target.description === "string" ? target.description : "";
-    if (description.includes(WRITE_TOOL_TARGETED_EDIT_CONTRACT)) {
+    if (description.includes(writeContract)) {
       return tool;
     }
 
     changed = true;
-    const nextDescription = description
-      ? `${description.trim()} ${WRITE_TOOL_TARGETED_EDIT_CONTRACT}`
-      : WRITE_TOOL_TARGETED_EDIT_CONTRACT;
+    const baseDescription = description.replace(WRITE_TOOL_TARGETED_EDIT_CONTRACT, "").trim();
+    const nextDescription = baseDescription ? `${baseDescription} ${writeContract}` : writeContract;
 
     if (isFunctionWrite) {
       return {
@@ -881,6 +881,48 @@ export function applyCursorWriteToolContract(tools: unknown): unknown {
   });
 
   return changed ? patched : tools;
+}
+
+function buildCursorWriteToolContract(tools: Array<unknown>): string {
+  const editSchema = findToolParameters(tools, "edit");
+  const editArgs = editSchema ? detectEditArgumentNames(editSchema) : null;
+  if (!editArgs) {
+    return WRITE_TOOL_TARGETED_EDIT_CONTRACT;
+  }
+
+  return [
+    "Use only for new files or intentional full-file replacement.",
+    `For targeted edits to existing files, use edit with ${editArgs.path}, ${editArgs.old}, and ${editArgs.next}.`,
+  ].join(" ");
+}
+
+function findToolParameters(tools: Array<unknown>, name: string): unknown {
+  for (const tool of tools) {
+    if (!tool || typeof tool !== "object") {
+      continue;
+    }
+    const record = tool as Record<string, any>;
+    const fn = record.function && typeof record.function === "object" ? record.function : record;
+    if (fn.name === name) {
+      return fn.parameters;
+    }
+  }
+  return null;
+}
+
+function detectEditArgumentNames(schema: unknown): { path: string; old: string; next: string } | null {
+  if (!schema || typeof schema !== "object") {
+    return null;
+  }
+  const properties = (schema as Record<string, any>).properties;
+  if (!properties || typeof properties !== "object") {
+    return null;
+  }
+  const keys = new Set(Object.keys(properties));
+  const path = keys.has("filePath") ? "filePath" : keys.has("path") ? "path" : null;
+  const old = keys.has("oldString") ? "oldString" : keys.has("old_string") ? "old_string" : null;
+  const next = keys.has("newString") ? "newString" : keys.has("new_string") ? "new_string" : null;
+  return path && old && next ? { path, old, next } : null;
 }
 
 function createChatCompletionResponse(
@@ -1366,7 +1408,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const completion = extractCompletionFromStream(stdout);
         const bridgeToolCall = bridgeJsonEnabled
-          ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames)
+          ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
           : null;
         if (bridgeToolCall) {
           const toolCall = bridgeToolCall;
@@ -1520,7 +1562,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 }
 
                 if (bridgeJsonEnabled && isAssistantText(event)) {
-                  const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+                  const bridgeToolCall = extractBridgeToolCallFromText(
+                    extractText(event),
+                    allowedToolNames,
+                    toolSchemaMap.get("write"),
+                  );
                   if (bridgeToolCall) {
                     emitToolCallAndTerminate(bridgeToolCall);
                     break;
@@ -1613,7 +1659,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 }
               }
               if (bridgeJsonEnabled && isAssistantText(event)) {
-                const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+                const bridgeToolCall = extractBridgeToolCallFromText(
+                  extractText(event),
+                  allowedToolNames,
+                  toolSchemaMap.get("write"),
+                );
                 if (bridgeToolCall) {
                   emitToolCallAndTerminate(bridgeToolCall);
                   break;
@@ -1982,7 +2032,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
           const completion = extractCompletionFromStream(stdout);
           const bridgeToolCall = bridgeJsonEnabled
-            ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames)
+            ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
             : null;
           if (bridgeToolCall) {
             const toolCall = bridgeToolCall;
@@ -2158,7 +2208,11 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             }
 
             if (bridgeJsonEnabled && isAssistantText(event)) {
-              const bridgeToolCall = extractBridgeToolCallFromText(extractText(event), allowedToolNames);
+              const bridgeToolCall = extractBridgeToolCallFromText(
+                extractText(event),
+                allowedToolNames,
+                toolSchemaMap.get("write"),
+              );
               if (bridgeToolCall) {
                 emitToolCallAndTerminate(bridgeToolCall);
                 break;

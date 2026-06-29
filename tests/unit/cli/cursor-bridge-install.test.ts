@@ -6,9 +6,17 @@ import {
   CURSOR_BRIDGE_HOOK_COMMAND,
   CURSOR_BRIDGE_USER_HOOK_COMMAND,
   ensureCursorBridgeHook,
+  shouldInstallCursorBridge,
 } from "../../../src/cli/opencode-cursor.js";
 
 describe("cli cursor bridge hook install", () => {
+  it("does not install Cursor hook/rule unless explicitly requested", () => {
+    expect(shouldInstallCursorBridge({})).toBe(false);
+    expect(shouldInstallCursorBridge({ skipCursorBridge: true })).toBe(false);
+    expect(shouldInstallCursorBridge({ installCursorBridge: true })).toBe(true);
+    expect(shouldInstallCursorBridge({ cursorBridgeScope: "user" })).toBe(true);
+  });
+
   it("installs the Cursor sessionStart hook into the current workspace", () => {
     const dir = mkdtempSync(join(tmpdir(), "open-cursor-bridge-"));
 

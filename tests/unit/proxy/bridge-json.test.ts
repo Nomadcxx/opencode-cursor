@@ -113,6 +113,42 @@ describe("proxy/bridge-json", () => {
     expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"alias body"}');
   });
 
+  it("uses filePath for bridge writes when the offered write schema requires it", () => {
+    const toolCall = extractBridgeToolCallFromText(
+      '{"name":"write","arguments":{"path":"demo.txt","content":"hello"}}',
+      new Set(["write"]),
+      {
+        type: "object",
+        properties: {
+          filePath: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["filePath", "content"],
+      },
+    );
+
+    expect(toolCall?.function.name).toBe("write");
+    expect(toolCall?.function.arguments).toBe('{"filePath":"demo.txt","content":"hello"}');
+  });
+
+  it("uses oc_write when bridge mode runs with fallback tools", () => {
+    const toolCall = extractBridgeToolCallFromText(
+      '{"name":"write","arguments":{"path":"demo.txt","content":"hello"}}',
+      new Set(["oc_write"]),
+      {
+        type: "object",
+        properties: {
+          path: { type: "string" },
+          content: { type: "string" },
+        },
+        required: ["path", "content"],
+      },
+    );
+
+    expect(toolCall?.function.name).toBe("oc_write");
+    expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"hello"}');
+  });
+
   it("appends bridge instructions unless the runtime env opts out", () => {
     const prompt = applyBridgeJsonPrompt("USER: update demo.txt", {
       allowedToolNames: new Set(["write"]),
@@ -126,5 +162,14 @@ describe("proxy/bridge-json", () => {
     expect(prompt).toContain("opencode bridge mode");
     expect(disabled).toBe("USER: update demo.txt");
     expect(isBridgeJsonEnabled({ CURSOR_ACP_BRIDGE_JSON: "false" })).toBe(false);
+  });
+
+  it("appends bridge instructions when only oc_write is available", () => {
+    const prompt = applyBridgeJsonPrompt("USER: update demo.txt", {
+      allowedToolNames: new Set(["oc_write"]),
+      env: {},
+    });
+
+    expect(prompt).toContain("opencode bridge mode");
   });
 });

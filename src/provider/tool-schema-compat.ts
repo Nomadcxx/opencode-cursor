@@ -98,7 +98,7 @@ export function applyToolSchemaCompat(
     sanitization.unexpected,
     {
       originalArgs: parsedArgs,
-      writeSchema: toolSchemaMap.get("write"),
+      writeSchema: selectWriteSchemaForTool(toolCall.function.name, toolSchemaMap),
     },
   );
 
@@ -128,7 +128,7 @@ export function isFullFileShapedEditValidationFailure(
   originalArgs: JsonRecord,
   writeSchema?: unknown,
 ): boolean {
-  if (toolName.toLowerCase() !== "edit" || validation.ok) {
+  if (!isToolName(toolName, "edit") || validation.ok) {
     return false;
   }
   return buildEditFullFileHint(args, validation.missing, validation.typeErrors, {
@@ -141,9 +141,12 @@ function buildWriteArguments(
   filePath: string,
   content: string,
   writeSchema: unknown,
+  writeToolName = "write",
 ): JsonRecord {
   if (!isRecord(writeSchema)) {
-    return { path: filePath, content };
+    return isToolName(writeToolName, "write") && writeToolName.toLowerCase().startsWith("oc_")
+      ? { path: filePath, content }
+      : { filePath, content };
   }
   const required = Array.isArray(writeSchema.required)
     ? writeSchema.required.filter((value): value is string => typeof value === "string")
@@ -161,14 +164,15 @@ export function tryRerouteEditToWrite(
   allowedToolNames: Set<string>,
   toolSchemaMap: Map<string, unknown>,
 ): OpenAiToolCall | null {
-  if (toolCall.function.name.toLowerCase() !== "edit") {
+  if (!isToolName(toolCall.function.name, "edit")) {
     return null;
   }
-  if (!allowedToolNames.has("write") || !toolSchemaMap.has("write")) {
+  const writeToolName = resolveAllowedWriteToolName(allowedToolNames);
+  if (!writeToolName) {
     return null;
   }
 
-  const writeSchema = toolSchemaMap.get("write");
+  const writeSchema = toolSchemaMap.get(writeToolName) ?? selectWriteSchemaForTool(toolCall.function.name, toolSchemaMap);
   if (
     !isFullFileShapedEditValidationFailure(
       toolCall.function.name,
@@ -177,6 +181,7 @@ export function tryRerouteEditToWrite(
       compat.originalArgs,
       writeSchema,
     )
+    && !isFullFileShapedEditPayload(compat.normalizedArgs, compat.originalArgs)
   ) {
     return null;
   }
@@ -197,7 +202,9 @@ export function tryRerouteEditToWrite(
         ? compat.normalizedArgs.newString
         : typeof compat.normalizedArgs.content === "string"
           ? compat.normalizedArgs.content
-          : null;
+          : typeof compat.normalizedArgs.streamContent === "string"
+            ? compat.normalizedArgs.streamContent
+            : null;
   if (content === null) {
     return null;
   }
@@ -205,10 +212,27 @@ export function tryRerouteEditToWrite(
   return {
     ...toolCall,
     function: {
-      name: "write",
-      arguments: JSON.stringify(buildWriteArguments(filePath, content, writeSchema)),
+      name: writeToolName,
+      arguments: JSON.stringify(buildWriteArguments(filePath, content, writeSchema, writeToolName)),
     },
   };
+}
+
+function resolveAllowedWriteToolName(allowedToolNames: Set<string>): string | null {
+  if (allowedToolNames.has("write")) {
+    return "write";
+  }
+  if (allowedToolNames.has("oc_write")) {
+    return "oc_write";
+  }
+  return null;
+}
+
+function isFullFileShapedEditPayload(args: JsonRecord, originalArgs: JsonRecord): boolean {
+  if (hadOldStringPropertyInPayload(originalArgs)) {
+    return false;
+  }
+  return hasEditFilePath(args) && hasEditBody(args);
 }
 
 function parseArguments(rawArguments: string): JsonRecord {
@@ -332,7 +356,7 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: 
     };
   }
 
-  if (normalizedToolName === "write") {
+  if (isToolName(toolName, "write")) {
     const normalized: JsonRecord = { ...args };
 
     // Some model variants confuse write/edit and send edit-style payload keys.
@@ -355,12 +379,15 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: 
     return normalized;
   }
 
-  if (normalizedToolName !== "edit" || !EDIT_COMPAT_REPAIR_ENABLED) {
+  if (!isToolName(toolName, "edit") || !EDIT_COMPAT_REPAIR_ENABLED) {
     return args;
   }
 
   const repaired: JsonRecord = { ...args };
   const schemaProperties = getSchemaPropertyNames(schema);
+  if (schemaProperties.size === 0) {
+    return normalizeSchemaAbsentEditArgs(repaired);
+  }
   const newKey = schemaProperties.has("newString") ? "newString" : "new_string";
   const oldKey = schemaProperties.has("oldString") ? "oldString" : "old_string";
 
@@ -411,6 +438,33 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: 
     delete repaired[oldKey];
   }
 
+  return repaired;
+}
+
+function normalizeSchemaAbsentEditArgs(args: JsonRecord): JsonRecord {
+  const repaired: JsonRecord = { ...args };
+  if (repaired.filePath === undefined && typeof repaired.path === "string") {
+    repaired.filePath = repaired.path;
+    delete repaired.path;
+  }
+  if (repaired.oldString === undefined && typeof repaired.old_string === "string") {
+    repaired.oldString = repaired.old_string;
+    delete repaired.old_string;
+  }
+  if (repaired.newString === undefined && typeof repaired.new_string === "string") {
+    repaired.newString = repaired.new_string;
+    delete repaired.new_string;
+  }
+  if (repaired.content !== undefined && typeof repaired.content !== "string") {
+    const coerced = coerceToString(repaired.content);
+    if (coerced !== null) {
+      repaired.content = coerced;
+    }
+  }
+  if (repaired.newString === undefined && typeof repaired.content === "string") {
+    repaired.newString = repaired.content;
+  }
+  delete repaired.content;
   return repaired;
 }
 
@@ -669,7 +723,7 @@ function hasEditFilePath(args: JsonRecord): boolean {
 }
 
 function hasEditBody(args: JsonRecord): boolean {
-  const body = args.new_string ?? args.newString ?? args.content;
+  const body = args.new_string ?? args.newString ?? args.content ?? args.streamContent;
   return typeof body === "string" && body.length > 0;
 }
 
@@ -724,7 +778,7 @@ function buildRepairHint(
   typeErrors: string[],
   context: ValidateToolArgumentsContext = {},
 ): string {
-  const fullFileHint = toolName.toLowerCase() === "edit"
+  const fullFileHint = isToolName(toolName, "edit")
     ? buildEditFullFileHint(args, missing, typeErrors, context)
     : null;
   if (fullFileHint) {
@@ -743,13 +797,25 @@ function buildRepairHint(
   }
 
   if (
-    toolName.toLowerCase() === "edit"
+    isToolName(toolName, "edit")
     && (missing.includes("old_string") || missing.includes("oldString") || missing.includes("new_string") || missing.includes("newString"))
   ) {
     hints.push("edit requires path, old_string, and new_string");
   }
 
   return hints.join(" | ");
+}
+
+function selectWriteSchemaForTool(toolName: string, toolSchemaMap: Map<string, unknown>): unknown {
+  if (toolName.toLowerCase().startsWith("oc_")) {
+    return toolSchemaMap.get("oc_write") ?? toolSchemaMap.get("write");
+  }
+  return toolSchemaMap.get("write") ?? toolSchemaMap.get("oc_write");
+}
+
+function isToolName(toolName: string, canonical: "edit" | "write"): boolean {
+  const token = toolName.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return token === canonical || token === `oc${canonical}`;
 }
 
 function matchesType(value: unknown, schemaType: unknown): boolean {

@@ -92,3 +92,28 @@ func TestInstallCursorBridgeHookPreservesExistingHooks(t *testing.T) {
 		t.Fatalf("bridge hook was not appended")
 	}
 }
+
+func TestQuickInstallTasksOnlyIncludeCursorBridgeWhenRequested(t *testing.T) {
+	defaultModel := newModel(false, false, true, nil)
+	next, _ := defaultModel.startQuickInstallation()
+	defaultTasks := next.(model).tasks
+	if hasTask(defaultTasks, "Install Cursor bridge hook") {
+		t.Fatalf("default quick install should not include Cursor bridge hook task")
+	}
+
+	optInModel := newModel(false, false, false, nil)
+	next, _ = optInModel.startQuickInstallation()
+	optInTasks := next.(model).tasks
+	if !hasTask(optInTasks, "Install Cursor bridge hook") {
+		t.Fatalf("opt-in quick install should include Cursor bridge hook task")
+	}
+}
+
+func hasTask(tasks []installTask, name string) bool {
+	for _, task := range tasks {
+		if task.name == name {
+			return true
+		}
+	}
+	return false
+}

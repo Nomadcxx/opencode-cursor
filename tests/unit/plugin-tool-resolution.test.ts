@@ -70,6 +70,40 @@ describe("applyCursorWriteToolContract", () => {
     expect(existing[0].function.description).toBe("Write a file");
   });
 
+  it("uses native OpenCode edit argument names when preserving native tools", () => {
+    const existing = [
+      {
+        type: "function",
+        function: {
+          name: "edit",
+          parameters: {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              oldString: { type: "string" },
+              newString: { type: "string" },
+            },
+            required: ["filePath", "oldString", "newString"],
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "write",
+          description: "Write a file",
+        },
+      },
+    ];
+
+    const patched = applyCursorWriteToolContract(existing) as typeof existing;
+
+    expect(patched[1].function.description).toContain(
+      "use edit with filePath, oldString, and newString",
+    );
+    expect(patched[1].function.description).not.toContain("old_string");
+  });
+
   it("does not duplicate the cursor write contract", () => {
     const existing = [
       {

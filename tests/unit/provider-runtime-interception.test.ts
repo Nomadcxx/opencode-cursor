@@ -112,6 +112,33 @@ const OPENCODE_EDIT_WRITE_SCHEMA_MAP = new Map([
   ],
 ]);
 
+const OC_EDIT_WRITE_SCHEMA_MAP = new Map([
+  [
+    "oc_edit",
+    {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+        streamContent: { type: "string" },
+      },
+      required: ["path", "old_string", "new_string"],
+    },
+  ],
+  [
+    "oc_write",
+    {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+    },
+  ],
+]);
+
 function createEditPathContentRerouteOverrides(
   overrides: Partial<EventOptions> = {},
 ): Partial<EventOptions> {
@@ -481,6 +508,111 @@ describe("provider runtime interception fallback", () => {
     expect(args.filePath).toBe("/tmp/project/test.txt");
     expect(args.content).toBe("49\ntest\n51");
     expect(args.path).toBeUndefined();
+  });
+
+  it("reroutes bare cursor editToolCall to oc_write when fallback tools are active", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_oc_edit_stream_content",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: "/tmp/project/test.txt",
+                streamContent: "body",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["oc_edit", "oc_write"]),
+        toolSchemaMap: OC_EDIT_WRITE_SCHEMA_MAP,
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("oc_write");
+    const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
+    expect(args.path).toBe("/tmp/project/test.txt");
+    expect(args.content).toBe("body");
+    expect(args.filePath).toBeUndefined();
+  });
+
+  it("reroutes full-file edit payloads before schema validation when schemas are absent", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_no_schema",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: "/home/nomadx/SOVIET_SPACE_TRUE_BASELINE.md",
+                content: "body",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: new Map(),
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: true, skipConverter: true });
+    expect(intercepted).toHaveLength(1);
+    expect(intercepted[0]?.function.name).toBe("write");
+    const args = JSON.parse(intercepted[0]?.function.arguments ?? "{}");
+    expect(args.filePath).toBe("/home/nomadx/SOVIET_SPACE_TRUE_BASELINE.md");
+    expect(args.content).toBe("body");
+    expect(args.path).toBeUndefined();
+  });
+
+  it("skips schema-absent edit payloads that cannot execute", async () => {
+    const intercepted: OpenAiToolCall[] = [];
+    const toolResults: any[] = [];
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_path_only_no_schema",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: "/home/nomadx/SOVIET_SPACE_TRUE_BASELINE.md",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: new Map(),
+        onInterceptedToolCall: async (toolCall) => {
+          intercepted.push(toolCall);
+        },
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    expect(intercepted).toHaveLength(0);
+    expect(toolResults).toHaveLength(1);
+    const hint = toolResults[0]?.choices?.[0]?.delta?.content ?? "";
+    expect(hint).toContain("Skipped malformed tool call");
+    expect(hint).toContain("oldString");
+    expect(hint).toContain("newString");
   });
 
   it("skips suspicious streamContent write reroutes that would shrink an existing file", async () => {
@@ -930,7 +1062,7 @@ describe("provider runtime interception fallback", () => {
   it("does not fallback on success loop-guard termination; returns terminal response", async () => {
     let fallbackCalled = false;
     // Use 'edit' instead of 'read' - exploration tools have 5x limit multiplier
-    const editArgs = "{\"path\":\"foo.txt\",\"old_string\":\"a\",\"new_string\":\"b\"}";
+    const editArgs = "{\"filePath\":\"foo.txt\",\"oldString\":\"a\",\"newString\":\"b\"}";
     const guard = createToolLoopGuard(
       [{ role: "tool", tool_call_id: "c1", content: "{\"success\":true}" }],
       1,
@@ -955,7 +1087,7 @@ describe("provider runtime interception fallback", () => {
           call_id: "c3",
           tool_call: {
             editToolCall: {
-              args: { path: "foo.txt", old_string: "a", new_string: "b" },
+              args: { filePath: "foo.txt", oldString: "a", newString: "b" },
             },
           },
         } as any,
@@ -1331,7 +1463,7 @@ describe("graduated response (soft/hard termination)", () => {
     guard.evaluate({
       id: "c1",
       type: "function",
-      function: { name: "edit", arguments: '{"path":"foo.txt","old_string":"a","new_string":"b"}' },
+      function: { name: "edit", arguments: '{"filePath":"foo.txt","oldString":"a","newString":"b"}' },
     });
 
     const result = await handleToolLoopEventWithFallback({
@@ -1341,7 +1473,7 @@ describe("graduated response (soft/hard termination)", () => {
           call_id: "c2",
           tool_call: {
             editToolCall: {
-              args: { path: "foo.txt", old_string: "a", new_string: "b" },
+              args: { filePath: "foo.txt", oldString: "a", newString: "b" },
             },
           },
         } as any,
