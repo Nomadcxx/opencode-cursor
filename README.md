@@ -27,7 +27,7 @@ cursor-agent login
 opencode models | grep cursor-acp
 ```
 
-Upgrade: `npm update -g @rama_nigg/open-cursor`
+Upgrade: `npm update -g @rama_nigg/open-cursor`, then restart opencode so it loads the new plugin process.
 
 <details>
 <summary><b>Option B</b> — shell installer</summary>
@@ -217,11 +217,12 @@ Cursor integration in opencode still has tradeoffs. Pick the least bad option fo
 
 - `fetch() URL is invalid` or auth errors → `cursor-agent login` or `opencode auth login --provider cursor-acp`
 - `CURSOR_API_KEY not set` in SDK mode → set a real API key from [cursor.com/settings](https://cursor.com/settings), or use `CURSOR_ACP_BACKEND=auto` with a working `cursor-agent`
+- `SchemaError(Missing key at ["oldString"])` or `["filePath"]` during Composer file writes → update `@rama_nigg/open-cursor`, then restart opencode and cursor-agent so stale processes cannot keep the old tool schema
 - Model not responding → verify your API key/quota
 - Quota exceeded → [cursor.com/settings](https://cursor.com/settings)
 - Proxy not starting → ensure port 32124 is available
 
-Debug logging: `CURSOR_ACP_LOG_LEVEL=debug opencode run "your prompt" --model cursor-acp/auto`
+Debug logging: `CURSOR_ACP_LOG_LEVEL=debug opencode` for TUI use, or `CURSOR_ACP_LOG_LEVEL=debug opencode run "your prompt" --model cursor-acp/auto`
 
 ## Roadmap
 
