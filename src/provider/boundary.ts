@@ -102,9 +102,13 @@ function createSharedBoundary(
 
     computeToolLoopFlags(toolLoopMode, forwardToolCalls, emitToolUpdates) {
       const proxyExec = toolLoopMode === "proxy-exec";
+      const opencode = toolLoopMode === "opencode";
       return {
         proxyExecuteToolCalls: proxyExec && forwardToolCalls,
-        suppressConverterToolEvents: proxyExec && !forwardToolCalls,
+        // ponytail: opencode mode owns tool-call delivery through the normalized
+        // interception path. Letting the generic stream converter emit raw
+        // tool_call chunks bypasses schema repair and surfaces edit SchemaErrors.
+        suppressConverterToolEvents: opencode || (proxyExec && !forwardToolCalls),
         shouldEmitToolUpdates: proxyExec && emitToolUpdates,
       };
     },

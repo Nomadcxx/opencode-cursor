@@ -81,6 +81,72 @@ describe("buildPromptFromMessages", () => {
     expect(result).toContain('tool_call(id: call_1, name: read, args: {"path":"foo.txt"})');
   });
 
+  it("replays prior full-file edit calls as write examples when write is available", () => {
+    const tools = [
+      {
+        type: "function",
+        function: {
+          name: "edit",
+          parameters: {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              oldString: { type: "string" },
+              newString: { type: "string" },
+            },
+            required: ["filePath", "oldString", "newString"],
+            additionalProperties: false,
+          },
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "write",
+          parameters: {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["filePath", "content"],
+            additionalProperties: false,
+          },
+        },
+      },
+    ];
+    const messages = [
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: "call_bad_edit",
+            function: {
+              name: "edit",
+              arguments: '{"filePath":"/tmp/demo.md","content":"full rewrite"}',
+            },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_bad_edit",
+        content: 'The edit tool was called with invalid arguments: SchemaError(Missing key at ["oldString"]).',
+      },
+    ];
+
+    const result = buildPromptFromMessages(messages, tools);
+
+    expect(result).toContain(
+      'tool_call(id: call_bad_edit, name: write, args: {"filePath":"/tmp/demo.md","content":"full rewrite"})',
+    );
+    expect(result).toContain(
+      'TOOL_RESULT (name: write, call_id: call_bad_edit): The edit tool was called with invalid arguments: SchemaError(Missing key at ["oldString"]).',
+    );
+    expect(result).not.toContain("name: edit");
+  });
+
   it("handles assistant tool_calls without content", () => {
     const messages = [
       {

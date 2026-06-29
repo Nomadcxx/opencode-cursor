@@ -162,6 +162,41 @@ describe("tool schema compatibility", () => {
     expect(result.validation.ok).toBe(true);
   });
 
+  it("normalizes write path to filePath when schema requires filePath", () => {
+    const result = applyToolSchemaCompat(
+      {
+        id: "c1",
+        type: "function",
+        function: {
+          name: "write",
+          arguments: JSON.stringify({
+            path: "/tmp/a.txt",
+            content: "hello",
+          }),
+        },
+      },
+      new Map([
+        [
+          "write",
+          {
+            type: "object",
+            properties: {
+              filePath: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["filePath", "content"],
+            additionalProperties: false,
+          },
+        ],
+      ]),
+    );
+
+    expect(result.normalizedArgs.filePath).toBe("/tmp/a.txt");
+    expect(result.normalizedArgs.content).toBe("hello");
+    expect(result.normalizedArgs.path).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
   it("normalizes filename alias to path", () => {
     const result = applyToolSchemaCompat(
       {

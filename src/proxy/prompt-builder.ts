@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { buildToolSchemaMap, applyToolSchemaCompat, tryRerouteEditToWrite } from "../provider/tool-schema-compat.js";
+import type { OpenAiToolCall } from "./tool-loop.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("proxy:prompt-builder");
@@ -74,6 +76,38 @@ function formatToolResult(callId: string, name: string | undefined, body: string
     : `TOOL_RESULT (call_id: ${callId}): ${body}`;
 }
 
+function formatAssistantToolCall(
+  tc: any,
+  allowedToolNames: Set<string>,
+  toolSchemaMap: Map<string, unknown>,
+): { text: string; name: string } {
+  const fn = tc.function || {};
+  let name = fn.name || "?";
+  let args = fn.arguments || "{}";
+
+  if (typeof fn.name === "string" && typeof fn.arguments === "string") {
+    const toolCall: OpenAiToolCall = {
+      id: tc.id || "call_unknown",
+      type: "function",
+      function: {
+        name: fn.name,
+        arguments: fn.arguments,
+      },
+    };
+    const compat = applyToolSchemaCompat(toolCall, toolSchemaMap);
+    const rerouted = tryRerouteEditToWrite(compat.toolCall, compat, allowedToolNames, toolSchemaMap);
+    if (rerouted) {
+      name = rerouted.function.name;
+      args = rerouted.function.arguments;
+    }
+  }
+
+  return {
+    text: `tool_call(id: ${tc.id || "?"}, name: ${name}, args: ${args})`,
+    name,
+  };
+}
+
 /**
  * Build a text prompt from OpenAI chat messages + tool definitions.
  * Handles role:"tool" result messages and assistant tool_calls that
@@ -128,6 +162,12 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>,
 
   const lines: string[] = [];
   const toolCallNames = new Map<string, string>();
+  const allowedToolNames = new Set(
+    tools
+      .map((t: any) => t?.function?.name ?? t?.name)
+      .filter((name: unknown): name is string => typeof name === "string" && name.length > 0),
+  );
+  const toolSchemaMap = buildToolSchemaMap(tools);
 
   if (tools.length > 0) {
     lines.push(buildToolSchemaBlock(tools));
@@ -164,11 +204,11 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>,
       message.tool_calls.length > 0
     ) {
       const tcTexts = message.tool_calls.map((tc: any) => {
-        const fn = tc.function || {};
-        if (tc.id && fn.name) {
-          toolCallNames.set(tc.id, fn.name);
+        const formatted = formatAssistantToolCall(tc, allowedToolNames, toolSchemaMap);
+        if (tc.id && formatted.name && formatted.name !== "?") {
+          toolCallNames.set(tc.id, formatted.name);
         }
-        return `tool_call(id: ${tc.id || "?"}, name: ${fn.name || "?"}, args: ${fn.arguments || "{}"})`;
+        return formatted.text;
       });
       const text = typeof message.content === "string" ? message.content : "";
       lines.push(`ASSISTANT: ${text ? text + "\n" : ""}${tcTexts.join("\n")}`);

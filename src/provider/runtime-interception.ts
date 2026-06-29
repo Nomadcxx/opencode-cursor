@@ -147,7 +147,7 @@ export async function handleToolLoopEventLegacy(
     log.debug("MCP tool passed through to cursor-agent (legacy)", {
       tool: extraction.passthroughName,
     });
-    return { intercepted: false, skipConverter: false };
+    return { intercepted: false, skipConverter: suppressConverterToolEvents };
   }
 
   // Handle skip: no tool to intercept
@@ -331,7 +331,7 @@ export async function handleToolLoopEventV1(
     log.debug("MCP tool passed through to cursor-agent (v1)", {
       tool: extraction.passthroughName,
     });
-    return { intercepted: false, skipConverter: false };
+    return { intercepted: false, skipConverter: suppressConverterToolEvents };
   }
 
   // Handle skip: no tool to intercept

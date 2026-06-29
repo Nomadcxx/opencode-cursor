@@ -358,6 +358,17 @@ function normalizeToolSpecificArgs(toolName: string, args: JsonRecord, schema?: 
 
   if (isToolName(toolName, "write")) {
     const normalized: JsonRecord = { ...args };
+    const schemaProperties = getSchemaPropertyNames(schema);
+
+    // Cursor's Write tool uses `path`; OpenCode's write schema uses `filePath`.
+    if (
+      schemaProperties.has("filePath")
+      && normalized.filePath === undefined
+      && typeof normalized.path === "string"
+    ) {
+      normalized.filePath = normalized.path;
+      delete normalized.path;
+    }
 
     // Some model variants confuse write/edit and send edit-style payload keys.
     // Map them into canonical write arguments before schema validation/sanitization.

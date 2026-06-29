@@ -68,6 +68,42 @@ const WRITE_TOOL = {
   },
 };
 
+const OPENCODE_EDIT_TOOL = {
+  type: "function",
+  function: {
+    name: "edit",
+    description: "Edit a file",
+    parameters: {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        oldString: { type: "string" },
+        newString: { type: "string" },
+        replaceAll: { type: "boolean" },
+      },
+      required: ["filePath", "oldString", "newString"],
+      additionalProperties: false,
+    },
+  },
+};
+
+const OPENCODE_WRITE_TOOL = {
+  type: "function",
+  function: {
+    name: "write",
+    description: "Write a file",
+    parameters: {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["filePath", "content"],
+      additionalProperties: false,
+    },
+  },
+};
+
 const MOCK_CURSOR_AGENT = `#!/usr/bin/env node
 const fs = require("fs");
 
@@ -177,6 +213,46 @@ process.stdin.on("end", () => {
         message: {
           role: "assistant",
           content: [{ type: "text", text: "edit fallback text" }],
+        },
+      },
+    ];
+  } else if (scenario === "tool-edit-opencode-filepath-content") {
+    events = [
+      {
+        type: "tool_call",
+        call_id: "c1",
+        tool_call: {
+          editToolCall: {
+            args: { filePath: "/home/nomadx/SOVIET_SPACE_251_DEFAULT.md", content: "full rewrite" },
+          },
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "edit fallback text" }],
+        },
+      },
+    ];
+  } else if (scenario === "tool-write-cursor-native-input") {
+    events = [
+      {
+        type: "tool_call",
+        call_id: "c1",
+        tool_call: {
+          WriteToolCall: {
+            input: { filePath: "/home/nomadx/SOVIET_SPACE_251_DEFAULT.md", contents: "full rewrite" },
+          },
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "cursor native write fallback text" }],
         },
       },
     ];
@@ -562,6 +638,68 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(allContent).not.toContain("edit fallback text");
   });
 
+  it("reroutes streaming opencode filePath/content edit payloads to write", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-edit-opencode-filepath-content";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [OPENCODE_EDIT_TOOL, OPENCODE_WRITE_TOOL],
+      messages: [{ role: "user", content: "Write the Soviet space essay" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("write");
+    const args = JSON.parse(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments ?? "{}");
+    expect(args).toEqual({
+      filePath: "/home/nomadx/SOVIET_SPACE_251_DEFAULT.md",
+      content: "full rewrite",
+    });
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain("Skipped malformed tool call");
+    expect(allContent).not.toContain("edit fallback text");
+  });
+
+  it("intercepts Cursor native Write tool_use input payloads", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-write-cursor-native-input";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [OPENCODE_EDIT_TOOL, OPENCODE_WRITE_TOOL],
+      messages: [{ role: "user", content: "Write the Soviet space essay" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("write");
+    const args = JSON.parse(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.arguments ?? "{}");
+    expect(args).toEqual({
+      filePath: "/home/nomadx/SOVIET_SPACE_251_DEFAULT.md",
+      content: "full rewrite",
+    });
+
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain("Skipped malformed tool call");
+    expect(allContent).not.toContain("cursor native write fallback text");
+  });
+
   it("converts non-stream bridge JSON into a write tool call", async () => {
     process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-write";
     process.env.MOCK_CURSOR_PROMPT_FILE = promptFile;
@@ -830,7 +968,7 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(argv[modelIndex + 1]).toBe("auto");
   });
 
-  it("does not intercept non-allowed tools", async () => {
+  it("does not leak non-allowed tools through the raw converter in opencode mode", async () => {
     process.env.MOCK_CURSOR_SCENARIO = "tool-bash-then-text";
     process.env.MOCK_CURSOR_PROMPT_FILE = "";
 
@@ -846,14 +984,14 @@ describe("OpenCode-owned tool loop integration", () => {
     const chunks = parseJsonChunks(dataLines);
 
     const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
-    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("bash");
+    expect(toolDelta).toBeUndefined();
 
     const finishReasons = chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean);
     expect(finishReasons).toContain("stop");
     expect(finishReasons).not.toContain("tool_calls");
   });
 
-  it("does not intercept when request tools are empty", async () => {
+  it("does not leak tool calls through the raw converter when request tools are empty", async () => {
     process.env.MOCK_CURSOR_SCENARIO = "tool-read-then-text";
     process.env.MOCK_CURSOR_PROMPT_FILE = "";
 
@@ -869,7 +1007,7 @@ describe("OpenCode-owned tool loop integration", () => {
     const chunks = parseJsonChunks(dataLines);
 
     const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
-    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("read");
+    expect(toolDelta).toBeUndefined();
 
     const finishReasons = chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean);
     expect(finishReasons).toContain("stop");

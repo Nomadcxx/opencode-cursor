@@ -267,6 +267,37 @@ describe("provider runtime interception parity", () => {
     expect(resultsLegacy).toEqual([toolResult]);
     expect(resultsV1).toEqual([toolResult]);
   });
+
+  it("suppresses converter output for passthrough tool calls when requested", async () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "c2",
+      tool_call: {
+        browserNavigateToolCall: {
+          args: { url: "https://example.com" },
+        },
+      },
+    };
+
+    const legacyResult = await handleToolLoopEventLegacy(
+      createBaseOptions({
+        event,
+        allowedToolNames: new Set(["read"]),
+        suppressConverterToolEvents: true,
+      }),
+    );
+    const v1Result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event,
+        allowedToolNames: new Set(["read"]),
+        suppressConverterToolEvents: true,
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(legacyResult).toEqual({ intercepted: false, skipConverter: true });
+    expect(v1Result).toEqual(legacyResult);
+  });
 });
 
 describe("provider runtime interception fallback", () => {

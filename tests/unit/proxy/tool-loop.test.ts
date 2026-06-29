@@ -108,6 +108,42 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.arguments).toBe("{\"path\":\"test.md\",\"streamContent\":\"hello\"}");
   });
 
+  it("extracts args from Cursor native Write tool_use input payload", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_write_input",
+      tool_call: {
+        WriteToolCall: {
+          input: { filePath: "test.md", content: "hello" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("write");
+    expect(result.toolCall?.function.arguments).toBe('{"filePath":"test.md","content":"hello"}');
+  });
+
+  it("extracts args from input payload and normalizes contents alias", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_write_input_contents",
+      tool_call: {
+        WriteToolCall: {
+          input: { filePath: "test.md", contents: "hello" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("write");
+    const args = JSON.parse(result.toolCall?.function.arguments ?? "{}");
+    expect(args.filePath).toBe("test.md");
+    expect(args.contents).toBe("hello");
+  });
+
   it("skips result-only tool_call payloads without args", () => {
     const event: any = {
       type: "tool_call",

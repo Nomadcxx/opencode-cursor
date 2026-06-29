@@ -273,6 +273,11 @@ function extractToolNameAndArgs(event: StreamJsonToolCallEvent): {
     const payloadRecord = isRecord(payload) ? payload : null;
     args = payloadRecord?.args;
 
+    // Cursor native tool_use events carry arguments under `input` instead of `args`.
+    if (args === undefined && payloadRecord && isRecord(payloadRecord.input)) {
+      args = payloadRecord.input;
+    }
+
     // Some tool-call events include a flat payload without an `args` wrapper.
     if (args === undefined && payloadRecord) {
       const { result: _result, ...rest } = payloadRecord;

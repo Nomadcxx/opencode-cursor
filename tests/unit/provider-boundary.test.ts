@@ -41,7 +41,7 @@ describe("provider boundary", () => {
 
     expect(boundary.computeToolLoopFlags("opencode", true, true)).toEqual({
       proxyExecuteToolCalls: false,
-      suppressConverterToolEvents: false,
+      suppressConverterToolEvents: true,
       shouldEmitToolUpdates: false,
     });
 
