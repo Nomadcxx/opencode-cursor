@@ -8,6 +8,8 @@
 
 No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Your Cursor subscription, properly integrated.
 
+> **Also worth a look:** [oakimov/cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) takes a different approach, speaking Cursor's native agent protocol directly so OpenCode owns the tool loop. Excellent work, and a compelling read if you want to understand how deep the Cursor integration can go.
+
 ## Installation
 
 ### Option A — npm global + install
