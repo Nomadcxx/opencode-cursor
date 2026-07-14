@@ -17,7 +17,7 @@ import {
   isPartialStreamDelta,
   isResult,
   isThinking,
-  isToolCall,
+  isToolCallStart,
   type StreamJsonEvent,
 } from "./streaming/types.js";
 import {
@@ -1021,7 +1021,7 @@ export function extractCompletionFromStream(output: string): {
       }
     }
 
-    if (isToolCall(event) && event.subtype === "started") {
+    if (isToolCallStart(event)) {
       assistantPrefix += assistantSegment;
       assistantSegment = "";
       reasoningPrefix += reasoningSegment;

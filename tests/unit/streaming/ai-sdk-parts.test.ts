@@ -162,7 +162,6 @@ describe("ai-sdk stream parts", () => {
       }),
       ...converter.handleEvent({
         type: "tool_call",
-        subtype: "started",
         call_id: "tool-1",
         tool_call: { readToolCall: { args: { path: "package.json" } } },
       }),

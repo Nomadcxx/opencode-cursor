@@ -6,6 +6,7 @@ import {
   isPartialStreamDelta,
   isThinking,
   isToolCall,
+  isToolCallStart,
   type StreamJsonEvent,
   type StreamJsonToolCallEvent,
 } from "./types.js";
@@ -55,7 +56,7 @@ export class StreamToAiSdkParts {
     }
 
     if (isToolCall(event)) {
-      if (event.subtype === "started") {
+      if (isToolCallStart(event)) {
         this.tracker.reset();
       }
       return this.handleToolCall(event);

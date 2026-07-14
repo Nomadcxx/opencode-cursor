@@ -61,7 +61,7 @@ describe("extractCompletionFromStream", () => {
     const output = [
       { type: "assistant", timestamp_ms: 1, message: { role: "assistant", content: [{ type: "text", text: "Reading" }] } },
       { type: "assistant", timestamp_ms: 2, model_call_id: "call-before-tool", message: { role: "assistant", content: [{ type: "text", text: "Reading" }] } },
-      { type: "tool_call", subtype: "started", call_id: "tool-1", tool_call: { readToolCall: { args: { path: "package.json" } } } },
+      { type: "tool_call", call_id: "tool-1", tool_call: { readToolCall: { args: { path: "package.json" } } } },
       { type: "assistant", timestamp_ms: 3, message: { role: "assistant", content: [{ type: "text", text: "Done" }] } },
       { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Done" }] } },
     ].map((event) => JSON.stringify(event)).join("\n");
@@ -69,6 +69,21 @@ describe("extractCompletionFromStream", () => {
     expect(extractCompletionFromStream(output)).toEqual({
       assistantText: "ReadingDone",
       reasoningText: "",
+    });
+  });
+
+  it("keeps reasoning across an omitted-subtype tool boundary", () => {
+    const output = [
+      { type: "thinking", subtype: "delta", timestamp_ms: 1, text: "Plan" },
+      { type: "thinking", subtype: "delta", timestamp_ms: 2, model_call_id: "call-before-tool", text: "Plan" },
+      { type: "tool_call", call_id: "tool-1", tool_call: { readToolCall: { args: { path: "package.json" } } } },
+      { type: "thinking", subtype: "delta", timestamp_ms: 3, text: "Done" },
+      { type: "thinking", subtype: "completed", text: "Done" },
+    ].map((event) => JSON.stringify(event)).join("\n");
+
+    expect(extractCompletionFromStream(output)).toEqual({
+      assistantText: "",
+      reasoningText: "PlanDone",
     });
   });
 

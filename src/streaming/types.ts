@@ -121,13 +121,16 @@ export const isThinking = (
 export const isPartialStreamDelta = (
   event: StreamJsonAssistantEvent | StreamJsonThinkingEvent,
 ) => {
-  // ponytail: Cursor currently marks timestamped snapshots with model_call_id;
-  // prefer an explicit delta/snapshot subtype if the protocol adds one.
+  // ponytail: Cursor marks timestamped snapshots with model_call_id even when
+  // subtype says delta; prefer a trustworthy protocol subtype if one is added.
   return typeof event.timestamp_ms === "number" && typeof event.model_call_id !== "string";
 };
 
 export const isToolCall = (event: StreamJsonEvent): event is StreamJsonToolCallEvent =>
   event.type === "tool_call";
+
+export const isToolCallStart = (event: StreamJsonEvent): event is StreamJsonToolCallEvent =>
+  isToolCall(event) && (event.subtype ?? "started") === "started";
 
 export const isResult = (event: StreamJsonEvent): event is StreamJsonResultEvent =>
   event.type === "result";
