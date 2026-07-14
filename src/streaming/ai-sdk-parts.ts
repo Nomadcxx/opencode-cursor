@@ -3,6 +3,7 @@ import {
   extractThinking,
   inferToolName,
   isAssistantText,
+  isPartialStreamDelta,
   isThinking,
   isToolCall,
   type StreamJsonEvent,
@@ -42,18 +43,21 @@ export class StreamToAiSdkParts {
     if (isAssistantText(event)) {
       const text = extractText(event);
       if (!text) return [];
-      const delta = this.tracker.nextText(text);
+      const delta = this.tracker.nextText(text, isPartialStreamDelta(event));
       return delta ? [{ type: "text-delta", textDelta: delta }] : [];
     }
 
     if (isThinking(event)) {
       const text = extractThinking(event);
       if (!text) return [];
-      const delta = this.tracker.nextThinking(text);
+      const delta = this.tracker.nextThinking(text, isPartialStreamDelta(event));
       return delta ? [{ type: "text-delta", textDelta: delta }] : [];
     }
 
     if (isToolCall(event)) {
+      if (event.subtype === "started") {
+        this.tracker.reset();
+      }
       return this.handleToolCall(event);
     }
 

@@ -90,6 +90,15 @@ describe("DeltaTracker", () => {
 });
 
 describe("MixedDeltaTracker", () => {
+  it("preserves raw deltas that repeat an emitted prefix", () => {
+    const tracker = new MixedDeltaTracker();
+
+    expect(tracker.nextText("**", true)).toBe("**");
+    expect(tracker.nextText("Heading", true)).toBe("Heading");
+    expect(tracker.nextText("**", true)).toBe("**");
+    expect(tracker.nextText("**Heading**")).toBe("");
+  });
+
   it("handles streams that mix delta and accumulated text payloads", () => {
     const tracker = new MixedDeltaTracker();
 
@@ -105,5 +114,14 @@ describe("MixedDeltaTracker", () => {
     expect(tracker.nextThinking(" more")).toBe(" more");
     expect(tracker.nextText("Answer")).toBe("Answer");
     expect(tracker.nextThinking("Plan more carefully")).toBe(" carefully");
+  });
+
+  it("preserves repeated raw thinking deltas", () => {
+    const tracker = new MixedDeltaTracker();
+
+    expect(tracker.nextThinking("**", true)).toBe("**");
+    expect(tracker.nextThinking("Plan", true)).toBe("Plan");
+    expect(tracker.nextThinking("**", true)).toBe("**");
+    expect(tracker.nextThinking("**Plan**")).toBe("");
   });
 });

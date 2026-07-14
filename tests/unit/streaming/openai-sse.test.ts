@@ -148,7 +148,59 @@ describe("openai-sse", () => {
     expect(final).toEqual([]);
   });
 
-  it("handles text streams that mix delta and accumulated partial events", () => {
+  it("preserves repeated raw tokens and resets snapshot tracking after tools", () => {
+    const converter = new StreamToSseConverter("test-model", {
+      id: "chunk-id",
+      created: 123,
+    });
+    const chunks = [
+      ...converter.handleEvent({
+        type: "assistant",
+        timestamp_ms: 1,
+        message: { role: "assistant", content: [{ type: "text", text: "Reading" }] },
+      }),
+      ...converter.handleEvent({
+        type: "assistant",
+        timestamp_ms: 2,
+        model_call_id: "call-before-tool",
+        message: { role: "assistant", content: [{ type: "text", text: "Reading" }] },
+      }),
+      ...converter.handleEvent({
+        type: "tool_call",
+        subtype: "started",
+        call_id: "tool-1",
+        tool_call: { readToolCall: { args: { path: "package.json" } } },
+      }),
+      ...converter.handleEvent({
+        type: "assistant",
+        timestamp_ms: 3,
+        message: { role: "assistant", content: [{ type: "text", text: "**" }] },
+      }),
+      ...converter.handleEvent({
+        type: "assistant",
+        timestamp_ms: 4,
+        message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+      }),
+      ...converter.handleEvent({
+        type: "assistant",
+        timestamp_ms: 5,
+        message: { role: "assistant", content: [{ type: "text", text: "**" }] },
+      }),
+    ];
+    const final = converter.handleEvent({
+      type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: "**Done**" }] },
+    });
+    const text = chunks
+      .map(parseChunk)
+      .map((chunk) => chunk.choices[0].delta.content ?? "")
+      .join("");
+
+    expect(text).toBe("Reading**Done**");
+    expect(final).toEqual([]);
+  });
+
+  it("handles text streams that include a timestamped model-call snapshot", () => {
     const converter = new StreamToSseConverter("test-model", {
       id: "chunk-id",
       created: 123,
@@ -174,6 +226,7 @@ describe("openai-sse", () => {
     const third = converter.handleEvent({
       type: "assistant",
       timestamp_ms: now + 3,
+      model_call_id: "model-call-1",
       message: {
         role: "assistant",
         content: [{ type: "text", text: "Hello world!" }],
@@ -229,7 +282,7 @@ describe("openai-sse", () => {
     expect(final).toEqual([]);
   });
 
-  it("handles thinking streams that mix delta and accumulated partial events", () => {
+  it("handles thinking streams that include a timestamped model-call snapshot", () => {
     const converter = new StreamToSseConverter("test-model", {
       id: "chunk-id",
       created: 123,
@@ -255,6 +308,7 @@ describe("openai-sse", () => {
     const third = converter.handleEvent({
       type: "assistant",
       timestamp_ms: now + 3,
+      model_call_id: "model-call-1",
       message: {
         role: "assistant",
         content: [{ type: "thinking", thinking: "Plan more carefully" }],

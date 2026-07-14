@@ -8,15 +8,16 @@ import { homedir } from "os";
 import { isAbsolute, join, relative, resolve } from "path";
 import { ToolMapper, type ToolUpdate } from "./acp/tools.js";
 import { LineBuffer } from "./streaming/line-buffer.js";
-import { MixedDeltaTracker } from "./streaming/delta-tracker.js";
 import { StreamToSseConverter, formatSseDone } from "./streaming/openai-sse.js";
 import { parseStreamJsonLine } from "./streaming/parser.js";
 import {
   extractText,
   extractThinking,
   isAssistantText,
+  isPartialStreamDelta,
   isResult,
   isThinking,
+  isToolCall,
   type StreamJsonEvent,
 } from "./streaming/types.js";
 import {
@@ -994,12 +995,11 @@ export function extractCompletionFromStream(output: string): {
   usage?: OpenAiUsage;
 } {
   const lines = output.split("\n");
-  let assistantText = "";
-  let reasoningText = "";
+  let assistantPrefix = "";
+  let assistantSegment = "";
+  let reasoningPrefix = "";
+  let reasoningSegment = "";
   let usage: OpenAiUsage | undefined;
-  let sawAssistantPartials = false;
-  let sawThinkingPartials = false;
-  const tracker = new MixedDeltaTracker();
 
   for (const line of lines) {
     const event = parseStreamJsonLine(line);
@@ -1011,26 +1011,21 @@ export function extractCompletionFromStream(output: string): {
       const text = extractText(event);
       if (!text) continue;
 
-      const isPartial = typeof (event as any).timestamp_ms === "number";
-      if (isPartial) {
-        sawAssistantPartials = true;
-        assistantText += tracker.nextText(text);
-      } else if (!sawAssistantPartials) {
-        assistantText = text;
-      }
+      assistantSegment = isPartialStreamDelta(event) ? assistantSegment + text : text;
     }
 
     if (isThinking(event)) {
       const thinking = extractThinking(event);
       if (thinking) {
-        const isPartial = typeof (event as any).timestamp_ms === "number";
-        if (isPartial) {
-          sawThinkingPartials = true;
-          reasoningText += tracker.nextThinking(thinking);
-        } else if (!sawThinkingPartials) {
-          reasoningText = thinking;
-        }
+        reasoningSegment = isPartialStreamDelta(event) ? reasoningSegment + thinking : thinking;
       }
+    }
+
+    if (isToolCall(event) && event.subtype === "started") {
+      assistantPrefix += assistantSegment;
+      assistantSegment = "";
+      reasoningPrefix += reasoningSegment;
+      reasoningSegment = "";
     }
 
     if (isResult(event)) {
@@ -1038,7 +1033,11 @@ export function extractCompletionFromStream(output: string): {
     }
   }
 
-  return { assistantText, reasoningText, usage };
+  return {
+    assistantText: assistantPrefix + assistantSegment,
+    reasoningText: reasoningPrefix + reasoningSegment,
+    usage,
+  };
 }
 
 function formatToolUpdateEvent(update: ToolUpdate): string {

@@ -50,16 +50,16 @@ export class MixedDeltaTracker {
   private emittedText = "";
   private emittedThinking = "";
 
-  nextText(value: string): string {
-    const delta = this.diff(this.emittedText, value);
+  nextText(value: string, isDelta = false): string {
+    const delta = isDelta ? value : this.diff(this.emittedText, value);
     if (delta) {
       this.emittedText += delta;
     }
     return delta;
   }
 
-  nextThinking(value: string): string {
-    const delta = this.diff(this.emittedThinking, value);
+  nextThinking(value: string, isDelta = false): string {
+    const delta = isDelta ? value : this.diff(this.emittedThinking, value);
     if (delta) {
       this.emittedThinking += delta;
     }

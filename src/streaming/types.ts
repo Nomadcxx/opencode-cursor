@@ -36,6 +36,7 @@ export type StreamJsonAssistantEvent = {
   type: "assistant";
   timestamp?: number;
   timestamp_ms?: number;
+  model_call_id?: string;
   session_id?: string;
   message: {
     role: "assistant";
@@ -54,6 +55,7 @@ export type StreamJsonThinkingEvent = {
   text?: string;
   timestamp?: number;
   timestamp_ms?: number;
+  model_call_id?: string;
   session_id?: string;
 };
 
@@ -114,6 +116,14 @@ export const isThinking = (
   }
 
   return event.type === "assistant" && hasThinkingContent(event);
+};
+
+export const isPartialStreamDelta = (
+  event: StreamJsonAssistantEvent | StreamJsonThinkingEvent,
+) => {
+  // ponytail: Cursor currently marks timestamped snapshots with model_call_id;
+  // prefer an explicit delta/snapshot subtype if the protocol adds one.
+  return typeof event.timestamp_ms === "number" && typeof event.model_call_id !== "string";
 };
 
 export const isToolCall = (event: StreamJsonEvent): event is StreamJsonToolCallEvent =>
