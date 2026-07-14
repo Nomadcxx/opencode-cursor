@@ -3,8 +3,10 @@ import {
   extractThinking,
   inferToolName,
   isAssistantText,
+  isPartialStreamDelta,
   isThinking,
   isToolCall,
+  isToolCallStart,
   type StreamJsonEvent,
   type StreamJsonToolCallEvent,
 } from "./types.js";
@@ -72,18 +74,21 @@ export class StreamToSseConverter {
     if (isAssistantText(event)) {
       const text = extractText(event);
       if (!text) return [];
-      const delta = this.tracker.nextText(text);
+      const delta = this.tracker.nextText(text, isPartialStreamDelta(event));
       return delta ? [this.chunkWith({ content: delta })] : [];
     }
 
     if (isThinking(event)) {
       const text = extractThinking(event);
       if (!text) return [];
-      const delta = this.tracker.nextThinking(text);
+      const delta = this.tracker.nextThinking(text, isPartialStreamDelta(event));
       return delta ? [this.chunkWith({ reasoning_content: delta })] : [];
     }
 
     if (isToolCall(event)) {
+      if (isToolCallStart(event)) {
+        this.tracker.reset();
+      }
       return [this.chunkWith(this.toolCallDelta(event))];
     }
 
