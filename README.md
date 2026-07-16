@@ -161,29 +161,46 @@ Any MCP server using stdio transport works. Tested with hybrid-memory, @modelcon
 
 ```mermaid
 flowchart TB
-    OC["OpenCode"] --> SDK["@ai-sdk/openai-compatible"]
-    SDK -->|"POST /v1/chat/completions"| PROXY["open-cursor proxy :32124"]
-    PROXY -->|"spawn request"| BACKEND["cursor-agent / SDK backend"]
-    HOOK["optional .cursor hook + rule\nbridge context"] -. "additional_context" .-> BACKEND
-    BACKEND -->|"HTTPS"| CURSOR["Cursor API"]
-    CURSOR --> BACKEND
+    REQUEST["OpenCode<br/>messages + tool definitions"]
+    ADAPTER["@ai-sdk/openai-compatible"]
+    PROXY["open-cursor proxy :32124<br/>prompt building + backend selection"]
+    BACKEND{"Runtime backend"}
+    AGENT["cursor-agent<br/>default · per request"]
+    SDK["Cursor SDK runner<br/>optional fallback"]
+    CURSOR["Cursor API"]
+    EVENTS["Backend event stream<br/>stream-json compatible"]
+    BOUNDARY["Provider boundary<br/>schema compatibility · loop guard · SSE conversion"]
+    RESPONSE{"Response event"}
+    TEXT["OpenCode renders<br/>assistant + thinking"]
+    TOOLS["OpenCode executes<br/>local, plugin, or MCP tool"]
+    NEXT["Next request includes<br/>role: tool result ↺"]
 
-    BACKEND -->|"stream-json / SDK events"| PARSER["Parse + convert to SSE"]
-    PARSER -->|"assistant / thinking events"| SSE["SSE content chunks"]
-    PARSER -->|"tool_call event"| BOUNDARY["Provider boundary (v1 default)"]
-    BOUNDARY --> COMPAT["Schema compat + alias normalization"]
-    COMPAT --> GUARD["Tool-loop guard"]
-    GUARD -->|"emit tool_calls + finish_reason=tool_calls"| SDK
-    SDK --> OC
+    REQUEST --> ADAPTER
+    ADAPTER -->|"POST /v1/chat/completions"| PROXY
+    PROXY --> BACKEND
+    BACKEND -->|"default"| AGENT
+    BACKEND -. "if cursor-agent is unavailable<br/>and an API key exists" .-> SDK
+    AGENT -->|"HTTPS"| CURSOR
+    SDK -. "HTTPS" .-> CURSOR
+    CURSOR --> EVENTS
+    EVENTS --> BOUNDARY
+    BOUNDARY --> RESPONSE
+    RESPONSE -->|"text / thinking"| TEXT
+    RESPONSE -->|"normalized tool_call"| TOOLS
+    TOOLS --> NEXT
 
-    OC -->|"execute tool locally"| TOOLRUN["OpenCode tool runtime"]
-    TOOLRUN -->|"next request includes role:tool result"| SDK
-    SDK -->|"TOOL_RESULT prompt block"| BACKEND
-
-    BACKEND -->|"Shell tool_call"| MCPTOOL["mcptool CLI"]
-    MCPTOOL -->|"stdio"| MCP["MCP Servers"]
-    MCP --> MCPTOOL
-    MCPTOOL --> BACKEND
+    classDef host fill:#264653,stroke:#1d3557,color:#fff
+    classDef bridge fill:#2a6f97,stroke:#184e77,color:#fff
+    classDef cursor fill:#6c5ce7,stroke:#4834d4,color:#fff
+    classDef optional fill:#f1f3f5,stroke:#868e96,color:#495057,stroke-dasharray:5 5
+    classDef tool fill:#495057,stroke:#343a40,color:#fff
+    classDef terminal fill:#edf2f4,stroke:#6c757d,color:#212529
+    class REQUEST,TEXT host
+    class ADAPTER,PROXY,EVENTS,BOUNDARY bridge
+    class AGENT,CURSOR cursor
+    class SDK optional
+    class TOOLS tool
+    class BACKEND,RESPONSE,NEXT terminal
 ```
 
 <details>
