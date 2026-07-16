@@ -179,14 +179,16 @@ flowchart TB
     BOUNDARY -->|"text / thinking"| TEXT
     BOUNDARY -->|"tool_call"| TOOLS
 
-    classDef host fill:#264653,stroke:#1d3557,color:#fff
-    classDef bridge fill:#2a6f97,stroke:#184e77,color:#fff
-    classDef cursor fill:#6c5ce7,stroke:#4834d4,color:#fff
-    classDef optional fill:#f1f3f5,stroke:#868e96,color:#495057,stroke-dasharray:5 5
-    classDef tool fill:#495057,stroke:#343a40,color:#fff
+    classDef host fill:#161b22,stroke:#8b949e,color:#f0f6fc,stroke-width:2px
+    classDef bridge fill:#172f4d,stroke:#8b949e,color:#f0f6fc,stroke-width:2px
+    classDef cursorAgent fill:#e3b341,stroke:#8b949e,color:#111820,stroke-width:2px
+    classDef cursorApi fill:#f2cc60,stroke:#8b949e,color:#111820,stroke-width:2px
+    classDef optional fill:#21262d,stroke:#8b949e,color:#c9d1d9,stroke-width:2px,stroke-dasharray:5 5
+    classDef tool fill:#19352a,stroke:#8b949e,color:#f0f6fc,stroke-width:2px
     class OPEN,TEXT host
     class PROXY,BOUNDARY bridge
-    class AGENT,API cursor
+    class AGENT cursorAgent
+    class API cursorApi
     class SDK optional
     class TOOLS tool
 ```
