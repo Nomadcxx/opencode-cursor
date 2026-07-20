@@ -1,5 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { applyCursorWriteToolContract, resolveChatParamTools } from "../../src/plugin";
+import {
+  applyCursorWriteToolContract,
+  buildLocalFallbackTools,
+  resolveChatParamTools,
+} from "../../src/plugin";
+import { ToolRegistry as CoreRegistry } from "../../src/tools/core/registry";
+import { registerDefaultTools } from "../../src/tools/defaults";
 
 describe("resolveChatParamTools", () => {
   it("preserves existing tools in opencode mode", () => {
@@ -33,6 +39,20 @@ describe("resolveChatParamTools", () => {
 
     expect(resolved.action).toBe("none");
     expect(resolved.tools).toBe(existing);
+  });
+});
+
+describe("buildLocalFallbackTools", () => {
+  it("exposes local edit and write tools under canonical and oc-prefixed names", () => {
+    const registry = new CoreRegistry();
+    registerDefaultTools(registry);
+
+    const names = buildLocalFallbackTools(registry).map((tool) => tool.name);
+
+    expect(names).toContain("edit");
+    expect(names).toContain("oc_edit");
+    expect(names).toContain("write");
+    expect(names).toContain("oc_write");
   });
 });
 
