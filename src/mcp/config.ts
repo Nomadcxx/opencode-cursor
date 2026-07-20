@@ -1,7 +1,9 @@
 import {
   existsSync as nodeExistsSync,
+  readdirSync as nodeReaddirSync,
   readFileSync as nodeReadFileSync,
 } from "node:fs";
+import { dirname, join } from "node:path";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger } from "../utils/logger.js";
 
@@ -103,8 +105,10 @@ export function _resetSubagentCache(): void {
 
 interface ReadSubagentNamesDeps {
   configJson?: string;
+  configDir?: string;
   existsSync?: (path: string) => boolean;
   readFileSync?: (path: string, enc: BufferEncoding) => string;
+  readdirSync?: (path: string) => string[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -122,36 +126,67 @@ export function readSubagentNames(deps: ReadSubagentNamesDeps = {}): string[] {
   return result;
 }
 
-function readSubagentNamesUncached(deps: ReadSubagentNamesDeps): string[] {
-  let raw: string;
+function resolveAgentsDir(deps: ReadSubagentNamesDeps): string {
+  const configDir = deps.configDir
+    ?? dirname(resolveOpenCodeConfigPath(deps.env ?? process.env));
+  return join(configDir, "agents");
+}
 
-  if (deps.configJson != null) {
-    raw = deps.configJson;
-  } else {
-    const exists = deps.existsSync ?? nodeExistsSync;
-    const readFile = deps.readFileSync ?? nodeReadFileSync;
-    const configPath = resolveOpenCodeConfigPath(deps.env ?? process.env);
-    if (!exists(configPath)) return ["general-purpose"];
-    try {
-      raw = readFile(configPath, "utf8");
-    } catch {
-      return ["general-purpose"];
-    }
+function parseAgentFrontmatter(content: string): { mode?: string; disable?: boolean } {
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return {};
+
+  const meta: { mode?: string; disable?: boolean } = {};
+  for (const line of match[1].split(/\r?\n/)) {
+    const entry = line.match(/^\s*([a-zA-Z_-]+)\s*:\s*(.+?)\s*$/);
+    if (!entry) continue;
+    const [, key, value] = entry;
+    if (key === "mode") meta.mode = value;
+    if (key === "disable" && value === "true") meta.disable = true;
+  }
+  return meta;
+}
+
+function readAgentsFromDirectory(deps: ReadSubagentNamesDeps): Record<string, unknown> {
+  if (deps.configJson != null && deps.configDir == null && deps.readdirSync == null) {
+    return {};
   }
 
-  let parsed: Record<string, unknown>;
+  const exists = deps.existsSync ?? nodeExistsSync;
+  const readFile = deps.readFileSync ?? nodeReadFileSync;
+  const readdir = deps.readdirSync ?? nodeReaddirSync;
+  const agentsDir = resolveAgentsDir(deps);
+  if (!exists(agentsDir)) return {};
+
+  let files: string[];
   try {
-    parsed = JSON.parse(raw);
+    files = readdir(agentsDir);
   } catch {
-    return ["general-purpose"];
+    return {};
   }
 
-  const agentSection = parsed.agent;
-  if (!agentSection || typeof agentSection !== "object" || Array.isArray(agentSection)) {
-    return ["general-purpose"];
+  const agents: Record<string, unknown> = {};
+  for (const file of files) {
+    if (!file.endsWith(".md")) continue;
+
+    const filePath = join(agentsDir, file);
+    let content: string;
+    try {
+      content = readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const meta = parseAgentFrontmatter(content);
+    if (meta.disable) continue;
+
+    agents[file.slice(0, -3)] = meta.mode ? { mode: meta.mode } : {};
   }
 
-  const agents = agentSection as Record<string, unknown>;
+  return agents;
+}
+
+function pickSubagentNames(agents: Record<string, unknown>): string[] {
   const names = Object.keys(agents);
   if (names.length === 0) return ["general-purpose"];
 
@@ -162,6 +197,43 @@ function readSubagentNamesUncached(deps: ReadSubagentNamesDeps): string[] {
   });
 
   return subagentNames.length > 0 ? subagentNames : names;
+}
+
+function readAgentsFromConfigJson(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const agentSection = parsed.agent;
+    if (!agentSection || typeof agentSection !== "object" || Array.isArray(agentSection)) {
+      return {};
+    }
+    return { ...(agentSection as Record<string, unknown>) };
+  } catch {
+    return {};
+  }
+}
+
+function readSubagentNamesUncached(deps: ReadSubagentNamesDeps): string[] {
+  let agents: Record<string, unknown>;
+
+  if (deps.configJson != null) {
+    agents = readAgentsFromConfigJson(deps.configJson);
+  } else {
+    const exists = deps.existsSync ?? nodeExistsSync;
+    const readFile = deps.readFileSync ?? nodeReadFileSync;
+    const configPath = resolveOpenCodeConfigPath(deps.env ?? process.env);
+    if (!exists(configPath)) {
+      agents = {};
+    } else {
+      try {
+        agents = readAgentsFromConfigJson(readFile(configPath, "utf8"));
+      } catch {
+        agents = {};
+      }
+    }
+  }
+
+  Object.assign(agents, readAgentsFromDirectory(deps));
+  return pickSubagentNames(agents);
 }
 
 function isStringRecord(v: unknown): v is Record<string, string> {

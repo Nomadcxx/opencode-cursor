@@ -86,4 +86,52 @@ describe("readSubagentNames", () => {
     _resetSubagentCache();
     expect(readSubagentNames(deps)).toEqual(["second"]);
   });
+
+  it("includes agents from agents/ directory", () => {
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: () => ["reviewer.md"],
+      readFileSync: (p: string) => {
+        if (p === "/tmp/opencode/agents/reviewer.md") {
+          return "---\nmode: subagent\ndescription: Reviews code\n---\nYou review code.";
+        }
+        return "{}";
+      },
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["reviewer"]);
+  });
+
+  it("merges json agents with agents/ directory, directory wins on name clash", () => {
+    const deps = {
+      configJson: JSON.stringify({ agent: { build: { mode: "primary" }, review: { mode: "subagent" } } }),
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: () => ["review.md"],
+      readFileSync: (p: string) => {
+        if (p === "/tmp/opencode/agents/review.md") {
+          return "---\nmode: subagent\n---\nReview agent.";
+        }
+        return "{}";
+      },
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["review"]);
+  });
+
+  it("skips disabled markdown agents", () => {
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: () => ["hidden.md", "active.md"],
+      readFileSync: (p: string) => {
+        if (p.endsWith("hidden.md")) return "---\ndisable: true\nmode: subagent\n---\n";
+        if (p.endsWith("active.md")) return "---\nmode: subagent\n---\n";
+        return "{}";
+      },
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["active"]);
+  });
 });
