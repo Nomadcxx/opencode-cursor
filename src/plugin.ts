@@ -2614,6 +2614,13 @@ export function shouldRegisterNativeToolHook(toolName: string, mode: ToolLoopMod
   return !(mode === "opencode" && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(toolName));
 }
 
+export function buildLocalFallbackTools(registry: CoreRegistry): any[] {
+  return registry.list().flatMap((t) => {
+    const ocAlias = `oc_${t.id}`;
+    return t.name === ocAlias ? [t] : [t, { ...t, name: ocAlias }];
+  });
+}
+
 function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: string): Record<string, any> {
   const entries: Record<string, any> = {};
   const sessionWorkspaceBySession = new Map<string, string>();
@@ -2812,7 +2819,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     };
 
     // Always include local tools — these work regardless of SDK connectivity
-    const localTools = localRegistry.list().map((t) => ({ ...t, name: `oc_${t.id}` }));
+    const localTools = buildLocalFallbackTools(localRegistry);
     for (const asTool of localTools) {
       const nsName = asTool.name;
       add(nsName, asTool);
