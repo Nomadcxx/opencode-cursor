@@ -684,6 +684,46 @@ describe("provider runtime interception fallback", () => {
     expect(readFileSync(target, "utf-8").split("\n").slice(47, 52)).toEqual(["48", "49", "50", "51", "52"]);
   });
 
+  it("skips suspicious fileText write reroutes that would shrink an existing file", async () => {
+    // cursor-agent 2026.07.17 renamed the full-file body field to fileText;
+    // the overwrite guard must apply to those payloads too.
+    const projectDir = mkdtempSync(join(tmpdir(), "runtime-file-text-shrink-"));
+    const target = join(projectDir, "test.txt");
+    writeFileSync(target, Array.from({ length: 100 }, (_, index) => String(index + 1)).join("\n") + "\n");
+    const toolResults: any[] = [];
+    let interceptedCount = 0;
+    const result = await handleToolLoopEventV1({
+      ...createBaseOptions({
+        event: {
+          type: "tool_call",
+          call_id: "c_edit_path_file_text_shrink",
+          tool_call: {
+            editToolCall: {
+              args: {
+                path: target,
+                fileText: "49\ntest\n51",
+              },
+            },
+          },
+        } as any,
+        allowedToolNames: new Set(["edit", "write"]),
+        toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+        onToolResult: async (toolResult) => {
+          toolResults.push(toolResult);
+        },
+        onInterceptedToolCall: async () => {
+          interceptedCount += 1;
+        },
+      }),
+      boundary: createProviderBoundary("v1", "cursor-acp"),
+    });
+
+    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    expect(interceptedCount).toBe(0);
+    expect(toolResults).toHaveLength(0);
+    expect(readFileSync(target, "utf-8").split("\n").slice(47, 52)).toEqual(["48", "49", "50", "51", "52"]);
+  });
+
   it("records completed Cursor-owned edits when skipping suspicious streamContent reroutes", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "runtime-cursor-owned-edit-"));
     const target = join(projectDir, "test.txt");

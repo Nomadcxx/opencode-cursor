@@ -162,6 +162,42 @@ describe("tool schema compatibility", () => {
     expect(result.validation.ok).toBe(true);
   });
 
+  it("normalizes fileText (cursor-agent full-file content) to content", () => {
+    // cursor-agent 2026.07.17 carries full-file edit/write bodies under `fileText`
+    // (it replaced the earlier `streamContent` field). Without this alias the body
+    // is dropped and the write/edit reroute loses the content.
+    const result = applyToolSchemaCompat(
+      {
+        id: "c1",
+        type: "function",
+        function: {
+          name: "write",
+          arguments: JSON.stringify({
+            filePath: "/tmp/a.txt",
+            fileText: "hello world",
+          }),
+        },
+      },
+      new Map([
+        [
+          "write",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        ],
+      ]),
+    );
+
+    expect(result.normalizedArgs.content).toBe("hello world");
+    expect(result.normalizedArgs.fileText).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
   it("normalizes write path to filePath when schema requires filePath", () => {
     const result = applyToolSchemaCompat(
       {
@@ -878,6 +914,30 @@ describe("tool schema compatibility", () => {
       const call = editToolCall({
         path: "/tmp/x",
         streamContent: "49\ntest\n51",
+      });
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["edit", "write"]),
+        toolSchemaMap,
+      );
+
+      expect(compat.validation.missing).toEqual(["oldString"]);
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("49\ntest\n51");
+      expect(args.path).toBeUndefined();
+    });
+
+    it("tryRerouteEditToWrite handles opencode path plus fileText edit payloads", () => {
+      // cursor-agent 2026.07.17 emits full-file edit bodies under `fileText`;
+      // the alias must carry the content through the edit-to-write reroute.
+      const toolSchemaMap = buildOpencodeEditWriteSchemaMap();
+      const call = editToolCall({
+        path: "/tmp/x",
+        fileText: "49\ntest\n51",
       });
       const compat = applyToolSchemaCompat(call, toolSchemaMap);
       const rerouted = tryRerouteEditToWrite(

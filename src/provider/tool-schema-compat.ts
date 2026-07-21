@@ -38,6 +38,7 @@ const ARG_KEY_ALIASES = new Map<string, string>([
   ["data", "content"],
   ["payload", "content"],
   ["streamcontent", "content"],
+  ["filetext", "content"],
   ["recursive", "force"],
   ["oldstring", "old_string"],
   ["newstring", "new_string"],
