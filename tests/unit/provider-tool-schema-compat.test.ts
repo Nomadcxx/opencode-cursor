@@ -162,6 +162,42 @@ describe("tool schema compatibility", () => {
     expect(result.validation.ok).toBe(true);
   });
 
+  it("normalizes fileText (cursor-agent full-file content) to content", () => {
+    // cursor-agent 2026.07.17 carries full-file edit/write bodies under `fileText`
+    // (it replaced the earlier `streamContent` field). Without this alias the body
+    // is dropped and the write/edit reroute loses the content.
+    const result = applyToolSchemaCompat(
+      {
+        id: "c1",
+        type: "function",
+        function: {
+          name: "write",
+          arguments: JSON.stringify({
+            filePath: "/tmp/a.txt",
+            fileText: "hello world",
+          }),
+        },
+      },
+      new Map([
+        [
+          "write",
+          {
+            type: "object",
+            properties: {
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["path", "content"],
+          },
+        ],
+      ]),
+    );
+
+    expect(result.normalizedArgs.content).toBe("hello world");
+    expect(result.normalizedArgs.fileText).toBeUndefined();
+    expect(result.validation.ok).toBe(true);
+  });
+
   it("normalizes write path to filePath when schema requires filePath", () => {
     const result = applyToolSchemaCompat(
       {
