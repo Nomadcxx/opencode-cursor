@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { applyCursorWriteToolContract, resolveChatParamTools } from "../../src/plugin";
+import {
+  applyCursorWriteToolContract,
+  buildLocalFallbackTools,
+  resolveChatParamTools,
+} from "../../src/plugin";
+import { ToolRegistry as CoreRegistry } from "../../src/tools/core/registry";
+import { registerDefaultTools } from "../../src/tools/defaults";
+import { applyToolSchemaCompat, buildToolSchemaMap } from "../../src/provider/tool-schema-compat";
 
 describe("resolveChatParamTools", () => {
   it("preserves existing tools in opencode mode", () => {
@@ -33,6 +40,99 @@ describe("resolveChatParamTools", () => {
 
     expect(resolved.action).toBe("none");
     expect(resolved.tools).toBe(existing);
+  });
+});
+
+describe("buildLocalFallbackTools", () => {
+  it("exposes local edit and write tools under canonical and oc-prefixed names", () => {
+    const registry = new CoreRegistry();
+    registerDefaultTools(registry);
+
+    const names = buildLocalFallbackTools(registry).map((tool) => tool.name);
+
+    expect(names).toContain("edit");
+    expect(names).toContain("oc_edit");
+    expect(names).toContain("write");
+    expect(names).toContain("oc_write");
+  });
+
+  it("advertises canonical edit/write with OpenCode-native camelCase schema in opencode mode", () => {
+    const registry = new CoreRegistry();
+    registerDefaultTools(registry);
+
+    const tools = buildLocalFallbackTools(registry, "opencode");
+    const byName = (name: string) => tools.find((t) => t.name === name) as any;
+
+    // Canonical names are executed by OpenCode-native tools (camelCase contract).
+    expect(byName("edit").parameters.required).toEqual(["filePath", "oldString", "newString"]);
+    expect(byName("write").parameters.required).toEqual(["filePath", "content"]);
+
+    // oc_* aliases route to the plugin's local registry, which uses snake_case.
+    expect(byName("oc_edit").parameters.required).toEqual(["path", "old_string", "new_string"]);
+    expect(byName("oc_write").parameters.required).toEqual(["path", "content"]);
+  });
+
+  it("keeps canonical edit/write snake_case in proxy-exec mode (plugin executes locally)", () => {
+    const registry = new CoreRegistry();
+    registerDefaultTools(registry);
+
+    const tools = buildLocalFallbackTools(registry, "proxy-exec");
+    const byName = (name: string) => tools.find((t) => t.name === name) as any;
+
+    expect(byName("edit").parameters.required).toEqual(["path", "old_string", "new_string"]);
+    expect(byName("write").parameters.required).toEqual(["path", "content"]);
+  });
+});
+
+describe("opencode fallback canonical schema round-trips through schema-compat", () => {
+  const nativeSchemaMap = () => {
+    const registry = new CoreRegistry();
+    registerDefaultTools(registry);
+    const tools = buildLocalFallbackTools(registry, "opencode").map((t) => ({
+      type: "function" as const,
+      function: { name: t.name, parameters: t.parameters },
+    }));
+    return buildToolSchemaMap(tools);
+  };
+  const call = (name: string, args: Record<string, unknown>) =>
+    ({ id: "1", type: "function", function: { name, arguments: JSON.stringify(args) } }) as any;
+
+  it("repairs snake_case edit args to camelCase against the native schema", () => {
+    const result = applyToolSchemaCompat(
+      call("edit", { path: "/x", old_string: "a", new_string: "b" }),
+      nativeSchemaMap(),
+    );
+    expect(result.validation.ok).toBe(true);
+    expect(JSON.parse(result.toolCall.function.arguments)).toEqual({
+      filePath: "/x",
+      oldString: "a",
+      newString: "b",
+    });
+  });
+
+  it("repairs snake_case write args to camelCase against the native schema", () => {
+    const result = applyToolSchemaCompat(
+      call("write", { path: "/x", content: "c" }),
+      nativeSchemaMap(),
+    );
+    expect(result.validation.ok).toBe(true);
+    expect(JSON.parse(result.toolCall.function.arguments)).toEqual({
+      filePath: "/x",
+      content: "c",
+    });
+  });
+
+  it("passes camelCase edit args through unchanged against the native schema", () => {
+    const result = applyToolSchemaCompat(
+      call("edit", { filePath: "/x", oldString: "a", newString: "b" }),
+      nativeSchemaMap(),
+    );
+    expect(result.validation.ok).toBe(true);
+    expect(JSON.parse(result.toolCall.function.arguments)).toEqual({
+      filePath: "/x",
+      oldString: "a",
+      newString: "b",
+    });
   });
 });
 
