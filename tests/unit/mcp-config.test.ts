@@ -138,6 +138,19 @@ describe("readSubagentNames", () => {
     expect(readSubagentNames(deps)).toEqual(["active"]);
   });
 
+  it("skips disabled JSON-defined agents", () => {
+    const deps = {
+      configJson: JSON.stringify({
+        agent: {
+          build: { mode: "subagent" },
+          legacy: { mode: "subagent", disable: true },
+        },
+      }),
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["build"]);
+  });
+
   it("includes agents from the singular agent/ directory", () => {
     const deps = {
       configDir: "/tmp/opencode",

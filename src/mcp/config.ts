@@ -226,7 +226,15 @@ function readAgentsFromConfigJson(raw: string): Record<string, unknown> {
     if (!agentSection || typeof agentSection !== "object" || Array.isArray(agentSection)) {
       return {};
     }
-    return { ...(agentSection as Record<string, unknown>) };
+    const agents: Record<string, unknown> = {};
+    for (const [name, entry] of Object.entries(agentSection as Record<string, unknown>)) {
+      // Match OpenCode: a JSON agent with `disable: true` is dropped.
+      if (entry && typeof entry === "object" && (entry as Record<string, unknown>).disable === true) {
+        continue;
+      }
+      agents[name] = entry;
+    }
+    return agents;
   } catch {
     return {};
   }
