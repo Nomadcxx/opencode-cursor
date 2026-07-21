@@ -931,6 +931,30 @@ describe("tool schema compatibility", () => {
       expect(args.path).toBeUndefined();
     });
 
+    it("tryRerouteEditToWrite handles opencode path plus fileText edit payloads", () => {
+      // cursor-agent 2026.07.17 emits full-file edit bodies under `fileText`;
+      // the alias must carry the content through the edit-to-write reroute.
+      const toolSchemaMap = buildOpencodeEditWriteSchemaMap();
+      const call = editToolCall({
+        path: "/tmp/x",
+        fileText: "49\ntest\n51",
+      });
+      const compat = applyToolSchemaCompat(call, toolSchemaMap);
+      const rerouted = tryRerouteEditToWrite(
+        call,
+        compat,
+        new Set(["edit", "write"]),
+        toolSchemaMap,
+      );
+
+      expect(compat.validation.missing).toEqual(["oldString"]);
+      expect(rerouted?.function.name).toBe("write");
+      const args = JSON.parse(rerouted?.function.arguments ?? "{}");
+      expect(args.filePath).toBe("/tmp/x");
+      expect(args.content).toBe("49\ntest\n51");
+      expect(args.path).toBeUndefined();
+    });
+
     it("tryRerouteEditToWrite uses oc_write when fallback tools are active", () => {
       const toolSchemaMap = new Map([
         [

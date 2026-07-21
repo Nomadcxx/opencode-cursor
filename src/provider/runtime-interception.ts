@@ -818,11 +818,9 @@ function detectSuspiciousStreamContentWrite(
     : typeof args.filePath === "string"
       ? args.filePath
       : null;
-  const content = typeof args.content === "string"
-    ? args.content
-    : typeof args.fileText === "string"
-      ? args.fileText
-      : null;
+  // Rerouted write args always carry `content` (see buildWriteArguments); a
+  // fileText payload has already been normalized to content by this point.
+  const content = typeof args.content === "string" ? args.content : null;
   if (!filePath || content === null || !existsSync(filePath)) {
     return null;
   }
@@ -875,7 +873,11 @@ function firstToolPayload(event: StreamJsonToolCallEvent): StreamJsonToolCallPay
 }
 
 function hasStreamContentArg(args: Record<string, unknown>): boolean {
-  return Object.keys(args).some((key) => key.toLowerCase().replace(/[^a-z0-9]/g, "") === "streamcontent");
+  return Object.keys(args).some((key) => {
+    const token = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+    // cursor-agent 2026.07.17 renamed the full-file body field: streamContent -> fileText.
+    return token === "streamcontent" || token === "filetext";
+  });
 }
 
 function countLogicalLines(value: string): number {
