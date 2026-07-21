@@ -143,6 +143,9 @@ function isFrontmatterTrue(value: string): boolean {
   return normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
+// Reads only `mode` and `disable` from frontmatter — an intentional two-key subset,
+// not a full YAML parser. Inline comments (`disable: true # off`) and block scalars
+// are out of scope; upstream reads real YAML.
 function parseAgentFrontmatter(content: string): { mode?: string; disable?: boolean } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return {};
@@ -159,6 +162,8 @@ function parseAgentFrontmatter(content: string): { mode?: string; disable?: bool
 }
 
 function readAgentsFromDirectory(deps: ReadSubagentNamesDeps): Record<string, unknown> {
+  // Test-only shortcut: unit tests pass `configJson` alone (no directory deps) to
+  // stay hermetic and off the real filesystem. No production caller passes `configJson`.
   if (deps.configJson != null && deps.configDir == null && deps.readdirSync == null) {
     return {};
   }
