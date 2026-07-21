@@ -2614,9 +2614,51 @@ export function shouldRegisterNativeToolHook(toolName: string, mode: ToolLoopMod
   return !(mode === "opencode" && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(toolName));
 }
 
-export function buildLocalFallbackTools(registry: CoreRegistry): any[] {
+// OpenCode-native edit/write use camelCase arg names; the plugin's local registry
+// uses snake_case. Only these keys diverge in case between the two contracts.
+const NATIVE_CANONICAL_KEY_MAP: Record<string, string> = {
+  path: "filePath",
+  old_string: "oldString",
+  new_string: "newString",
+};
+
+/**
+ * Remap a local (snake_case) tool schema to OpenCode's native camelCase contract for
+ * the keys that diverge. Other properties (e.g. cursor-agent compat fields) pass through
+ * unchanged. Returns a new object; the input is not mutated.
+ */
+function toNativeCanonicalSchema(parameters: unknown): unknown {
+  if (!parameters || typeof parameters !== "object") return parameters;
+  const p = parameters as Record<string, any>;
+  const remap = (key: string) => NATIVE_CANONICAL_KEY_MAP[key] ?? key;
+  const properties: Record<string, unknown> = {};
+  if (p.properties && typeof p.properties === "object") {
+    for (const [key, value] of Object.entries(p.properties)) {
+      properties[remap(key)] = value;
+    }
+  }
+  const required = Array.isArray(p.required) ? p.required.map(remap) : p.required;
+  return { ...p, properties, required };
+}
+
+export function buildLocalFallbackTools(
+  registry: CoreRegistry,
+  mode: ToolLoopMode = "opencode",
+): any[] {
+  // In opencode mode, canonical edit/write are executed by OpenCode's NATIVE tools
+  // (camelCase: filePath/oldString/newString), not by the plugin — see
+  // OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS. So the canonical fallback entry must advertise
+  // the native camelCase schema; otherwise the schema-compat layer coerces the model's
+  // args to the advertised snake_case and the native handler rejects them. The oc_* alias
+  // keeps the local snake_case schema because it routes to the plugin's own registry.
+  // In proxy-exec mode the plugin executes these locally, so snake_case stays correct.
+  const canonicalIsNative = mode === "opencode";
   return registry.list().flatMap((t) => {
     const ocAlias = `oc_${t.id}`;
+    if (canonicalIsNative && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(t.name)) {
+      const canonical = { ...t, parameters: toNativeCanonicalSchema(t.parameters) };
+      return t.name === ocAlias ? [canonical] : [canonical, { ...t, name: ocAlias }];
+    }
     return t.name === ocAlias ? [t] : [t, { ...t, name: ocAlias }];
   });
 }
@@ -2819,7 +2861,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     };
 
     // Always include local tools — these work regardless of SDK connectivity
-    const localTools = buildLocalFallbackTools(localRegistry);
+    const localTools = buildLocalFallbackTools(localRegistry, TOOL_LOOP_MODE);
     for (const asTool of localTools) {
       const nsName = asTool.name;
       add(nsName, asTool);
