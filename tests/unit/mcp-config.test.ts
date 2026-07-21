@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { readSubagentNames, _resetSubagentCache } from "../../src/mcp/config.js";
 
 describe("readSubagentNames", () => {
@@ -133,5 +136,75 @@ describe("readSubagentNames", () => {
     };
 
     expect(readSubagentNames(deps)).toEqual(["active"]);
+  });
+
+  it("includes agents from the singular agent/ directory", () => {
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agent",
+      readdirSync: () => ["helper.md"],
+      readFileSync: () => "---\nmode: subagent\n---\n",
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["helper"]);
+  });
+
+  it("scans agent directories recursively", () => {
+    let recursiveOption: unknown;
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: (_p: string, options?: { recursive?: boolean }) => {
+        recursiveOption = options;
+        return ["team/reviewer.md"];
+      },
+      readFileSync: () => "---\nmode: subagent\n---\n",
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["team/reviewer"]);
+    expect(recursiveOption).toEqual({ recursive: true });
+  });
+
+  it("recognizes quoted mode values", () => {
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: () => ["reviewer.md", "builder.md"],
+      readFileSync: (p: string) =>
+        p.endsWith("reviewer.md") ? '---\nmode: "subagent"\n---\n' : "---\nmode: primary\n---\n",
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["reviewer"]);
+  });
+
+  it("disables agents with quoted or yes disable values", () => {
+    const deps = {
+      configDir: "/tmp/opencode",
+      existsSync: (p: string) => p === "/tmp/opencode/agents",
+      readdirSync: () => ["hidden.md", "off.md", "active.md"],
+      readFileSync: (p: string) => {
+        if (p.endsWith("hidden.md")) return '---\ndisable: "true"\nmode: subagent\n---\n';
+        if (p.endsWith("off.md")) return "---\ndisable: yes\nmode: subagent\n---\n";
+        return "---\nmode: subagent\n---\n";
+      },
+    };
+
+    expect(readSubagentNames(deps)).toEqual(["active"]);
+  });
+
+  it("reads real agent markdown from disk across agent/ and agents/, including nested", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oc-agents-"));
+    try {
+      mkdirSync(join(dir, "agent"), { recursive: true });
+      mkdirSync(join(dir, "agents", "team"), { recursive: true });
+      writeFileSync(join(dir, "agent", "reviewer.md"), "---\nmode: subagent\n---\nReview.");
+      writeFileSync(join(dir, "agents", "team", "builder.md"), '---\nmode: "subagent"\n---\nBuild.');
+
+      // configJson "{}" isolates the JSON side; the directory side uses the real fs.
+      const names = readSubagentNames({ configJson: "{}", configDir: dir }).sort();
+      expect(names).toEqual(["reviewer", "team/builder"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -108,7 +108,7 @@ interface ReadSubagentNamesDeps {
   configDir?: string;
   existsSync?: (path: string) => boolean;
   readFileSync?: (path: string, enc: BufferEncoding) => string;
-  readdirSync?: (path: string) => string[];
+  readdirSync?: (path: string, options?: { recursive?: boolean }) => string[];
   env?: NodeJS.ProcessEnv;
 }
 
@@ -126,10 +126,21 @@ export function readSubagentNames(deps: ReadSubagentNamesDeps = {}): string[] {
   return result;
 }
 
-function resolveAgentsDir(deps: ReadSubagentNamesDeps): string {
+function resolveAgentDirs(deps: ReadSubagentNamesDeps): string[] {
   const configDir = deps.configDir
     ?? dirname(resolveOpenCodeConfigPath(deps.env ?? process.env));
-  return join(configDir, "agents");
+  // OpenCode loads agents from both `agent/` and `agents/` (glob {agent,agents}/**/*.md).
+  return [join(configDir, "agent"), join(configDir, "agents")];
+}
+
+function unquoteFrontmatterValue(value: string): string {
+  const match = value.match(/^(["'])(.*)\1$/);
+  return match ? match[2] : value;
+}
+
+function isFrontmatterTrue(value: string): boolean {
+  const normalized = unquoteFrontmatterValue(value).toLowerCase();
+  return normalized === "true" || normalized === "yes" || normalized === "on";
 }
 
 function parseAgentFrontmatter(content: string): { mode?: string; disable?: boolean } {
@@ -141,8 +152,8 @@ function parseAgentFrontmatter(content: string): { mode?: string; disable?: bool
     const entry = line.match(/^\s*([a-zA-Z_-]+)\s*:\s*(.+?)\s*$/);
     if (!entry) continue;
     const [, key, value] = entry;
-    if (key === "mode") meta.mode = value;
-    if (key === "disable" && value === "true") meta.disable = true;
+    if (key === "mode") meta.mode = unquoteFrontmatterValue(value);
+    if (key === "disable" && isFrontmatterTrue(value)) meta.disable = true;
   }
   return meta;
 }
@@ -155,32 +166,36 @@ function readAgentsFromDirectory(deps: ReadSubagentNamesDeps): Record<string, un
   const exists = deps.existsSync ?? nodeExistsSync;
   const readFile = deps.readFileSync ?? nodeReadFileSync;
   const readdir = deps.readdirSync ?? nodeReaddirSync;
-  const agentsDir = resolveAgentsDir(deps);
-  if (!exists(agentsDir)) return {};
-
-  let files: string[];
-  try {
-    files = readdir(agentsDir);
-  } catch {
-    return {};
-  }
 
   const agents: Record<string, unknown> = {};
-  for (const file of files) {
-    if (!file.endsWith(".md")) continue;
+  for (const agentsDir of resolveAgentDirs(deps)) {
+    if (!exists(agentsDir)) continue;
 
-    const filePath = join(agentsDir, file);
-    let content: string;
+    let files: string[];
     try {
-      content = readFile(filePath, "utf8");
+      files = readdir(agentsDir, { recursive: true });
     } catch {
       continue;
     }
 
-    const meta = parseAgentFrontmatter(content);
-    if (meta.disable) continue;
+    for (const file of files) {
+      if (!file.endsWith(".md")) continue;
 
-    agents[file.slice(0, -3)] = meta.mode ? { mode: meta.mode } : {};
+      const filePath = join(agentsDir, file);
+      let content: string;
+      try {
+        content = readFile(filePath, "utf8");
+      } catch {
+        continue;
+      }
+
+      const meta = parseAgentFrontmatter(content);
+      if (meta.disable) continue;
+
+      // Match OpenCode's path-based agent name (forward slashes, no extension).
+      const name = file.slice(0, -3).split(/[\\/]/).join("/");
+      agents[name] = meta.mode ? { mode: meta.mode } : {};
+    }
   }
 
   return agents;
