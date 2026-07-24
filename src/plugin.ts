@@ -18,6 +18,7 @@ import {
   isResult,
   isThinking,
   isToolCallStart,
+  type StreamJsonAssistantEvent,
   type StreamJsonEvent,
 } from "./streaming/types.js";
 import {
@@ -465,6 +466,18 @@ function createAssistantTextEvent(text: string): StreamJsonEvent {
     message: {
       role: "assistant",
       content: [{ type: "text", text }],
+    },
+  };
+}
+
+function createAssistantThinkingEvent(
+  event: StreamJsonAssistantEvent,
+): StreamJsonAssistantEvent {
+  return {
+    ...event,
+    message: {
+      ...event.message,
+      content: event.message.content.filter((content) => content.type === "thinking"),
     },
   };
 }
@@ -1506,14 +1519,17 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 // ignore
               }
             };
-            const emitBridgeText = (text: string) => {
-              const sseChunks = converter.handleEvent(createAssistantTextEvent(text));
+            const emitBridgeEvent = (event: StreamJsonEvent) => {
+              const sseChunks = converter.handleEvent(event);
               if (sseChunks.length > 0) {
                 sawSuccessfulStreamOutput = true;
               }
               for (const sse of sseChunks) {
                 enqueueSse(sse);
               }
+            };
+            const emitBridgeText = (text: string) => {
+              emitBridgeEvent(createAssistantTextEvent(text));
             };
             const flushBridgeText = () => {
               const text = bridgeDetector?.flush() ?? "";
@@ -1524,6 +1540,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
               if (!bridgeDetector || !isAssistantText(event)) {
                 return false;
+              }
+              if (isThinking(event)) {
+                emitBridgeEvent(createAssistantThinkingEvent(event));
               }
               const decision = bridgeDetector.push(event);
               if (decision.action === "tool_call") {
@@ -2188,14 +2207,17 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             // ignore
           }
         };
-        const emitBridgeText = (text: string) => {
-          const sseChunks = converter.handleEvent(createAssistantTextEvent(text));
+        const emitBridgeEvent = (event: StreamJsonEvent) => {
+          const sseChunks = converter.handleEvent(event);
           if (sseChunks.length > 0) {
             sawSuccessfulStreamOutput = true;
           }
           for (const sse of sseChunks) {
             writeSse(sse);
           }
+        };
+        const emitBridgeText = (text: string) => {
+          emitBridgeEvent(createAssistantTextEvent(text));
         };
         const flushBridgeText = () => {
           const text = bridgeDetector?.flush() ?? "";
@@ -2206,6 +2228,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
           if (!bridgeDetector || !isAssistantText(event)) {
             return false;
+          }
+          if (isThinking(event)) {
+            emitBridgeEvent(createAssistantThinkingEvent(event));
           }
           const decision = bridgeDetector.push(event);
           if (decision.action === "tool_call") {

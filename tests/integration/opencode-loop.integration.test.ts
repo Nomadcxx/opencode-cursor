@@ -362,6 +362,35 @@ process.stdin.on("end", () => {
       },
       { type: "result", subtype: "success", is_error: false },
     ];
+  } else if (scenario === "assistant-bridge-task-mixed-thinking") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "planning " },
+            { type: "text", text: "{\\"name\\":\\"task\\",\\"arguments\\":{\\"description\\":\\"Run project proof\\"," },
+          ],
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 2,
+        message: {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "delegation" },
+            {
+              type: "text",
+              text: "\\"prompt\\":\\"Follow your configured instructions.\\",\\"subagent_type\\":\\"project-proof\\"}}",
+            },
+          ],
+        },
+      },
+      { type: "result", subtype: "success", is_error: false },
+    ];
   } else if (scenario === "assistant-bridge-malformed-partials") {
     events = [
       {
@@ -435,6 +464,7 @@ type StreamChunk = {
   choices?: Array<{
     delta?: {
       content?: string;
+      reasoning_content?: string;
       tool_calls?: Array<{
         function?: {
           name?: string;
@@ -887,6 +917,33 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(promptText).toContain("project-proof");
     expect(promptText).toContain("Do not invoke Cursor's built-in Task tool");
     expect(promptText).not.toContain(["When calling", "the task tool"].join(" "));
+  });
+
+  it("preserves thinking from mixed assistant events while bridging Task JSON", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-mixed-thinking";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Delegate to project-proof" }],
+    });
+
+    const chunks = parseJsonChunks(parseSseData(await response.text()));
+    const reasoning = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.reasoning_content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+
+    expect(reasoning).toBe("planning delegation");
+    expect(toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name).toBe("task");
+    expect(allContent).not.toContain('"name":"task"');
   });
 
   it("reassembles non-stream Task bridge JSON", async () => {
