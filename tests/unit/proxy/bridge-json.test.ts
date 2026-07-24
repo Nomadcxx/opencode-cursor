@@ -390,6 +390,15 @@ describe("proxy/bridge-json", () => {
       expect(detector.flush()).toBe("");
     });
 
+    it("buffers JSON followed by prose and flushes it verbatim", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["task"]));
+      const response = '{"answer":42} followed by prose';
+
+      expect(detector.push(delta(response))).toEqual({ action: "buffer" });
+      expect(detector.flush()).toBe(response);
+      expect(detector.flush()).toBe("");
+    });
+
     it("releases a complete envelope for an unoffered tool", () => {
       const detector = new BridgeJsonStreamDetector(new Set(["task"]));
       const write = '{"name":"write","arguments":{"path":"demo.txt","content":"hello"}}';
