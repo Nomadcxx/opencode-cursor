@@ -21,6 +21,7 @@ const expectedPages = [
     pages.map((page) => `${section}/${page}.mdx`),
   ),
 ].sort();
+const indexPath = join(contentRoot, 'index.mdx');
 
 function files(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -45,6 +46,19 @@ assert.deepEqual(
   ['index', ...Object.keys(sections)],
   'root navigation order is wrong',
 );
+assert.equal(readJson(join(contentRoot, 'meta.json')).title, 'open-cursor', 'public brand is wrong');
+
+const indexContent = readFileSync(indexPath, 'utf8');
+assert.match(indexContent, /^title:\s*["']open-cursor["']$/m, 'home title uses the wrong brand');
+assert.match(indexContent, /^open-cursor connects OpenCode/m, 'home introduction uses the wrong brand');
+for (const [section, sectionPages] of Object.entries(sections)) {
+  for (const page of sectionPages) {
+    assert.ok(
+      indexContent.includes(`](/docs/${section}/${page})`),
+      `home index is missing /docs/${section}/${page}`,
+    );
+  }
+}
 
 for (const [section, expected] of Object.entries(sections)) {
   assert.deepEqual(

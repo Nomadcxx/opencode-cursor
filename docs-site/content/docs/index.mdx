@@ -1,5 +1,5 @@
 ---
-title: "opencode-cursor"
+title: "open-cursor"
 description: "Run Cursor subscription models from OpenCode."
 full: true
 ---
@@ -8,20 +8,66 @@ import { DocsHome } from '@/components/docs-home';
 
 <DocsHome />
 
-opencode-cursor connects OpenCode to the models available through your Cursor
+open-cursor connects OpenCode to the models available through your Cursor
 subscription. It translates prompts, streaming responses, and tool calls
 between OpenCode and `cursor-agent`.
 
-## Start here
+## Getting started
 
-- [Install opencode-cursor](/docs/getting-started/installation) and check that
-  OpenCode can see the provider.
-- [Run your first prompt](/docs/getting-started/quick-start) with
-  `cursor-acp/auto`.
-- [Work through a failure](/docs/getting-started/troubleshooting) by symptom.
+- [Installation](/docs/getting-started/installation) sets up the package,
+  OpenCode provider, and current Cursor model list.
+- [Authentication](/docs/getting-started/authentication) covers Cursor CLI
+  login, API keys, and checks for each backend.
+- [Quick start](/docs/getting-started/quick-start) runs a first prompt and
+  explains automatic model selection.
+- [Troubleshooting](/docs/getting-started/troubleshooting) maps common symptoms
+  to checks and repair commands.
 
-## Go deeper
+## Guides
 
-- [Configure the runtime](/docs/reference/configuration)
-- [Connect MCP servers](/docs/guides/mcp-servers)
-- [Read the architecture](/docs/architecture/overview)
+- [Choosing a model](/docs/guides/choosing-a-model) explains discovered model
+  IDs, `auto`, variants, and unavailable models.
+- [MCP servers](/docs/guides/mcp-servers) connects configured servers and
+  describes tool-name translation.
+- [Permissions](/docs/guides/permissions) shows which runtime executes each
+  tool and where approval rules apply.
+- [Session resume](/docs/guides/session-resume) covers conversation continuity,
+  retry behaviour, and known boundaries.
+- [Subagents](/docs/guides/subagents) traces delegated work through OpenCode's
+  task tool.
+
+## Reference
+
+- [Configuration](/docs/reference/configuration) lists every supported
+  `CURSOR_ACP_*` variable.
+- [CLI](/docs/reference/cli) documents the `open-cursor` commands and flags.
+- [opencode.json](/docs/reference/opencode-json) shows the provider, plugin,
+  model, and MCP configuration written by the installer.
+- [Alternatives](/docs/reference/alternatives) compares other Cursor and
+  OpenCode integrations by runtime and authentication model.
+- [Roadmap](/docs/reference/roadmap) separates shipped behaviour, active work,
+  and deferred ideas.
+
+## Architecture
+
+- [Overview](/docs/architecture/overview) follows a request across the provider,
+  proxy, Cursor runtime, and response stream.
+- [Stream translation](/docs/architecture/stream-translation) explains how
+  Cursor events become OpenAI-compatible streaming output.
+- [Tool loop](/docs/architecture/tool-loop) covers tool-call conversion,
+  execution ownership, and result continuation.
+- [ACP and MCP](/docs/architecture/acp-and-mcp) distinguishes the provider
+  protocol from external tool-server transport.
+- [Cursor-agent tools](/docs/architecture/cursor-agent-tools) documents built-in
+  tool handling and the compatibility boundary.
+
+## Development
+
+- [Building](/docs/development/building) builds the plugin, library, and CLI from
+  a local checkout.
+- [Testing](/docs/development/testing) maps test suites to runtime boundaries
+  and useful focused commands.
+- [Releasing](/docs/development/releasing) records versioning, tagging,
+  publication, and post-release checks.
+- [Contributing](/docs/development/contributing) covers project conventions,
+  pull-request checks, and useful bug reports.

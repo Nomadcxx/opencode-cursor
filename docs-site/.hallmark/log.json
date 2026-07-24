@@ -6,6 +6,17 @@
     "genre": "modern-minimal",
     "theme": "custom Eldritch OKLCH",
     "theme_axes": "dark / technical sans / chromatic green",
+    "enrichment": "large desktop geometry wordmark, compact mobile identity",
+    "navigation": "persistent documentation rail with mobile drawer",
+    "brief": "Correct the public brand, restore the landing wordmark, and expose the complete documentation index"
+  },
+  {
+    "date": "2026-07-25",
+    "scope": "app",
+    "macrostructure": "Index-First home, Long Document content, workbench shell",
+    "genre": "modern-minimal",
+    "theme": "custom Eldritch OKLCH",
+    "theme_axes": "dark / technical sans / chromatic green",
     "enrichment": "compact geometry mark only",
     "navigation": "persistent documentation rail with mobile drawer",
     "brief": "Build the documentation corpus, then audit and redesign the docs site"

@@ -1,4 +1,4 @@
-# Design — opencode-cursor documentation
+# Design — open-cursor documentation
 
 A locked design system for the documentation app. Extend this file when the
 system needs to grow; do not pick a new theme per page.
@@ -65,13 +65,16 @@ named tokens rather than raw spacing values.
 
 ## Per-page allowances
 
-- The documentation home may use the compact geometry mark once.
+- The documentation home uses the large geometric `OPEN-CURSOR` wordmark at
+  desktop widths and the compact OCC mark with a plain-text `open-cursor`
+  identity on mobile.
 - The app shell uses no decorative enrichment.
 - Content pages use typography and semantic data structures only.
 
 ## What pages must share
 
-- The compact OCC mark and plain-text `opencode-cursor` wordmark.
+- The large geometric `OPEN-CURSOR` wordmark, compact OCC mark, and plain-text
+  `open-cursor` name.
 - The green and cyan signal roles.
 - IBM Plex Sans and Fira Code.
 - The same control geometry and focus treatment.

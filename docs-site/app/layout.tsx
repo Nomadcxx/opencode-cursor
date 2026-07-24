@@ -5,8 +5,8 @@ import './global.css';
 export const metadata: Metadata = {
   metadataBase: new URL('https://nomadcxx.github.io'),
   title: {
-    default: 'opencode-cursor documentation',
-    template: '%s | opencode-cursor',
+    default: 'open-cursor documentation',
+    template: '%s | open-cursor',
   },
   description: 'Documentation for using Cursor models through OpenCode.',
   icons: { icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/occ-compact.svg` },

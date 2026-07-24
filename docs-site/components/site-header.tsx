@@ -10,9 +10,9 @@ import type { ComponentProps } from 'react';
 export function SiteHeader({ className, ...props }: ComponentProps<'header'>) {
   return (
     <header {...props} className={`site-header ${className ?? ''}`}>
-      <Link href="/docs" className="site-brand-link" aria-label="opencode-cursor documentation home">
+      <Link href="/docs" className="site-brand-link" aria-label="open-cursor documentation home">
         <Brand />
-        <span className="site-brand-name">opencode-cursor</span>
+        <span className="site-brand-name">open-cursor</span>
       </Link>
       <div className="site-header-search">
         <div className="site-search-full">

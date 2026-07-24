@@ -7,7 +7,7 @@ export default function HomePage() {
     <main className="root-redirect">
       <meta httpEquiv="refresh" content={`0;url=${docsUrl}`} />
       <p>
-        Opening <a href={docsUrl}>opencode-cursor documentation</a>.
+        Opening <a href={docsUrl}>open-cursor documentation</a>.
       </p>
     </main>
   );

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 828 165" width="828" height="165" role="img" aria-label="opencode-cursor — cursor pro models, inside opencode">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 828 165" width="828" height="165" role="img" aria-label="open-cursor — cursor pro models, inside opencode">
   <style>
     text { font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; white-space: pre; }
     .sweep { transform-origin: 48px 0; transform: scaleX(0); animation: sweep 800ms cubic-bezier(0.16,1,0.3,1) 300ms forwards; }
@@ -22,8 +22,8 @@
   </defs>
   <rect fill="#212337" x="0" y="0" width="828" height="165" rx="8"/>
   <rect fill="none" stroke="#3b4261" stroke-width="1.5" x="14" y="14" width="800" height="137" rx="6"/>
-  <rect fill="#212337" x="32" y="8" width="117" height="12"/>
-  <text fill="#7081d0" x="38" y="19" font-size="12" textLength="108" lengthAdjust="spacing" xml:space="preserve">opencode-cursor</text>
+  <rect fill="#212337" x="32" y="8" width="90" height="12"/>
+  <text fill="#7081d0" x="38" y="19" font-size="12" textLength="79" lengthAdjust="spacing" xml:space="preserve">open-cursor</text>
   <g fill="url(#banner-gradient)">
     <rect x="58.87" y="46.69" width="33.72" height="11.35"/>
     <rect x="114.32" y="46.69" width="44.81" height="11.35"/>

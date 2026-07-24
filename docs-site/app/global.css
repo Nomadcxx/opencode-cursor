@@ -532,7 +532,27 @@ a[data-active='true'],
   padding: var(--space-lg) var(--space-md) var(--space-xl);
 }
 
-.docs-home-identity {
+.docs-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.docs-home-wordmark {
+  display: none;
+  min-width: 0;
+}
+
+.docs-home-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.docs-home-mobile-identity {
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -543,19 +563,19 @@ a[data-active='true'],
   width: 4.5rem;
 }
 
-.docs-home-identity h1 {
-  margin: 0;
-  overflow-wrap: anywhere;
+.docs-home-mobile-title {
+  display: block;
   color: var(--color-ink);
   font-family: var(--font-display);
-  font-size: var(--text-display);
+  font-size: clamp(1.75rem, 10vw, 2.5rem);
   font-style: normal;
   font-weight: 700;
   letter-spacing: -0.035em;
   line-height: 1;
+  white-space: nowrap;
 }
 
-.docs-home-identity p {
+.docs-home-mobile-identity p {
   margin: var(--space-xs) 0 0;
   color: var(--color-ink-2);
   font-family: var(--font-body);
@@ -589,6 +609,30 @@ a[data-active='true'],
   margin-top: var(--space-xl);
   font-size: var(--text-md);
   line-height: 1.65;
+}
+
+.docs-home-body > ul {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 var(--space-lg);
+  padding: 0;
+  list-style: none;
+}
+
+.docs-home-body > ul > li {
+  min-width: 0;
+  margin: 0;
+  border-top: 1px solid var(--color-rule);
+  padding: var(--space-sm) 0;
+  color: var(--color-ink-2);
+  line-height: 1.55;
+}
+
+.docs-home-body > ul > li > a {
+  display: inline-block;
+  margin-inline-end: var(--space-3xs);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .docs-home-body > :where(h2, h3),
@@ -816,13 +860,23 @@ a[data-active='true'],
   }
 
   .docs-home-hero {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: end;
     padding: var(--space-xl) var(--space-xl) var(--space-2xl);
   }
 
+  .docs-home-wordmark {
+    display: block;
+  }
+
+  .docs-home-mobile-identity {
+    display: none;
+  }
+
   .docs-home-actions {
-    justify-content: flex-end;
+    justify-content: center;
+  }
+
+  .docs-home-body > ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
 }

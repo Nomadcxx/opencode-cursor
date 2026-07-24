@@ -3,7 +3,7 @@ title: "Subagents"
 description: "Delegate through OpenCode's Task tool without crossing into Cursor's separate agent catalog."
 ---
 
-OpenCode and Cursor each have their own idea of a subagent. opencode-cursor
+OpenCode and Cursor each have their own idea of a subagent. open-cursor
 keeps those catalogs separate: delegation from a Cursor model goes back
 through OpenCode's `task` tool.
 
@@ -52,7 +52,7 @@ The sequence is:
 ```text
 Cursor model
   → strict Task JSON envelope
-  → opencode-cursor validates and converts it
+  → open-cursor validates and converts it
   → OpenCode executes task
   → tool result returns on the next model request
 ```

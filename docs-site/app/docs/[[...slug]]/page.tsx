@@ -64,7 +64,7 @@ export async function generateMetadata(props: PageProps<'/docs/[[...slug]]'>): P
   if (!page) notFound();
 
   return {
-    title: page.slugs.length === 0 ? { absolute: 'opencode-cursor documentation' } : page.data.title,
+    title: page.slugs.length === 0 ? { absolute: 'open-cursor documentation' } : page.data.title,
     description: page.data.description,
     openGraph: {
       images: getPageImage(page).url,

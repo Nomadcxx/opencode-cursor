@@ -46,7 +46,8 @@ assert.doesNotMatch(docsHtml, /Toggle Theme|light theme/i, 'dark-only export con
 assert.doesNotMatch(docsHtml, /sysc|greeter/i, 'copied template text remains in the docs page');
 assert.doesNotMatch(docsHtml, /data-home-ticker/, 'removed ticker is present in the docs page');
 assert.doesNotMatch(docsHtml, /MENU\/{4,}/, 'placeholder sidebar title remains in the docs page');
-assert.match(docsHtml, /opencode-cursor connects OpenCode/, 'placeholder paragraph is missing');
+assert.match(docsHtml, /open-cursor connects OpenCode/, 'product introduction uses the wrong brand');
+assert.match(docsHtml, /<title>open-cursor documentation<\/title>/, 'home metadata uses the wrong brand');
 assert.match(css, /IBM Plex Sans Variable/i, 'exported theme is missing IBM Plex Sans');
 assert.match(css, /Fira Code/i, 'exported theme is missing Fira Code');
 
@@ -64,7 +65,21 @@ assert.ok(
   docsHtml.includes(`src="${basePath}/occ-compact.svg"`),
   'compact header mark is missing the deployment base path',
 );
-assert.doesNotMatch(docsHtml, /src="[^"]*\/banner\.svg"/, 'desktop masthead is still miniaturised');
+assert.ok(
+  docsHtml.includes(`src="${basePath}/banner.svg"`),
+  'desktop wordmark is missing the deployment base path',
+);
+assert.match(docsHtml, /data-docs-mobile-identity/, 'mobile identity is missing');
+assert.match(
+  docsHtml,
+  /<h1\b[^>]*id="docs-index-title"[^>]*>open-cursor<\/h1>/,
+  'mobile landing title uses the wrong brand',
+);
+assert.doesNotMatch(
+  docsHtml,
+  /<h1\b[^>]*>opencode-cursor<\/h1>/,
+  'repository slug is still used as the landing title',
+);
 assert.match(docsHtml, /data-docs-index/, 'home is missing the index-first structure');
 assert.match(
   configurationHtml,
@@ -88,6 +103,22 @@ for (const [marker, href] of [
     ),
     `home link is missing or has the wrong target: ${marker}`,
   );
+}
+
+for (const section of [
+  ['getting-started', ['installation', 'authentication', 'quick-start', 'troubleshooting']],
+  ['guides', ['choosing-a-model', 'mcp-servers', 'permissions', 'session-resume', 'subagents']],
+  ['reference', ['configuration', 'cli', 'opencode-json', 'alternatives', 'roadmap']],
+  ['architecture', ['overview', 'stream-translation', 'tool-loop', 'acp-and-mcp', 'cursor-agent-tools']],
+  ['development', ['building', 'testing', 'releasing', 'contributing']],
+]) {
+  const [group, pages] = section;
+  for (const page of pages) {
+    assert.ok(
+      docsHtml.includes(`href="${basePath}/docs/${group}/${page}/"`),
+      `home index is missing ${group}/${page}`,
+    );
+  }
 }
 
 assert.doesNotMatch(occ, /<text|[█▄▀]/, 'OCC mark is not geometry-only');

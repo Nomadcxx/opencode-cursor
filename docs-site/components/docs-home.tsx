@@ -1,4 +1,5 @@
 import { Brand } from '@/components/brand';
+import { basePath } from '@/lib/shared';
 import Link from 'next/link';
 
 const callsToAction = [
@@ -9,11 +10,23 @@ const callsToAction = [
 
 export function DocsHome() {
   return (
-    <section className="docs-home-hero" aria-labelledby="docs-index-title" data-docs-index>
-      <div className="docs-home-identity">
+    <section className="docs-home-hero" aria-label="open-cursor documentation" data-docs-index>
+      <h1 id="docs-index-title" className="docs-visually-hidden">
+        open-cursor
+      </h1>
+      <div className="docs-home-wordmark" aria-hidden="true">
+        <img
+          className="docs-home-banner"
+          src={`${basePath}/banner.svg`}
+          alt=""
+          width="828"
+          height="165"
+        />
+      </div>
+      <div className="docs-home-mobile-identity" data-docs-mobile-identity aria-hidden="true">
         <Brand className="docs-home-mark" />
         <div>
-          <h1 id="docs-index-title">opencode-cursor</h1>
+          <span className="docs-home-mobile-title">open-cursor</span>
           <p>Cursor Pro models, inside OpenCode.</p>
         </div>
       </div>

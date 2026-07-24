@@ -9,7 +9,7 @@ Choose by mechanism, not by name.
 
 | Project | Approach | Authentication | Main trade-off |
 |---|---|---|---|
-| [opencode-cursor](https://github.com/Nomadcxx/opencode-cursor) | Wraps `cursor-agent`, with an optional official Cursor SDK fallback | Existing CLI login or Cursor API key | Keeps the supported CLI path, but translates a process stream into an OpenCode provider |
+| [open-cursor](https://github.com/Nomadcxx/opencode-cursor) | Wraps `cursor-agent`, with an optional official Cursor SDK fallback | Existing CLI login or Cursor API key | Keeps the supported CLI path, but translates a process stream into an OpenCode provider |
 | [stablekernel/opencode-cursor](https://github.com/stablekernel/opencode-cursor) | Official `@cursor/sdk` provider | Cursor API key | Direct SDK integration; its README warns that Cursor tools can run outside OpenCode permissions unless sandboxed |
 | [cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) | Cursor Connect-RPC and protobuf provider | Browser OAuth or Cursor API key | Rich native protocol mapping with a larger compatibility surface when Cursor changes its protocol |
 | [yet-another-opencode-cursor-auth](https://github.com/Yukaii/yet-another-opencode-cursor-auth) | Unofficial Cursor service interface | OAuth | Dynamic models and tool calls; the project labels itself experimental and warns about account and compatibility risk |

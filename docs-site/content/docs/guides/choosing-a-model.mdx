@@ -10,7 +10,7 @@ cursor-agent models
 ```
 
 This output is the source of truth for the default backend. If an ID is absent,
-opencode-cursor cannot route a request to it.
+open-cursor cannot route a request to it.
 
 A model shown in the Cursor IDE may still be absent from the CLI. Cursor gates
 the two surfaces per account and plan. Adding an unlisted ID to
@@ -26,7 +26,7 @@ opencode models | grep cursor-acp
 ## Auto
 
 `cursor-acp/auto` sends Cursor's `auto` model ID. Cursor chooses the model.
-opencode-cursor does not rank the installed models or rewrite `auto` to a
+open-cursor does not rank the installed models or rewrite `auto` to a
 specific provider ID.
 
 Use Auto when you do not need a repeatable model choice. Select an explicit ID
