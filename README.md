@@ -1,4 +1,6 @@
-![header](docs/header.png)
+<p align="center">
+  <img src="docs/header.svg" width="762" alt="opencode-cursor — cursor pro models, inside opencode">
+</p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
