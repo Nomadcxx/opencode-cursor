@@ -31,8 +31,8 @@ import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
 import {
   applyBridgeJsonPrompt,
+  BridgeJsonStreamDetector,
   extractBridgeToolCallFromStreamOutput,
-  extractBridgeToolCallFromText,
   isBridgeJsonEnabled,
 } from "./proxy/bridge-json.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
@@ -457,6 +457,16 @@ export function maybeEvictResumeChatId(
 
 function isSuccessfulResultEvent(event: StreamJsonEvent): boolean {
   return isResult(event) && event.is_error !== true && event.subtype !== "error";
+}
+
+function createAssistantTextEvent(text: string): StreamJsonEvent {
+  return {
+    type: "assistant",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text }],
+    },
+  };
 }
 
 function shouldTreatCursorAgentFailureAsDiagnostic(
@@ -1472,6 +1482,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             const reader = (child.stdout as ReadableStream<Uint8Array>).getReader();
             const converter = new StreamToSseConverter(model, { id, created });
             const lineBuffer = new LineBuffer();
+            const bridgeDetector = bridgeJsonEnabled
+              ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
+              : null;
             const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
               log.debug("Intercepted OpenCode tool call (stream)", {
                 name: toolCall.function.name,
@@ -1492,6 +1505,39 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               } catch {
                 // ignore
               }
+            };
+            const emitBridgeText = (text: string) => {
+              const sseChunks = converter.handleEvent(createAssistantTextEvent(text));
+              if (sseChunks.length > 0) {
+                sawSuccessfulStreamOutput = true;
+              }
+              for (const sse of sseChunks) {
+                enqueueSse(sse);
+              }
+            };
+            const flushBridgeText = () => {
+              const text = bridgeDetector?.flush() ?? "";
+              if (text) {
+                emitBridgeText(text);
+              }
+            };
+            const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
+              if (!bridgeDetector || !isAssistantText(event)) {
+                return false;
+              }
+              const decision = bridgeDetector.push(event);
+              if (decision.action === "tool_call") {
+                emitToolCallAndTerminate(decision.toolCall);
+                return true;
+              }
+              if (decision.action === "buffer") {
+                return true;
+              }
+              if (decision.text !== undefined) {
+                emitBridgeText(decision.text);
+                return true;
+              }
+              return false;
             };
             const emitTerminalAssistantErrorAndTerminate = (message: string) => {
               if (streamTerminated) {
@@ -1538,19 +1584,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   }
                 }
 
-                if (bridgeJsonEnabled && isAssistantText(event)) {
-                  const bridgeToolCall = extractBridgeToolCallFromText(
-                    extractText(event),
-                    allowedToolNames,
-                    toolSchemaMap.get("write"),
-                  );
-                  if (bridgeToolCall) {
-                    emitToolCallAndTerminate(bridgeToolCall);
-                    break;
-                  }
+                if (handleBridgeAssistantEvent(event)) {
+                  if (streamTerminated) break;
+                  continue;
                 }
 
                 if (event.type === "tool_call") {
+                  flushBridgeText();
+                  bridgeDetector?.reset();
                   perf.mark("tool-call");
                   const result = await handleToolLoopEventWithFallback({
                     event: event as any,
@@ -1634,18 +1675,13 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   sawSuccessfulStreamOutput = true;
                 }
               }
-              if (bridgeJsonEnabled && isAssistantText(event)) {
-                const bridgeToolCall = extractBridgeToolCallFromText(
-                  extractText(event),
-                  allowedToolNames,
-                  toolSchemaMap.get("write"),
-                );
-                if (bridgeToolCall) {
-                  emitToolCallAndTerminate(bridgeToolCall);
-                  break;
-                }
+              if (handleBridgeAssistantEvent(event)) {
+                if (streamTerminated) break;
+                continue;
               }
               if (event.type === "tool_call") {
+                flushBridgeText();
+                bridgeDetector?.reset();
                 const result = await handleToolLoopEventWithFallback({
                   event: event as any,
                   boundary: boundaryContext.getBoundary(),
@@ -1705,6 +1741,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               return;
             }
 
+            flushBridgeText();
             const exitCode = await child.exited;
             if (exitCode !== 0) {
               const stderrText = await new Response(child.stderr).text();
@@ -2074,6 +2111,9 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
 
         const converter = new StreamToSseConverter(model, { id, created });
         const lineBuffer = new LineBuffer();
+        const bridgeDetector = bridgeJsonEnabled
+          ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
+          : null;
         const toolMapper = new ToolMapper();
         const toolSessionId = id;
         const passThroughTracker = new PassThroughTracker();
@@ -2148,6 +2188,39 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             // ignore
           }
         };
+        const emitBridgeText = (text: string) => {
+          const sseChunks = converter.handleEvent(createAssistantTextEvent(text));
+          if (sseChunks.length > 0) {
+            sawSuccessfulStreamOutput = true;
+          }
+          for (const sse of sseChunks) {
+            writeSse(sse);
+          }
+        };
+        const flushBridgeText = () => {
+          const text = bridgeDetector?.flush() ?? "";
+          if (text) {
+            emitBridgeText(text);
+          }
+        };
+        const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
+          if (!bridgeDetector || !isAssistantText(event)) {
+            return false;
+          }
+          const decision = bridgeDetector.push(event);
+          if (decision.action === "tool_call") {
+            emitToolCallAndTerminate(decision.toolCall);
+            return true;
+          }
+          if (decision.action === "buffer") {
+            return true;
+          }
+          if (decision.text !== undefined) {
+            emitBridgeText(decision.text);
+            return true;
+          }
+          return false;
+        };
 
         const chunkQueue: Buffer[] = [];
         let draining = false;
@@ -2176,19 +2249,14 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               }
             }
 
-            if (bridgeJsonEnabled && isAssistantText(event)) {
-              const bridgeToolCall = extractBridgeToolCallFromText(
-                extractText(event),
-                allowedToolNames,
-                toolSchemaMap.get("write"),
-              );
-              if (bridgeToolCall) {
-                emitToolCallAndTerminate(bridgeToolCall);
-                break;
-              }
+            if (handleBridgeAssistantEvent(event)) {
+              if (streamTerminated || res.writableEnded) break;
+              continue;
             }
 
             if (event.type === "tool_call") {
+              flushBridgeText();
+              bridgeDetector?.reset();
               perf.mark("tool-call");
               const result = await handleToolLoopEventWithFallback({
                 event: event as any,
@@ -2261,6 +2329,7 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               await processLines(lineBuffer.flush());
               if (streamTerminated || res.writableEnded) return;
 
+              flushBridgeText();
               perf.mark("request:done");
               perf.summarize();
               const stderrText = Buffer.concat(stderrChunks).toString().trim();

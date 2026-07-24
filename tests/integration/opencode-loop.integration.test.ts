@@ -68,6 +68,29 @@ const WRITE_TOOL = {
   },
 };
 
+const TASK_TOOL = {
+  type: "function",
+  function: {
+    name: "task",
+    description: [
+      "Launch an OpenCode subagent.",
+      "- general: built in",
+      "- global-proof: global",
+      "- project-proof: project local",
+    ].join("\n"),
+    parameters: {
+      type: "object",
+      properties: {
+        description: { type: "string" },
+        prompt: { type: "string" },
+        subagent_type: { type: "string" },
+      },
+      required: ["description", "prompt", "subagent_type"],
+      additionalProperties: false,
+    },
+  },
+};
+
 const OPENCODE_EDIT_TOOL = {
   type: "function",
   function: {
@@ -301,6 +324,86 @@ process.stdin.on("end", () => {
             },
           ],
         },
+      },
+    ];
+  } else if (scenario === "assistant-bridge-task-partials") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "{\\"name\\":\\"task\\"," }],
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 2,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "\\"arguments\\":{\\"description\\":\\"Run project proof\\"," }],
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 3,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "\\"prompt\\":\\"Follow your configured instructions.\\"," }],
+        },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 4,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "\\"subagent_type\\":\\"project-proof\\"}}" }],
+        },
+      },
+      { type: "result", subtype: "success", is_error: false },
+    ];
+  } else if (scenario === "assistant-bridge-malformed-partials") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: { role: "assistant", content: [{ type: "text", text: "{not " }] },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 2,
+        message: { role: "assistant", content: [{ type: "text", text: "valid json" }] },
+      },
+    ];
+  } else if (scenario === "assistant-python-fence-partials") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: { role: "assistant", content: [{ type: "text", text: "\`\`\`py" }] },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 2,
+        message: { role: "assistant", content: [{ type: "text", text: "thon\\n" }] },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 3,
+        message: { role: "assistant", content: [{ type: "text", text: "print('ok')\\n\`\`\`" }] },
+      },
+    ];
+  } else if (scenario === "assistant-json-answer-partials") {
+    events = [
+      {
+        type: "assistant",
+        timestamp_ms: now + 1,
+        message: { role: "assistant", content: [{ type: "text", text: "{\\"answer\\":" }] },
+      },
+      {
+        type: "assistant",
+        timestamp_ms: now + 2,
+        message: { role: "assistant", content: [{ type: "text", text: "42}" }] },
       },
     ];
   } else {
@@ -749,6 +852,93 @@ describe("OpenCode-owned tool loop integration", () => {
       .join("");
     expect(allContent).not.toContain('"name":"write"');
   });
+
+  it("reassembles streaming Task bridge JSON without leaking fragments", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-partials";
+    process.env.MOCK_CURSOR_PROMPT_FILE = promptFile;
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Delegate to project-proof" }],
+    });
+
+    const body = await response.text();
+    const chunks = parseJsonChunks(parseSseData(body));
+    const toolDelta = chunks.find((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length);
+    const toolCall = toolDelta?.choices?.[0]?.delta?.tool_calls?.[0];
+
+    expect(toolCall?.function?.name).toBe("task");
+    expect(JSON.parse(toolCall?.function?.arguments ?? "{}")).toEqual({
+      description: "Run project proof",
+      prompt: "Follow your configured instructions.",
+      subagent_type: "project-proof",
+    });
+    expect(chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean))
+      .toContain("tool_calls");
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain('"name":"task"');
+
+    const promptText = readFileSync(promptFile, "utf8");
+    expect(promptText).toContain("project-proof");
+    expect(promptText).toContain("Do not invoke Cursor's built-in Task tool");
+    expect(promptText).not.toContain(["When calling", "the task tool"].join(" "));
+  });
+
+  it("reassembles non-stream Task bridge JSON", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-partials";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Delegate to project-proof" }],
+    });
+
+    const json: any = await response.json();
+    expect(json.choices?.[0]?.message?.tool_calls?.[0]?.function?.name).toBe("task");
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+  });
+
+  for (const fallback of [
+    {
+      scenario: "assistant-bridge-malformed-partials",
+      expected: "{not valid json",
+    },
+    {
+      scenario: "assistant-python-fence-partials",
+      expected: "```python\nprint('ok')\n```",
+    },
+    {
+      scenario: "assistant-json-answer-partials",
+      expected: '{"answer":42}',
+    },
+  ]) {
+    it(`passes ${fallback.scenario} through exactly once`, async () => {
+      process.env.MOCK_CURSOR_SCENARIO = fallback.scenario;
+      process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+      const response = await requestCompletion(baseURL, {
+        model: "auto",
+        stream: true,
+        tools: [TASK_TOOL],
+        messages: [{ role: "user", content: "Answer normally" }],
+      });
+
+      const chunks = parseJsonChunks(parseSseData(await response.text()));
+      const allContent = chunks
+        .map((chunk) => chunk.choices?.[0]?.delta?.content)
+        .filter((value): value is string => typeof value === "string")
+        .join("");
+      expect(allContent).toBe(fallback.expected);
+      expect(chunks.some((chunk) => chunk.choices?.[0]?.delta?.tool_calls?.length)).toBe(false);
+    });
+  }
 
   it("skips streaming edit when write tool is not offered", async () => {
     process.env.MOCK_CURSOR_SCENARIO = "tool-edit-invalid";
