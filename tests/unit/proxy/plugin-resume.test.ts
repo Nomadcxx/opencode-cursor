@@ -24,7 +24,6 @@ describe("plugin resume orchestration", () => {
     backend: "cursor-agent" as const,
     messages: [{ role: "user", content: "Remember BETA" }],
     tools: [] as any[],
-    subagentNames: [] as string[],
     model: "gpt-5",
     workspaceDirectory: "/workspace",
   };
@@ -355,20 +354,40 @@ describe("plugin resume orchestration", () => {
     expect(followUp.prompt).toContain("write");
   });
 
-  it("falls back to full prompt when subagent list changes", () => {
+  it("invalidates Task metadata through the tool fingerprint alone", () => {
     process.env.CURSOR_ACP_SESSION_RESUME = "1";
-    const { sessionKey, contentPrefix, subagentFingerprint } = resolvePromptForBackend({
-      ...baseInput,
-      subagentNames: ["agent-a"],
+
+    const task = (agent: string) => ({
+      type: "function",
+      function: {
+        name: "task",
+        description: `Available subagents: ${agent}`,
+        parameters: {
+          type: "object",
+          properties: { subagent_type: { type: "string" } },
+          required: ["subagent_type"],
+        },
+      },
     });
+
+    const first = resolvePromptForBackend({
+      ...baseInput,
+      tools: [task("global-proof")],
+    });
+    const second = resolvePromptForBackend({
+      ...baseInput,
+      tools: [task("project-proof")],
+    });
+
+    expect(first.toolFingerprint).not.toBe(second.toolFingerprint);
+
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-abc" } as any,
-      sessionKey,
+      first.sessionKey,
       "gpt-5",
       "/workspace",
-      contentPrefix,
-      undefined,
-      subagentFingerprint,
+      first.contentPrefix,
+      first.toolFingerprint,
     );
 
     const followUp = resolvePromptForBackend({
@@ -378,7 +397,7 @@ describe("plugin resume orchestration", () => {
         { role: "assistant", content: "Got it." },
         { role: "user", content: "What was the codeword?" },
       ],
-      subagentNames: ["agent-a", "agent-b"],
+      tools: [task("project-proof")],
     });
     expect(followUp.resumeChatId).toBeUndefined();
     expect(followUp.usedIncremental).toBe(false);

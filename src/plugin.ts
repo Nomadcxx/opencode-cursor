@@ -59,7 +59,7 @@ import { ToolRouter } from "./tools/router.js";
 import { SkillLoader } from "./tools/skills/loader.js";
 import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
-import { readMcpConfigs, readSubagentNames } from "./mcp/config.js";
+import { readMcpConfigs } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
 import {
   MCP_TOOL_PREFIX,
@@ -121,7 +121,6 @@ export function buildAvailableToolsSystemMessage(
   lastToolMap: Array<{ id: string; name: string }>,
   mcpToolDefs: any[],
   mcpToolSummaries?: McpToolSummary[],
-  subagentNames: string[] = [],
 ): string | null {
   const parts: string[] = [];
 
@@ -164,12 +163,6 @@ export function buildAvailableToolsSystemMessage(
     }
 
     parts.push(lines.join("\n"));
-  }
-
-  if (subagentNames.length > 0) {
-    parts.push(
-      `When calling the task tool, set subagent_type to one of: ${subagentNames.join(", ")}. Do not omit this parameter.`
-    );
   }
 
   return parts.length > 0 ? parts.join("\n\n") : null;
@@ -293,7 +286,6 @@ export interface ResolvedPrompt {
   contentPrefix?: string;
   recordContentPrefix?: string;
   toolFingerprint?: string;
-  subagentFingerprint?: string;
 }
 
 /**
@@ -312,13 +304,12 @@ export function resolvePromptForBackend(input: {
   backend: CursorRuntimeBackend;
   messages: Array<ProxyMessage>;
   tools: Array<any>;
-  subagentNames: string[];
   model: string;
   workspaceDirectory: string;
 }): ResolvedPrompt {
   let fullPrompt: string | undefined;
   const getFullPrompt = () =>
-    fullPrompt ??= buildPromptFromMessages(input.messages, input.tools, input.subagentNames);
+    fullPrompt ??= buildPromptFromMessages(input.messages, input.tools);
 
   if (input.backend !== "cursor-agent" || !isSessionResumeEnabled()) {
     return { prompt: getFullPrompt(), usedIncremental: false };
@@ -339,8 +330,7 @@ export function resolvePromptForBackend(input: {
   const sessionKey = buildSessionKey(input.workspaceDirectory, input.model, anchor);
   const sessionKeyHash = sanitizeSessionKey(sessionKey);
   const toolFingerprint = buildToolFingerprint(input.tools);
-  const subagentFingerprint = input.subagentNames.slice().sort().join(",");
-  const resumeChatId = getResumeChatId(sessionKey, contentPrefix, toolFingerprint, subagentFingerprint);
+  const resumeChatId = getResumeChatId(sessionKey, contentPrefix, toolFingerprint);
   const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
   if (!resumeChatId) {
     const isContinuation = input.messages.some((m: any) => m?.role === "assistant");
@@ -349,7 +339,7 @@ export function resolvePromptForBackend(input: {
         sessionKeyHash,
       });
     }
-    return { prompt: getFullPrompt(), sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint, subagentFingerprint };
+    return { prompt: getFullPrompt(), sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint };
   }
 
   const incremental = buildIncrementalPrompt(input.messages);
@@ -367,14 +357,14 @@ export function resolvePromptForBackend(input: {
         fullPromptChars: getFullPrompt().length,
       });
     }
-    return { prompt: incremental, resumeChatId, sessionKey, usedIncremental: true, contentPrefix, recordContentPrefix, toolFingerprint, subagentFingerprint };
+    return { prompt: incremental, resumeChatId, sessionKey, usedIncremental: true, contentPrefix, recordContentPrefix, toolFingerprint };
   }
 
   log.info("Session resume active but incremental prompt unavailable; using full prompt", {
     sessionKeyHash,
     resumeChatIdHash,
   });
-  return { prompt: getFullPrompt(), resumeChatId, sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint, subagentFingerprint };
+  return { prompt: getFullPrompt(), resumeChatId, sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint };
 }
 
 /**
@@ -389,7 +379,6 @@ export function captureResumeChatIdFromEvent(
   workspaceDirectory: string,
   contentPrefix?: string,
   toolFingerprint?: string,
-  subagentFingerprint?: string,
 ): void {
   if (!sessionKey || !isSessionResumeEnabled()) return;
   const chatId = event.session_id;
@@ -400,7 +389,6 @@ export function captureResumeChatIdFromEvent(
       chatId.trim(),
       contentPrefix ?? "",
       toolFingerprint,
-      subagentFingerprint,
     );
     return;
   }
@@ -424,7 +412,6 @@ export function captureResumeChatIdFromOutput(
   workspaceDirectory: string,
   contentPrefix?: string,
   toolFingerprint?: string,
-  subagentFingerprint?: string,
 ): void {
   if (!sessionKey || !isSessionResumeEnabled() || !output) return;
   for (const line of output.split(/\r?\n/)) {
@@ -437,7 +424,6 @@ export function captureResumeChatIdFromOutput(
         workspaceDirectory,
         contentPrefix,
         toolFingerprint,
-        subagentFingerprint,
       );
     }
   }
@@ -493,7 +479,6 @@ function warnIfResumeNotCaptured(
   sessionResumeKeyHash: string | undefined,
   sessionResumeContentPrefix: string | undefined,
   sessionResumeToolFingerprint: string | undefined,
-  sessionResumeSubagentFingerprint: string | undefined,
   model: string,
 ): void {
   if (
@@ -503,7 +488,6 @@ function warnIfResumeNotCaptured(
       sessionResumeKey,
       sessionResumeContentPrefix,
       sessionResumeToolFingerprint,
-      sessionResumeSubagentFingerprint,
     )
   ) {
     log.warn("Session resume enabled but no session_id captured from cursor-agent response; resume will not activate on the next turn", {
@@ -1274,7 +1258,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("bun-handler");
 
-      const subagentNames = readSubagentNames();
       const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
         boundary.resolveRuntimeModel(body?.model, body?.cursorModel),
       );
@@ -1286,7 +1269,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         backend,
         messages,
         tools,
-        subagentNames,
         model,
         workspaceDirectory,
       });
@@ -1298,7 +1280,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         contentPrefix: sessionResumeContentPrefix,
         recordContentPrefix: sessionResumeRecordContentPrefix,
         toolFingerprint: sessionResumeToolFingerprint,
-        subagentFingerprint: sessionResumeSubagentFingerprint,
       } = resolvedPrompt;
       reqPerf.mark("prompt-built");
       const sessionResumeKeyHash = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
@@ -1358,14 +1339,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
           workspaceDirectory,
           sessionResumeRecordContentPrefix,
           sessionResumeToolFingerprint,
-          sessionResumeSubagentFingerprint,
         );
         warnIfResumeNotCaptured(
           sessionResumeKey,
           sessionResumeKeyHash,
           sessionResumeRecordContentPrefix,
           sessionResumeToolFingerprint,
-          sessionResumeSubagentFingerprint,
           model,
         );
         const meta = {
@@ -1550,7 +1529,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                   workspaceDirectory,
                   sessionResumeRecordContentPrefix,
                   sessionResumeToolFingerprint,
-                  sessionResumeSubagentFingerprint,
                 );
 
                 if (isResult(event)) {
@@ -1649,7 +1627,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 workspaceDirectory,
                 sessionResumeRecordContentPrefix,
                 sessionResumeToolFingerprint,
-                sessionResumeSubagentFingerprint,
               );
               if (isResult(event)) {
                 usage = extractOpenAiUsageFromResult(event) ?? usage;
@@ -1768,7 +1745,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               sessionResumeKeyHash,
               sessionResumeRecordContentPrefix,
               sessionResumeToolFingerprint,
-              sessionResumeSubagentFingerprint,
               model,
             );
 
@@ -1891,7 +1867,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
 
-      const subagentNames = readSubagentNames();
       const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
         boundary.resolveRuntimeModel(bodyData?.model, bodyData?.cursorModel),
       );
@@ -1903,7 +1878,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         backend,
         messages,
         tools,
-        subagentNames,
         model,
         workspaceDirectory,
       });
@@ -1915,7 +1889,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
         contentPrefix: sessionResumeContentPrefix,
         recordContentPrefix: sessionResumeRecordContentPrefix,
         toolFingerprint: sessionResumeToolFingerprint,
-        subagentFingerprint: sessionResumeSubagentFingerprint,
       } = resolvedPrompt;
       reqPerf.mark("prompt-built");
       const sessionResumeKeyHashNode = sessionResumeKey ? sanitizeSessionKey(sessionResumeKey) : undefined;
@@ -1984,14 +1957,12 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
             workspaceDirectory,
             sessionResumeRecordContentPrefix,
             sessionResumeToolFingerprint,
-            sessionResumeSubagentFingerprint,
           );
           warnIfResumeNotCaptured(
             sessionResumeKey,
             sessionResumeKeyHashNode,
             sessionResumeRecordContentPrefix,
             sessionResumeToolFingerprint,
-            sessionResumeSubagentFingerprint,
             model,
           );
           const meta = {
@@ -2196,7 +2167,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
               workspaceDirectory,
               sessionResumeRecordContentPrefix,
               sessionResumeToolFingerprint,
-              sessionResumeSubagentFingerprint,
             );
 
             if (isResult(event)) {
@@ -2331,7 +2301,6 @@ async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: 
                 sessionResumeKeyHashNode,
                 sessionResumeRecordContentPrefix,
                 sessionResumeToolFingerprint,
-                sessionResumeSubagentFingerprint,
                 model,
               );
 
@@ -2969,10 +2938,8 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
       if (!providerMatch) {
         return;
       }
-      const subagentNames = readSubagentNames();
       const systemMessage = buildAvailableToolsSystemMessage(
         lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries,
-        subagentNames,
       );
       if (!systemMessage) return;
       output.system = output.system || [];

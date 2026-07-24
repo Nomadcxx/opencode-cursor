@@ -244,32 +244,16 @@ describe("session-resume", () => {
     expect(getResumeChatId(key)).toBeUndefined();
   });
 
-  it("evicts entry on subagent fingerprint mismatch", () => {
-    const key = buildSessionKey("/workspace", "gpt-5", "abc123");
-    recordResumeChatId(key, "chat-uuid-1", "hello", undefined, "agents-v1");
-    expect(getResumeChatId(key, "hello", undefined, "agents-v1")).toBe("chat-uuid-1");
-    expect(getResumeChatId(key, "hello", undefined, "agents-v2")).toBeUndefined();
-    expect(getResumeChatId(key)).toBeUndefined();
-  });
-
   it("evicts entries recorded without a fingerprint when a request fingerprint is supplied", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
     recordResumeChatId(key, "chat-uuid-1", "hello");
     expect(getResumeChatId(key, "hello", "any-fp")).toBeUndefined();
-    expect(getResumeChatId(key)).toBeUndefined();
-
-    recordResumeChatId(key, "chat-uuid-2", "hello");
-    expect(getResumeChatId(key, "hello", undefined, "any-subagent")).toBeUndefined();
     expect(getResumeChatId(key)).toBeUndefined();
   });
 
   it("evicts entries with a fingerprint when the request supplies none", () => {
     const key = buildSessionKey("/workspace", "gpt-5", "abc123");
     recordResumeChatId(key, "chat-uuid-1", "hello", "fp-v1");
-    expect(getResumeChatId(key, "hello")).toBeUndefined();
-    expect(getResumeChatId(key)).toBeUndefined();
-
-    recordResumeChatId(key, "chat-uuid-2", "hello", undefined, "agents-v1");
     expect(getResumeChatId(key, "hello")).toBeUndefined();
     expect(getResumeChatId(key)).toBeUndefined();
   });

@@ -113,7 +113,7 @@ function formatAssistantToolCall(
  * Handles role:"tool" result messages and assistant tool_calls that
  * plain text flattening would silently drop.
  */
-export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>, subagentNames: string[] = []): string {
+export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>): string {
   if (log.isDebugEnabled()) {
     const messageSummary = messages.map((m: any, i: number) => {
       const role = m?.role ?? "?";
@@ -171,15 +171,6 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>,
 
   if (tools.length > 0) {
     lines.push(buildToolSchemaBlock(tools));
-    const hasTaskTool = tools.some((t: any) => {
-      const name = (t?.function?.name ?? t?.name ?? "").toLowerCase();
-      return name === "task";
-    });
-    if (hasTaskTool && subagentNames.length > 0) {
-      lines.push(
-        `When calling the task tool, set subagent_type to one of: ${subagentNames.join(", ")}. Do not omit this parameter.`
-      );
-    }
   }
 
   for (const message of messages) {
