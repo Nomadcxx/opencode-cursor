@@ -126,6 +126,21 @@ assert.doesNotMatch(banner, /[█▄▀]/, 'banner block art still depends on fo
 assert.match(occ, /<rect\b/, 'OCC mark has no rectangle geometry');
 assert.match(banner, /<rect\b/, 'banner has no rectangle geometry');
 assert.match(sourceCss, /designed-as-app/, 'Hallmark app-system stamp is missing');
+assert.match(
+  sourceCss,
+  /\.docs-home-hero\s*\{[^}]*margin-inline:\s*auto;/s,
+  'wordmark container is missing automatic inline margins',
+);
+assert.match(
+  sourceCss,
+  /@media\s*\(min-width:\s*90rem\)\s*\{[\s\S]*?\.docs-home-hero\s*\{[^}]*transform:\s*translateX\(calc\(var\(--fd-sidebar-width\)\s*\/\s*-2\)\);/,
+  'wide-screen wordmark does not compensate for the sidebar',
+);
+assert.match(
+  sourceCss,
+  /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(18rem,\s*42rem\)\s+minmax\(0,\s*1fr\);/,
+  'desktop search is not centred between equal outer tracks',
+);
 
 assert.ok(rootHtml.includes(`href="${basePath}/docs/"`), 'site root does not link to docs');
 assert.ok(rootHtml.includes(`url=${basePath}/docs/`), 'site root does not redirect to docs');

@@ -78,6 +78,9 @@ named tokens rather than raw spacing values.
 - The green and cyan signal roles.
 - IBM Plex Sans and Fira Code.
 - The same control geometry and focus treatment.
+- The desktop search stays centred on the visible page. The large wordmark
+  centres in the unobstructed docs canvas, then centres on the full page once
+  the viewport is wide enough to clear the persistent sidebar.
 - Stacked section headings without slash ornaments, decorative eyebrows, or
   hanging chapter labels.
 
