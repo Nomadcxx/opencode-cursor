@@ -3,9 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux" />
-  <img src="https://img.shields.io/badge/macOS-000000?style=for-the-badge&logo=apple&logoColor=white" alt="macOS" />
-  <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Windows" />
+  <a href="https://www.npmjs.com/package/@rama_nigg/open-cursor"><img src="https://img.shields.io/npm/v/%40rama_nigg/open-cursor?style=flat-square&color=555&labelColor=333" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/@rama_nigg/open-cursor"><img src="https://img.shields.io/npm/dm/%40rama_nigg/open-cursor?style=flat-square&color=555&labelColor=333" alt="downloads per month"></a>
+  <img src="https://img.shields.io/badge/linux%20%C2%B7%20macos%20%C2%B7%20windows-555?style=flat-square&labelColor=333" alt="linux, macos, windows">
 </p>
 
 
