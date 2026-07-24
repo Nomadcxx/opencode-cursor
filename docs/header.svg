@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 762 191" width="762" height="191" role="img" aria-label="opencode-cursor">
+  <style>
+    text { font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; white-space: pre; }
+    .cursor { animation: blink 1.1s steps(1) infinite; }
+    .sweep { transform-origin: 48px 0; transform: scaleX(0); animation: sweep 900ms cubic-bezier(0.16,1,0.3,1) 400ms forwards; }
+    @keyframes blink { 50% { opacity: 0; } }
+    @keyframes sweep { to { transform: scaleX(1); } }
+    @media (prefers-reduced-motion: reduce) {
+      .cursor { animation: none; }
+      .sweep { animation: none; transform: scaleX(1); }
+    }
+  </style>
+  <defs>
+    <linearGradient id="g3" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#37f499"/>
+      <stop offset="0.55" stop-color="#04d1f9"/>
+      <stop offset="1" stop-color="#a48cf2"/>
+    </linearGradient>
+  </defs>
+  <rect fill="#212337" x="0" y="0" width="762" height="191" rx="8"/>
+  <rect fill="none" stroke="#3b4261" stroke-width="1.5" x="14" y="14" width="734" height="163" rx="6"/>
+  <rect fill="#212337" x="32" y="8" width="117" height="12"/>
+  <text fill="#7081d0" x="38" y="19" font-size="12" xml:space="preserve">opencode-cursor</text>
+  <text fill="url(#g3)" font-size="21.82" letter-spacing="-3" xml:space="preserve"
+    ><tspan x="48" y="64"> ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄  ▄▄      ▄▄▄  ▄▄ ▄▄ ▄▄▄▄   ▄▄▄▄   ▄▄▄   ▄▄▄▄ </tspan
+    ><tspan x="48" dy="21.82">██ ██ ██ ██ ██▄▄  ███▄██ ▄▄▄ ██ ▀▀ ██ ██ ██ ██ ██▄▄▄  ██ ██  ██ ██</tspan
+    ><tspan x="48" dy="21.82">▀█▄█▀ ██▀▀  ██▄▄▄ ██ ▀██     ▀█▄█▀ ▀█▄█▀ ██▀█▄ ▄▄▄█▀  ▀█▄█▀  ██▀█▄</tspan
+  ></text>
+  <rect class="sweep" x="48" y="139" width="666" height="2" fill="url(#g3)"/>
+  <text fill="#ABB4DA" x="48" y="165" font-size="15" xml:space="preserve">cursor pro models, inside opencode</text>
+  <text class="cursor" fill="#37f499" x="366" y="165" font-size="15" xml:space="preserve">▌</text>
+</svg>
