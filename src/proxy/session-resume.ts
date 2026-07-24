@@ -33,8 +33,6 @@ interface SessionResumeEntry {
   contentPrefix: string;
   /** Fingerprint of the tool schema active when the session was created. */
   toolFingerprint?: string;
-  /** Fingerprint of the subagent list active when the session was created. */
-  subagentFingerprint?: string;
   updatedAt: number;
 }
 
@@ -165,17 +163,17 @@ export function isSessionResumeEnabled(): boolean {
 /**
  * Look up a cached cursor-agent chat ID for the given session key.
  *
- * Validates TTL, content prefix, and tool/subagent fingerprints. A request that
+ * Validates TTL, content prefix, and tool fingerprint. A request that
  * supplies a non-empty fingerprint will evict a cached entry that was recorded
  * without that fingerprint (or with a different one), preventing a stale chat
- * from being resumed with an incompatible tool/subagent schema. Returns
+ * from being resumed with incompatible tool metadata. Task descriptions include
+ * the active subagent list, so the tool fingerprint covers agent changes. Returns
  * undefined and evicts stale entries on any mismatch.
  */
 export function getResumeChatId(
   sessionKey: string,
   expectedPrefix?: string,
   toolFingerprint?: string,
-  subagentFingerprint?: string,
 ): string | undefined {
   const entry = cache.get(sessionKey);
   if (!entry) return undefined;
@@ -198,10 +196,6 @@ export function getResumeChatId(
     evictEntry(sessionKey, "toolFingerprintMismatch", {}, "warn");
     return undefined;
   }
-  if ((subagentFingerprint || entry.subagentFingerprint) && entry.subagentFingerprint !== subagentFingerprint) {
-    evictEntry(sessionKey, "subagentFingerprintMismatch", {}, "warn");
-    return undefined;
-  }
   // Refresh LRU order on a successful read.
   cache.delete(sessionKey);
   cache.set(sessionKey, entry);
@@ -217,16 +211,12 @@ export function hasResumeChatId(
   sessionKey: string,
   expectedPrefix?: string,
   toolFingerprint?: string,
-  subagentFingerprint?: string,
 ): boolean {
   const entry = cache.get(sessionKey);
   if (!entry) return false;
   if (Date.now() - entry.updatedAt > DEFAULT_TTL_MS) return false;
   if (expectedPrefix != null && entry.contentPrefix !== expectedPrefix) return false;
   if ((toolFingerprint || entry.toolFingerprint) && entry.toolFingerprint !== toolFingerprint) {
-    return false;
-  }
-  if ((subagentFingerprint || entry.subagentFingerprint) && entry.subagentFingerprint !== subagentFingerprint) {
     return false;
   }
   return !!entry.chatId;
@@ -243,7 +233,6 @@ export function recordResumeChatId(
   chatId: string,
   contentPrefix: string,
   toolFingerprint?: string,
-  subagentFingerprint?: string,
 ): void {
   if (!chatId) return;
   const trimmed = chatId.trim();
@@ -260,7 +249,6 @@ export function recordResumeChatId(
     chatId: trimmed,
     contentPrefix,
     toolFingerprint,
-    subagentFingerprint,
     updatedAt: Date.now(),
   });
   while (cache.size > DEFAULT_MAX_ENTRIES) {

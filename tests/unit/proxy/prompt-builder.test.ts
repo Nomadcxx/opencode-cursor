@@ -48,6 +48,39 @@ describe("buildPromptFromMessages", () => {
     expect(result).toContain("USER: Read foo.txt");
   });
 
+  it("uses the OpenCode task description without appending a separate subagent list", () => {
+    const task = {
+      type: "function",
+      function: {
+        name: "task",
+        description: [
+          "Launch an OpenCode subagent.",
+          "- general: built in",
+          "- global-proof: global",
+          "- project-proof: project local",
+        ].join("\n"),
+        parameters: {
+          type: "object",
+          properties: {
+            description: { type: "string" },
+            prompt: { type: "string" },
+            subagent_type: { type: "string" },
+          },
+          required: ["description", "prompt", "subagent_type"],
+        },
+      },
+    };
+
+    const prompt = buildPromptFromMessages(
+      [{ role: "user", content: "delegate" }],
+      [task],
+    );
+
+    expect(prompt).toContain("global-proof");
+    expect(prompt).toContain("project-proof");
+    expect(prompt).not.toContain(["When calling", "the task tool"].join(" "));
+  });
+
   it("handles role:tool result messages", () => {
     const messages = [
       { role: "user", content: "Read the file" },
