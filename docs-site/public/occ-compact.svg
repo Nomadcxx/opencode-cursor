@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 144 40" width="144" height="40" role="img" aria-label="OCC" shape-rendering="crispEdges">
+  <style>
+    :root { --occ-primary: oklch(85.61% 0.1934 156.24); --occ-signal: oklch(79.48% 0.1427 218.32); }
+    .primary { fill: var(--occ-primary); }
+    .signal { fill: var(--occ-signal); }
+  </style>
+  <g class="primary">
+    <rect x="8" y="0" width="24" height="8"/>
+    <rect x="0" y="8" width="8" height="24"/>
+    <rect x="32" y="8" width="8" height="24"/>
+    <rect x="8" y="32" width="24" height="8"/>
+  </g>
+  <g class="signal">
+    <rect x="60" y="0" width="32" height="8"/>
+    <rect x="52" y="8" width="8" height="24"/>
+    <rect x="60" y="32" width="32" height="8"/>
+    <rect x="112" y="0" width="32" height="8"/>
+    <rect x="104" y="8" width="8" height="24"/>
+    <rect x="112" y="32" width="32" height="8"/>
+  </g>
+</svg>

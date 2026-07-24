@@ -1,0 +1,79 @@
+---
+title: "cursor-agent tools"
+description: "Observed Cursor tool events, their OpenCode mappings, and the passthrough boundary."
+---
+
+The checked-in experiment record contains nine observed Cursor tool event
+types. An older content plan called this a 15-tool inventory, but the source
+document and harness results only support nine. This page keeps the verifiable
+count.
+
+## Intercepted tools
+
+These events have an OpenCode equivalent:
+
+| Cursor event | Normalised name | OpenCode tool |
+|---|---|---|
+| `grepToolCall` | `grep` | `grep` |
+| `readToolCall` | `read` | `read` |
+| `shellToolCall` | `shell` | `bash` |
+| `editToolCall` | `edit` | `edit` |
+| `globToolCall` | `glob` | `glob` |
+| `updateTodosToolCall` | `updateTodos` | `todowrite` |
+
+The event parser removes the `ToolCall` suffix and lowercases the first
+character. Alias resolution handles names that differ between runtimes.
+
+## Cursor-owned passthrough tools
+
+These observed events have no direct OpenCode equivalent:
+
+| Cursor event | Purpose |
+|---|---|
+| `semSearchToolCall` | Cursor semantic code search |
+| `webFetchToolCall` | Cursor web retrieval |
+| `readLintsToolCall` | Cursor editor and language-server diagnostics |
+
+The boundary leaves an unknown allowed name for Cursor rather than pretending
+OpenCode executed it. The loop guard treats the observed search and lint tools
+as successful when their output cannot be classified.
+
+## Names are a compatibility surface
+
+Cursor does not publish this stream event list as the plugin's stable API. The
+inventory came from the experiment harness and can change with the installed
+CLI build.
+
+When a new event appears:
+
+1. capture the raw stream event;
+2. decide whether OpenCode has an equivalent tool;
+3. add an alias only when the semantics match;
+4. add a loop-guard classification for a legitimate passthrough tool;
+5. keep the raw experiment as the runnable check.
+
+Blindly mapping a similar name is unsafe. Two tools can share a verb while
+differing on permissions, path scope, or argument meaning.
+
+## MCP tools are separate
+
+The plugin generates MCP names from server discovery:
+
+```text
+mcp__<server>__<tool>
+```
+
+Those are not part of the nine Cursor-native event types. They use the same
+provider boundary after registration, but their source and permission rules
+differ. See [MCP servers](/docs/guides/mcp-servers).
+
+## Experiment harness
+
+Run:
+
+```bash
+python tests/experiments/run_experiments.py
+```
+
+Raw NDJSON and per-experiment summaries live under
+`tests/experiments/results/` when the harness is run.

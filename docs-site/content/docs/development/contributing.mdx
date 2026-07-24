@@ -1,0 +1,69 @@
+---
+title: "Contributing"
+description: "Make a focused change, prove it at the right boundary, and keep the public surface coherent."
+---
+
+Start with a narrow problem and the layer that owns it. The codebase is easier
+to maintain when protocol translation, execution, and compatibility repair do
+not leak into each other.
+
+## Find the owning layer
+
+| Change | Start here |
+|---|---|
+| Plugin registration or model setup | `src/plugin.ts`, `src/plugin-entry.ts` |
+| Backend selection | `src/provider/` |
+| Stream or tool conversion | `src/proxy/`, `src/streaming/` |
+| MCP discovery and calls | `src/mcp/` |
+| CLI install or diagnostics | `src/cli/` |
+| Tests | matching path under `tests/unit/` or `tests/integration/` |
+
+Read [Architecture overview](/docs/architecture/overview) before moving a
+boundary. Existing compatibility behavior often has a regression test beside
+it.
+
+## Change discipline
+
+- Prefer the platform, standard library, or an installed dependency.
+- Avoid a new abstraction for one call site.
+- Keep trust-boundary validation and data-loss guards explicit.
+- Add one focused runnable check for non-trivial logic.
+- Preserve the default `opencode` tool loop unless the task is specifically
+  about legacy compatibility.
+
+If a deliberate simplification has a known ceiling, mark it with a
+`ponytail:` comment that names the ceiling and the upgrade path.
+
+## Local proof
+
+Run the focused test while editing:
+
+```bash
+bun test tests/unit/<area>.test.ts
+```
+
+Before handing off:
+
+```bash
+bun run build
+bun run test:ci:unit
+bun run test:ci:integration
+```
+
+Use `npm pack --dry-run` when changing exports, entry points, package files, or
+release behavior.
+
+## Documentation
+
+User-facing behavior belongs in the README or this site. Architecture details
+belong under the Architecture section. Local implementation plans and review
+handovers are not user documentation and should not be committed.
+
+When a configuration variable changes, update
+[Configuration](/docs/reference/configuration). The documentation check
+compares its `CURSOR_ACP_*` inventory with the source tree.
+
+Report bugs and propose changes in the
+[GitHub repository](https://github.com/Nomadcxx/opencode-cursor/issues). Include
+the plugin version, OpenCode version, `cursor-agent --version`, model ID, and a
+redacted debug log when the failure crosses the runtime boundary.

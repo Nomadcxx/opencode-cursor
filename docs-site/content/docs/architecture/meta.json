@@ -1,0 +1,4 @@
+{
+  "title": "Architecture",
+  "pages": ["overview", "stream-translation", "tool-loop", "acp-and-mcp", "cursor-agent-tools"]
+}

@@ -1,0 +1,60 @@
+---
+title: "Quick start"
+description: "Run a first prompt through cursor-acp and choose a Cursor model."
+---
+
+## Check the provider
+
+```bash
+opencode models | grep cursor-acp
+```
+
+If this prints no models, stop and follow
+[No cursor-acp models are listed](/docs/getting-started/troubleshooting#no-cursor-acp-models-are-listed).
+
+## Run a prompt
+
+```bash
+opencode run "Summarise this repository in five bullets." --model cursor-acp/auto
+```
+
+`cursor-acp/auto` asks Cursor to select the model. It is a model exposed by the
+Cursor runtime, not a local ranking performed by opencode-cursor.
+
+To select a model yourself, list the current IDs:
+
+```bash
+cursor-agent models
+```
+
+Then pass one of those IDs through the `cursor-acp` provider:
+
+```bash
+opencode run "Explain src/plugin.ts." --model cursor-acp/<model-id>
+```
+
+Model availability belongs to your Cursor account and can differ from the
+Cursor IDE. See [Choosing a model](/docs/guides/choosing-a-model).
+
+## Use the TUI
+
+Start OpenCode in your project:
+
+```bash
+opencode
+```
+
+Choose a `cursor-acp/*` model with OpenCode's model picker, then prompt as
+normal. OpenCode owns tool execution in the default tool-loop mode, so its
+permission rules still apply.
+
+## Check the runtime
+
+```bash
+open-cursor status
+open-cursor doctor
+```
+
+`status` reports the installed plugin, provider, model count, authentication
+sources, backend preference, session resume, agent pool, and logging settings.
+`doctor --deep` adds model and compact-variant checks.

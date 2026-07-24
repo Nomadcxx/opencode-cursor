@@ -1,0 +1,91 @@
+---
+title: "Tool loop"
+description: "Who executes tools, how calls cross the provider boundary, and where the safety limits sit."
+---
+
+The default is:
+
+```bash
+CURSOR_ACP_TOOL_LOOP_MODE=opencode
+CURSOR_ACP_PROVIDER_BOUNDARY=v1
+```
+
+## OpenCode mode
+
+OpenCode supplies its active tool schemas. The plugin preserves them, appends
+discovered MCP definitions, and sends the combined list to Cursor.
+
+When Cursor emits a tool event, the boundary:
+
+1. normalises names such as `shell` to `bash`;
+2. maps arguments to the offered OpenCode schema;
+3. validates the result;
+4. checks repeated-call fingerprints;
+5. returns an OpenAI-compatible tool call.
+
+OpenCode asks for permission, executes the tool, and includes the result in the
+next request.
+
+## Continuing after a tool
+
+The prompt builder turns prior OpenCode messages into the next Cursor prompt.
+A tool result keeps both identifiers:
+
+```text
+TOOL_RESULT (name: read, call_id: call_123): ...
+```
+
+Keeping the name and call ID helps Cursor connect the result with the call it
+made.
+
+## Strict JSON bridge
+
+Complete-file writes and Task delegation have a second path. The plugin asks
+Cursor to return one strict JSON envelope, then converts a valid whole response
+into an OpenCode tool call.
+
+The parser accepts a bare JSON object or one fenced JSON object. It rejects
+prose around the object and rejects incomplete arguments.
+
+Set `CURSOR_ACP_BRIDGE_JSON=false` to disable this prompt and parser.
+
+## Schema compatibility
+
+Cursor and OpenCode sometimes use different argument names. The boundary maps
+common aliases and handles specific edit and question shapes.
+
+The edit repair is narrow. A full-file-shaped edit can become a write only when
+the offered schemas and arguments support that conversion. An empty
+`old_string` is rejected rather than treated as permission to overwrite a
+file.
+
+## Loop guard
+
+The guard fingerprints tool name, arguments, and outcome class. It tracks
+validation failures, missing paths, permission failures, timeouts, tool errors,
+successful calls, and unknown output.
+
+The strict repeat limit defaults to 2. Exploratory tools receive larger
+derived limits for coarse fingerprints so reading several files does not look
+like a loop.
+
+## Legacy modes
+
+`proxy-exec` keeps the old internal executor chain for compatibility. New
+installations should not select it.
+
+`off` disables the tool loop.
+
+## Cursor-native side effects
+
+The Cursor subprocess may execute its own native tools before the plugin sees
+the event. Tests with `--sandbox enabled` did not stop native file edits.
+Plan mode prevented edits by changing Cursor into a planning workflow, which
+does not produce an OpenCode-executable edit.
+
+Treat the process boundary honestly: OpenCode permissions control tools that
+OpenCode executes. They cannot retroactively control a side effect already
+performed inside `cursor-agent`.
+
+Read [Permissions](/docs/guides/permissions) for the separate MCP and bash
+boundary.

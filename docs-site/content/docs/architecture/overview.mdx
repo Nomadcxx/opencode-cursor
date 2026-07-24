@@ -1,0 +1,83 @@
+---
+title: "Architecture overview"
+description: "How OpenCode requests cross the local proxy, Cursor runtime, and provider boundary."
+---
+
+opencode-cursor presents Cursor as an OpenAI-compatible provider. OpenCode
+keeps its normal model and tool-loop interface while the plugin translates the
+Cursor runtime protocol underneath it.
+
+```text
+OpenCode
+  │  OpenAI-compatible chat request
+  ▼
+local proxy on 127.0.0.1:32124
+  │
+  ├─ cursor-agent, default
+  └─ Cursor SDK runner, optional fallback
+       │
+       ▼
+    Cursor API
+       │  stream-json events
+       ▼
+provider boundary
+  ├─ assistant text and thinking → SSE
+  └─ tool calls → OpenCode tool calls
+```
+
+## Request lifecycle
+
+1. OpenCode sends messages, model options, and tool definitions to the
+   `cursor-acp` provider.
+2. The plugin resolves the workspace and concrete Cursor model.
+3. The local proxy selects `cursor-agent` or the SDK backend.
+4. Cursor emits newline-delimited stream events.
+5. The provider boundary translates text, thinking, usage, errors, and tool
+   calls into OpenAI-compatible responses.
+6. OpenCode renders text or executes an intercepted tool.
+7. The next request includes the tool result, which the prompt builder labels
+   with its tool name and call ID.
+
+## Why a proxy exists
+
+OpenCode expects an AI SDK provider. `cursor-agent` exposes a process and
+stream protocol instead. The proxy is the narrow point that converts between
+those contracts.
+
+It also gives both runtime backends one HTTP surface. `CURSOR_ACP_BACKEND=auto`
+prefers the installed CLI and uses the SDK only when the CLI is unavailable
+and a real API key exists.
+
+## Provider boundary
+
+The default `v1` boundary handles:
+
+- provider and model matching;
+- Cursor tool-name aliases;
+- argument repair against OpenCode schemas;
+- edit-to-write repair for a narrow full-file case;
+- repeated-call guards;
+- a controlled fallback to the legacy boundary.
+
+The compatibility boundary still exists for diagnosis. See
+[Configuration](/docs/reference/configuration#tool-loop-and-boundary).
+
+## Model mapping
+
+OpenCode addresses a model as `cursor-acp/<id>`. The boundary strips the
+provider prefix before calling Cursor.
+
+Compact variants can carry a separate `cursorModel` option. When present, that
+exact ID wins. This lets one OpenCode entry expose Cursor's thinking and fast
+variants without flattening every ID into the picker.
+
+## Ownership boundary
+
+OpenCode owns intercepted tool execution in the default loop. Cursor's process
+can still run Cursor-native tools inside its own agent flow. The plugin can
+translate events that reach the boundary; it cannot undo a file mutation that
+the child process already performed.
+
+The strict JSON write bridge reduces that risk for complete-file writes, but
+it is a steering mechanism rather than a sandbox. Read
+[Tool loop](/docs/architecture/tool-loop) for the exact modes and limits.

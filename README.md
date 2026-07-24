@@ -8,6 +8,9 @@
   <img src="https://img.shields.io/badge/linux%20%C2%B7%20macos%20%C2%B7%20windows-555?style=flat-square&labelColor=333" alt="linux, macos, windows">
 </p>
 
+<p align="center">
+  <a href="https://nomadcxx.github.io/opencode-cursor/">Documentation</a>
+</p>
 
 ## Installation
 

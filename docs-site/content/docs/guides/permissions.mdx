@@ -1,0 +1,116 @@
+---
+title: "Permissions"
+description: "Keep MCP and shell access inside the approval boundaries you intended."
+---
+
+The important boundary is simple: OpenCode checks the tool call it receives.
+
+A direct call such as `mcp__filesystem__read_file` can use a permission rule
+for that namespaced tool. A manual or fallback call such as
+`mcptool call filesystem read_file ...` is a `bash` command, so the `bash`
+rules decide whether it runs.
+
+## Why broad bash access matters
+
+This configuration allows every shell command:
+
+```json
+{
+  "permission": {
+    "bash": {
+      "*": "allow"
+    }
+  }
+}
+```
+
+That includes `mcptool call ...`. An MCP-specific `ask` rule cannot intercept
+a call that OpenCode sees only as bash.
+
+This caused [issue #74](https://github.com/Nomadcxx/opencode-cursor/issues/74).
+The reporter was right to treat it as a permission surprise.
+
+## Recommended baseline
+
+Keep shell commands on `ask` and set the direct MCP namespace explicitly:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "*": "ask",
+    "bash": "ask",
+    "mcp__*": "ask"
+  }
+}
+```
+
+Change a specific namespaced tool to `allow` only after checking what it can
+read, write, or execute.
+
+Permission keys match the underlying custom tool name, so you can target a
+server:
+
+```json
+{
+  "permission": {
+    "mcp__filesystem__*": "ask",
+    "mcp__filesystem__write_file": "deny"
+  }
+}
+```
+
+OpenCode documents this wildcard behavior in its
+[permissions reference](https://opencode.ai/docs/permissions).
+
+## Keep broad bash, but gate mcptool
+
+If your workflow requires broad shell access, put the catch-all first and the
+specific rule after it:
+
+```json
+{
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "mcptool call *": "ask"
+    },
+    "mcp__*": "ask"
+  }
+}
+```
+
+OpenCode evaluates matching patterns in order and the last match wins. The
+second bash rule restores confirmation for `mcptool call ...`.
+
+Use `deny` instead of `ask` if shell-mediated MCP calls should never run:
+
+```json
+{
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "mcptool call *": "deny"
+    }
+  }
+}
+```
+
+## Auto mode
+
+`opencode --auto` approves requests that would otherwise ask. Explicit deny
+rules still apply. Use `deny` for a boundary that must hold in auto mode.
+
+## What the plugin changed
+
+Current releases register discovered MCP tools under exact `mcp__...` names
+and tell Cursor models to use those names. This reduces reliance on the shell
+bridge and lets OpenCode see the tool call.
+
+The `mcptool` CLI remains available for manual calls and compatibility.
+Because that path is still shell-mediated, the bash rule above remains
+necessary.
+
+Disable all bridge discovery with
+[`CURSOR_ACP_MCP_BRIDGE=false`](/docs/reference/configuration#mcp-and-opencode-tools).
+That does not change the general power of a broadly allowed shell.

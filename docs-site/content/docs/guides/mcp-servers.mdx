@@ -1,0 +1,102 @@
+---
+title: "MCP servers"
+description: "Expose local OpenCode MCP servers to Cursor models through namespaced tools."
+---
+
+opencode-cursor reads the `mcp` section from the same `opencode.json` used by
+OpenCode. It connects enabled local servers, discovers their tools, and
+registers each tool under an exact name:
+
+```text
+mcp__<server>__<tool>
+```
+
+Hyphens and other punctuation become underscores. A server named
+`hybrid-memory` with a tool named `memory-search` becomes
+`mcp__hybrid_memory__memory_search`.
+
+## Worked local server
+
+Add the MCP reference server to `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "mcp_everything": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-everything"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
+This is the test-server example used in
+[OpenCode's MCP documentation](https://opencode.ai/docs/mcp-servers/).
+
+Restart OpenCode after changing the server list. Check what the bridge sees:
+
+```bash
+mcptool servers
+mcptool tools mcp_everything
+```
+
+Then ask the model:
+
+```text
+Use the mcp_everything add tool to add 3 and 4.
+```
+
+The system message gives the model the full namespaced tool name and input
+schema. OpenCode executes the resulting tool call.
+
+## Manual calls
+
+`mcptool` uses the same server configuration:
+
+```bash
+mcptool servers
+mcptool tools [server]
+mcptool call <server> <tool> '{"key":"value"}'
+```
+
+This is useful for separating a server problem from model tool selection. If a
+manual call fails, fix the server command or arguments before debugging the
+model.
+
+## Local configuration fields
+
+The bridge reads:
+
+| Field | Meaning |
+|---|---|
+| `type` | Must be `local`. |
+| `command` | Executable and arguments as an array. |
+| `environment` | String environment variables passed to the server. |
+| `enabled` | Set `false` to skip the server. |
+| `timeout` | Stored from config; individual client operations currently use the MCP SDK behavior. |
+
+## Current limits
+
+- The built-in bridge implements local stdio transport. It parses remote
+  entries but does not connect them.
+- Server names and tool names are sanitised for OpenAI-compatible tool names.
+- Duplicate names after sanitising are skipped.
+- A server that fails during startup does not block the plugin. Its tools stay
+  absent.
+- Large MCP servers add every discovered schema to the request. Disable
+  servers you do not need.
+
+Set `CURSOR_ACP_MCP_BRIDGE=false` to disable bridge discovery. See
+[Configuration](/docs/reference/configuration#mcp-and-opencode-tools).
+
+## Permissions
+
+Direct namespaced calls and shell calls do not share the same permission key.
+Read [Permissions](/docs/guides/permissions) before allowing
+`mcptool call *` through `bash`.

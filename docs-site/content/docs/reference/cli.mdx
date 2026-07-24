@@ -1,0 +1,89 @@
+---
+title: "CLI reference"
+description: "Commands and flags provided by the open-cursor executable."
+---
+
+The npm package installs `open-cursor`.
+
+```bash
+open-cursor help
+```
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `open-cursor install` | Installs or updates the plugin entry and `cursor-acp` provider, then syncs models. Safe to run again. |
+| `open-cursor sync-models` | Reads `cursor-agent models` and updates provider model entries. |
+| `open-cursor models` | Reports discovered direct models and grouped variants. |
+| `open-cursor status` | Prints install, provider, authentication, backend, pool, resume, and logging state. |
+| `open-cursor doctor` | Checks the runtime and reports repair commands. |
+| `open-cursor uninstall` | Removes the plugin entry and provider configuration. |
+| `open-cursor help` | Prints command and option help. |
+
+## Common install options
+
+| Flag | Meaning |
+|---|---|
+| `--config <path>` | Use a specific `opencode.json`. |
+| `--plugin-dir <path>` | Use a specific OpenCode plugin directory. |
+| `--base-url <url>` | Set the provider proxy URL. Default: `http://127.0.0.1:32124/v1`. |
+| `--copy` | Copy the plugin entry instead of creating a symlink. |
+| `--skip-models` | Install without synchronising models. |
+| `--dry-run` | Show install or sync changes without writing files. |
+| `--no-backup` | Skip the timestamped configuration backup. |
+
+## Optional Cursor bridge
+
+`open-cursor install` does not write `.cursor` files unless you ask for them.
+
+| Flag | Meaning |
+|---|---|
+| `--install-cursor-bridge` | Write the optional Cursor hook, script, and rule. |
+| `--cursor-bridge-scope <scope>` | Select `project`, `user`, or `both`; implies bridge installation. |
+| `--skip-cursor-bridge` | Legacy no-op retained for compatibility. |
+
+Project is the default scope:
+
+```bash
+open-cursor install --install-cursor-bridge
+```
+
+Install under the user home instead:
+
+```bash
+open-cursor install --cursor-bridge-scope user
+```
+
+## Model synchronisation
+
+```bash
+open-cursor sync-models
+```
+
+| Flag | Meaning |
+|---|---|
+| `--variants` | Group related Cursor models under OpenCode variants. |
+| `--compact` | Remove the corresponding flat entries; requires `--variants`. |
+| `--json` | Print machine-readable output where supported. |
+| `--dry-run` | Report the changes without writing configuration. |
+
+Inspect the grouping before changing configuration:
+
+```bash
+open-cursor models --explain
+```
+
+## Diagnosis
+
+```bash
+open-cursor status
+open-cursor doctor
+open-cursor doctor --deep
+```
+
+`--deep` checks the provider base URL, configured models, compact variants, and
+Cursor model discovery. Add `--json` where you need structured output.
+
+See [Installation](/docs/getting-started/installation) for the normal path and
+[`opencode.json`](/docs/reference/opencode-json) for the written structure.

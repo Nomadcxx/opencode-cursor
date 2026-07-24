@@ -1,0 +1,60 @@
+---
+title: "Roadmap"
+description: "What is stable, what remains compatibility code, and what needs revalidation."
+---
+
+The project has moved from proving the Cursor connection to tightening the
+boundary around tools, sessions, and maintainability.
+
+## Current state
+
+| Area | State | Evidence in the current tree |
+|---|---|---|
+| Provider stability | Shipped | Provider-boundary tests cover streaming, schema repair, model matching, and fallback |
+| Direct MCP bridge | Shipped for local stdio | MCP servers become namespaced OpenCode tools; remote transport is not implemented |
+| Session resume | Available, opt-in | In-memory cache with TTL, LRU, content-prefix, and tool-fingerprint checks |
+| OpenCode Task bridge | Available | Strict JSON envelope routes delegation to OpenCode's `task` tool |
+| Runtime simplification | In progress | The default is `opencode`, but legacy `proxy-exec` code and settings remain |
+| Native ACP plus MCP | Deferred | Upstream ACP work has changed; the Cursor-specific ownership and approval boundary needs a fresh end-to-end check |
+
+## Near-term work
+
+### Remove legacy proxy execution
+
+The normal architecture lets OpenCode execute intercepted tools. Removing the
+remaining `proxy-exec` path would reduce duplicate executors, settings, and
+tests. Until that removal lands, keep
+`CURSOR_ACP_TOOL_LOOP_MODE=opencode`.
+
+### Harden MCP behavior
+
+Local stdio servers are the supported path today. Remaining work includes a
+clear policy for remote transports, startup failures, duplicate sanitised
+names, timeouts, and permission reporting.
+
+### Revalidate native ACP
+
+OpenCode's ACP implementation has changed since the original investigation.
+A new experiment must answer four Cursor-specific questions before the
+architecture should move:
+
+1. Does Cursor receive the exact OpenCode tool schemas?
+2. Does OpenCode, rather than Cursor, execute every intercepted mutation?
+3. Do permission prompts appear before execution?
+4. Can MCP tools use the same path without shell indirection?
+
+An upstream issue closing is useful evidence, but it does not prove those
+properties for this plugin.
+
+## Non-goals
+
+The roadmap does not promise parity with the Cursor IDE model picker. The
+source of truth is the active Cursor runtime, normally `cursor-agent models`.
+
+It also does not aim to hide the tool-ownership boundary. If a Cursor-native
+runtime tool mutates the workspace before OpenCode sees an event, a provider
+translator cannot retroactively apply an OpenCode permission.
+
+Use [Architecture overview](/docs/architecture/overview) for the current
+system and [ACP and MCP](/docs/architecture/acp-and-mcp) for the protocol
+decision record.

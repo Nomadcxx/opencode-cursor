@@ -1,0 +1,90 @@
+---
+title: "Choosing a model"
+description: "Use Cursor's CLI model list, understand Auto, and keep model cost data current."
+---
+
+## Start with the CLI list
+
+```bash
+cursor-agent models
+```
+
+This output is the source of truth for the default backend. If an ID is absent,
+opencode-cursor cannot route a request to it.
+
+A model shown in the Cursor IDE may still be absent from the CLI. Cursor gates
+the two surfaces per account and plan. Adding an unlisted ID to
+`opencode.json` does not make the CLI accept it.
+
+Refresh OpenCode after Cursor changes the list:
+
+```bash
+open-cursor sync-models
+opencode models | grep cursor-acp
+```
+
+## Auto
+
+`cursor-acp/auto` sends Cursor's `auto` model ID. Cursor chooses the model.
+opencode-cursor does not rank the installed models or rewrite `auto` to a
+specific provider ID.
+
+Use Auto when you do not need a repeatable model choice. Select an explicit ID
+for debugging, comparisons, or work that depends on a known context or
+reasoning profile.
+
+## Composer and frontier models
+
+Composer is Cursor's coding model family. It is a sensible first explicit
+choice for routine repository work because it is designed for that workload.
+A frontier model may fit a hard reasoning task better, but availability and
+cost differ by account.
+
+Do not infer quality from the longest model name. Test the same representative
+task, then keep the cheapest model that meets the requirement.
+
+## Thinking and fast variants
+
+The CLI may expose related IDs such as thinking, fast, low, or high variants.
+Keep the flat list:
+
+```bash
+open-cursor sync-models
+```
+
+Or group related IDs under OpenCode variants:
+
+```bash
+open-cursor sync-models --variants --compact
+open-cursor models --explain
+```
+
+Each grouped entry keeps the exact Cursor ID in `cursorModel`. See
+[`opencode.json`](/docs/reference/opencode-json#compact-variants).
+
+## Cost
+
+The sync command attaches known prices from the package pricing table so
+OpenCode can display usage. Pricing changes independently of the plugin. Check
+[Cursor's model and pricing documentation](https://cursor.com/docs/models-and-pricing)
+before making a cost-sensitive choice.
+
+Repository maintainers can validate coverage with:
+
+```bash
+bun run check:pricing
+```
+
+An unknown price stays absent. The plugin does not invent a value.
+
+## A configured model gives no response
+
+Run:
+
+```bash
+cursor-agent models
+```
+
+If the model is absent, remove the hand-written entry and sync the current
+list. If it is present but still produces no response, capture a debug log and
+follow [Troubleshooting](/docs/getting-started/troubleshooting#the-response-is-empty).

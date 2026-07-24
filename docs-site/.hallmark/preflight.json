@@ -1,0 +1,43 @@
+{
+  "date": "2026-07-25",
+  "scope": "app",
+  "framework": "Next.js 16.2.10",
+  "ui": "Fumadocs 16.11.4 with Tailwind CSS 4.3.2",
+  "routes": {
+    "root": "redirects to /docs",
+    "docs": "one dynamic static-export route backed by 24 MDX pages",
+    "search": "static Orama endpoint",
+    "llms": "llms.txt, llms-full.txt, and per-page markdown exports"
+  },
+  "page_families": {
+    "home": "documentation index and start paths",
+    "getting_started": "four task-oriented onboarding pages",
+    "guides": "five operational guides",
+    "reference": "five dense lookup pages",
+    "architecture": "five explanatory long documents",
+    "development": "four contributor and release pages"
+  },
+  "existing_assets": [
+    "public/occ-mark.svg",
+    "public/banner.svg"
+  ],
+  "fonts": [
+    "IBM Plex Sans Variable",
+    "Fira Code"
+  ],
+  "brand_colors": [
+    "#37f499",
+    "#04d1f9",
+    "#a48cf2",
+    "#212337"
+  ],
+  "existing_stamp": "Long Document, technical utilitarian, Eldritch green",
+  "audit": "../../docs/reviews/2026-07-25-docs-hallmark-audit.md",
+  "constraints": [
+    "preserve every route and the static export",
+    "no new dependency",
+    "keep Fumadocs search and page tools",
+    "support 320, 375, 414, 768, and desktop",
+    "do not delete the existing identity assets"
+  ]
+}

@@ -1,0 +1,142 @@
+---
+title: "Installation"
+description: "Install opencode-cursor and add the cursor-acp provider to OpenCode."
+---
+
+## Before you start
+
+You need OpenCode, a Cursor subscription, and the `cursor-agent` command.
+Confirm both commands resolve before installing the plugin:
+
+```bash
+opencode --version
+cursor-agent --version
+```
+
+## Install with npm
+
+This is the normal path on Linux, macOS, and Windows:
+
+```bash
+npm install -g @rama_nigg/open-cursor
+open-cursor install
+```
+
+The installer:
+
+- adds the `cursor-acp` provider to your OpenCode configuration;
+- installs the plugin entry under the OpenCode plugin directory;
+- discovers the models exposed by `cursor-agent`;
+- installs the OpenAI-compatible provider package used by OpenCode.
+
+It backs up an existing configuration before writing unless you pass
+`--no-backup`.
+
+The default configuration lives at:
+
+- Linux and macOS: `~/.config/opencode/opencode.json`
+- Windows: `%USERPROFILE%\.config\opencode\opencode.json`
+
+Pass `--config <path>` if your configuration lives elsewhere.
+
+## Cursor bridge files are optional
+
+The normal install does not touch `.cursor`.
+
+Run this from a workspace if you want the optional hook and rule that expose
+OpenCode context inside Cursor:
+
+```bash
+open-cursor install --install-cursor-bridge
+```
+
+That writes:
+
+```text
+.cursor/hooks.json
+.cursor/hooks/opencode-bridge-context.mjs
+.cursor/rules/opencode-bridge.mdc
+```
+
+Use `--cursor-bridge-scope user` to write under `~/.cursor`, or `both` to
+install the project and user copies. The scope flag implies
+`--install-cursor-bridge`.
+
+## Authenticate and verify
+
+```bash
+cursor-agent login
+opencode models | grep cursor-acp
+```
+
+If the second command prints at least `cursor-acp/auto`, continue to
+[Quick start](/docs/getting-started/quick-start).
+
+## Shell installer
+
+The shell installer supports Linux and macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/install.sh | bash
+```
+
+It prefers the npm package. If npm is unavailable, it falls back to the Go TUI
+or the shell-only installer path.
+
+## Manual OpenCode configuration
+
+Add this to your OpenCode configuration if you do not want to run the
+installer:
+
+```json
+{
+  "plugin": ["@rama_nigg/open-cursor@latest"],
+  "provider": {
+    "cursor-acp": {
+      "name": "Cursor ACP",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:32124/v1"
+      },
+      "models": {
+        "cursor-acp/auto": {
+          "name": "Auto"
+        }
+      }
+    }
+  }
+}
+```
+
+Manual configuration does not install the optional Cursor bridge files.
+
+## Upgrade
+
+```bash
+npm update -g @rama_nigg/open-cursor
+```
+
+Restart OpenCode after updating. The running plugin process does not replace
+itself.
+
+Refresh the model list when Cursor adds or removes models:
+
+```bash
+open-cursor sync-models
+```
+
+Use `open-cursor sync-models --variants --compact` if you want grouped thinking
+and fast variants instead of one long flat list.
+
+## Install from source
+
+Use this path when developing the plugin:
+
+```bash
+git clone https://github.com/Nomadcxx/opencode-cursor.git
+cd opencode-cursor
+./scripts/install-plugin.sh
+```
+
+See [Building from source](/docs/development/building) for the development
+workflow.

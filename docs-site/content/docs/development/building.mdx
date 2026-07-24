@@ -1,0 +1,76 @@
+---
+title: "Building"
+description: "Build and install opencode-cursor from a local checkout."
+---
+
+The source build uses Bun and emits the plugin, library, and CLI entry points
+into `dist/`.
+
+## Prerequisites
+
+- Git
+- Bun
+- Node.js 20 or newer
+- `cursor-agent` for an end-to-end local run
+
+Clone and build:
+
+```bash
+git clone https://github.com/Nomadcxx/opencode-cursor.git
+cd opencode-cursor
+bun install
+bun run build
+```
+
+The build produces:
+
+```text
+dist/plugin-entry.js       OpenCode plugin default export
+dist/index.js              library API
+dist/cli/opencode-cursor.js
+dist/cli/discover.js
+dist/cli/mcptool.js
+```
+
+`plugin-entry.js` intentionally exposes only the default plugin export.
+Consumers that need the library surface use the package's `./lib` subpath.
+
+## Install the checkout
+
+The repository script installs dependencies, builds, and links the entry point
+into OpenCode's plugin directory:
+
+```bash
+./scripts/install-plugin.sh
+```
+
+It creates:
+
+```text
+~/.config/opencode/plugin/cursor-acp.js
+  → <checkout>/dist/plugin-entry.js
+```
+
+Add `cursor-acp` to the `plugin` array in `opencode.json` if it is not already
+present, then verify:
+
+```bash
+opencode models | grep cursor-acp
+```
+
+Because this is a symlink install, rebuilding the checkout updates the file
+OpenCode loads. Restart OpenCode after a build so the plugin process is fresh.
+
+## Watch mode
+
+For TypeScript changes:
+
+```bash
+bun run dev
+```
+
+The watcher rebuilds output but does not restart OpenCode. Keep runtime
+restarts explicit so an old child process cannot disguise which code is under
+test.
+
+Read [Testing](/docs/development/testing) before submitting a change.

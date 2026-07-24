@@ -1,0 +1,68 @@
+---
+title: "Releasing"
+description: "Validate, version, tag, publish, and verify the npm package."
+---
+
+Publishing is tag-driven. A merge to `main` does not publish the npm package.
+Documentation-only and internal refactors do not need a package release.
+
+## Before the version bump
+
+Run:
+
+```bash
+bun install
+bun run build
+bun run test:ci:unit
+bun run test:ci:integration
+npm pack --dry-run
+npm view @rama_nigg/open-cursor version
+```
+
+Inspect the dry-run file list. The package should contain the built output,
+source, and the two runner scripts declared in `package.json`.
+
+## Version and tag
+
+Choose the semver increment, then:
+
+```bash
+npm version patch
+git add package.json package-lock.json
+git commit --no-verify -m "chore: bump version to X.Y.Z"
+git push origin main
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+Replace `patch` with `minor` or `major` when the change requires it. Confirm
+that the tag and `package.json` contain the same version before pushing.
+
+## Publish workflow
+
+A pushed `v*` tag runs `.github/workflows/publish.yml`. The workflow:
+
+1. checks that the tag matches `package.json`;
+2. installs with Bun;
+3. builds and runs the canonical unit suite;
+4. runs `npm pack --dry-run`;
+5. publishes publicly through npm trusted publishing;
+6. creates a GitHub release from the tag.
+
+Integration tests run on pushes to `main` and are deliberately not repeated in
+the publish job.
+
+The workflow can also be started manually. Its default is a dry run; publishing
+requires setting `dry_run` to `false`.
+
+## Verify the release
+
+After the workflow succeeds:
+
+```bash
+npm view @rama_nigg/open-cursor version
+npm install -g @rama_nigg/open-cursor@latest
+open-cursor doctor
+```
+
+Do not report a release complete until the registry returns the new version.

@@ -1,0 +1,82 @@
+---
+title: "Stream translation"
+description: "How cursor-agent deltas and snapshots become non-duplicated OpenAI SSE chunks."
+---
+
+`cursor-agent --output-format stream-json` writes one JSON object per line.
+OpenCode expects OpenAI-compatible server-sent events. The proxy parses each
+line, classifies the event, and emits the corresponding SSE chunk.
+
+## The mixed stream
+
+Cursor output can contain both:
+
+- raw partial deltas, where each event contains only new text;
+- accumulated snapshots, where each event repeats everything produced so far.
+
+Treating every event as a delta duplicates snapshots. Treating every event as
+a snapshot drops real deltas. `MixedDeltaTracker` handles both in one stream.
+
+## Delta detection
+
+Current Cursor events give the parser a practical signal:
+
+- a timestamped event without `model_call_id` is treated as a partial delta;
+- an event carrying `model_call_id` is treated as an accumulated snapshot,
+  even when its subtype says `delta`.
+
+This is based on observed `cursor-agent` output. It can change when Cursor
+changes the protocol, which is why the parser keeps tests for mixed event
+shapes.
+
+## Snapshot reconciliation
+
+For a snapshot, the tracker compares it with text already emitted:
+
+1. If the snapshot starts with the emitted text, emit only the new suffix.
+2. If the emitted text starts with the snapshot, emit nothing. This covers a
+   duplicate or shorter snapshot.
+3. If neither is a prefix, emit the current snapshot. This preserves content
+   after an unexpected rewrite instead of guessing an overlap.
+
+Text and thinking use separate buffers. A tool-call start resets both because
+the next assistant phase is a new stream segment.
+
+## SSE output
+
+Text becomes:
+
+```json
+{
+  "choices": [
+    {
+      "delta": {
+        "content": "new text"
+      }
+    }
+  ]
+}
+```
+
+Thinking uses `reasoning_content`. Tool events become OpenAI `tool_calls` with
+the Cursor call ID, normalised name, and JSON arguments.
+
+The final result event may add token usage. When Cursor omits usage, the proxy
+omits it too rather than inventing zeros.
+
+## Malformed lines
+
+Blank or non-object lines are ignored. Invalid JSON is logged at debug level
+with a short prefix and does not crash the whole stream.
+
+A cut-off response needs the raw debug log because the failure can sit in four
+places: the Cursor process, NDJSON parsing, event reconciliation, or the SSE
+consumer. See [Troubleshooting](/docs/getting-started/troubleshooting#the-stream-stops-part-way-through).
+
+## Relevant source
+
+- `src/streaming/parser.ts`
+- `src/streaming/types.ts`
+- `src/streaming/delta-tracker.ts`
+- `src/streaming/openai-sse.ts`
+- `src/streaming/ai-sdk-parts.ts`

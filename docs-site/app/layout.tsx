@@ -1,5 +1,5 @@
 import { Provider } from '@/components/provider';
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './global.css';
 
 export const metadata: Metadata = {
@@ -9,7 +9,14 @@ export const metadata: Metadata = {
     template: '%s | opencode-cursor',
   },
   description: 'Documentation for using Cursor models through OpenCode.',
-  icons: { icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/occ-mark.svg` },
+  icons: { icon: `${process.env.NEXT_PUBLIC_BASE_PATH ?? ''}/occ-compact.svg` },
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  colorScheme: 'dark',
 };
 
 export default function Layout({ children }: LayoutProps<'/'>) {

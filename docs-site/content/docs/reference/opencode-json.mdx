@@ -1,0 +1,120 @@
+---
+title: "opencode.json"
+description: "The provider, plugin, model, variant, and cost entries used by cursor-acp."
+---
+
+`open-cursor install` preserves unrelated OpenCode configuration. It adds a
+plugin entry and a `cursor-acp` provider.
+
+## Minimal provider
+
+```json
+{
+  "plugin": ["cursor-acp"],
+  "provider": {
+    "cursor-acp": {
+      "name": "Cursor",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "http://127.0.0.1:32124/v1"
+      },
+      "models": {
+        "auto": {
+          "name": "Auto"
+        }
+      }
+    }
+  }
+}
+```
+
+An npm-direct setup may use
+`"@rama_nigg/open-cursor@latest"` in the plugin array. The installed CLI uses
+`"cursor-acp"` because it writes a plugin entry into OpenCode's plugin
+directory.
+
+## Provider fields
+
+| Field | Purpose |
+|---|---|
+| `name` | Label shown by OpenCode. |
+| `npm` | Uses OpenCode's OpenAI-compatible provider adapter. |
+| `options.baseURL` | Points requests at the local proxy. |
+| `options.apiKey` | Optional real Cursor API key for SDK authentication. |
+| `models` | IDs that OpenCode exposes under the `cursor-acp` provider. |
+
+The CLI preserves existing provider options and model entries when it updates
+the required fields.
+
+## Direct model entries
+
+`open-cursor sync-models` reads the IDs returned by `cursor-agent models`:
+
+```json
+{
+  "models": {
+    "auto": {
+      "name": "Auto"
+    },
+    "sonnet-4.6": {
+      "name": "Claude 4.6 Sonnet"
+    }
+  }
+}
+```
+
+OpenCode addresses these as `cursor-acp/auto` and
+`cursor-acp/sonnet-4.6`.
+
+If Cursor model discovery fails during an explicit sync, the CLI warns and
+uses its packaged fallback list. Plugin startup refresh is quieter: it skips a
+failed discovery rather than blocking startup.
+
+## Compact variants
+
+Run:
+
+```bash
+open-cursor sync-models --variants --compact
+```
+
+Related Cursor IDs become variants under one base entry:
+
+```json
+{
+  "models": {
+    "sonnet-4.6": {
+      "name": "Claude 4.6 Sonnet",
+      "options": {
+        "cursorModel": "sonnet-4.6"
+      },
+      "variants": {
+        "thinking": {
+          "cursorModel": "sonnet-4.6-thinking"
+        }
+      }
+    }
+  }
+}
+```
+
+The `cursorModel` field carries the exact ID sent to Cursor. The grouping code
+keeps direct entries when a model does not belong to a multi-member family.
+
+## Cost fields
+
+The sync command adds known Cursor pricing data to direct or variant entries.
+The values come from the package pricing table. Run the repository's
+`check:pricing` script before changing that table. Leave an unknown price
+absent rather than guessing.
+
+## Backups
+
+Before writing an existing configuration, the CLI creates:
+
+```text
+opencode.json.bak.<timestamp>
+```
+
+Pass `--no-backup` only when another system already provides a recoverable
+copy.

@@ -1,0 +1,64 @@
+---
+title: "Testing"
+description: "Run the focused, CI, integration, and packaging checks used by the project."
+---
+
+Build first, then run the smallest check that covers the change.
+
+```bash
+bun run build
+bun test tests/unit/proxy/session-resume.test.ts
+```
+
+The project uses Bun's built-in test runner. Focused tests are the fastest way
+to iterate, but the canonical CI suites remain the final check.
+
+## Test commands
+
+| Command | Scope |
+|---|---|
+| `bun test` | All tests discovered by Bun |
+| `bun run test:unit` | Unit directory with isolation |
+| `bun run test:integration` | Integration directory |
+| `bun run test:perf` | Selected parser, prompt, process, and round-trip performance tests |
+| `bun run test:ci:unit` | Exact unit, tools, and competitive smoke set used by CI |
+| `bun run test:ci:integration` | Exact integration set used by CI |
+| `bun run check:pricing:fixture` | Pricing coverage against the checked-in fixture |
+
+Use the CI commands before a release:
+
+```bash
+bun run build
+bun run test:ci:unit
+bun run test:ci:integration
+npm pack --dry-run
+```
+
+The unit CI command lists files explicitly and uses isolation where needed.
+Do not replace it with a shorter command in release notes unless the workflow
+changes too.
+
+## Testing a boundary change
+
+For stream or tool work, cover the smallest layer first:
+
+```text
+stream parser
+  → provider boundary conversion
+  → proxy integration
+  → OpenCode loop integration
+```
+
+A parser test should prove event handling without starting the proxy. An
+integration test should prove the contracts between layers, not repeat every
+parser case.
+
+For runtime diagnosis, enable logs on one manual request:
+
+```bash
+CURSOR_ACP_LOG_LEVEL=debug CURSOR_ACP_LOG_CONSOLE=1 \
+  opencode run "reply with ok" --model cursor-acp/auto
+```
+
+Do not put live credentials or account-dependent model names into committed
+tests. Use fixtures for deterministic protocol coverage.

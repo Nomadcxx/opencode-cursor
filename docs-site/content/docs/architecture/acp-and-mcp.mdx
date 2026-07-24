@@ -1,0 +1,80 @@
+---
+title: "ACP and MCP"
+description: "Why the current bridge remains in production and what must change before a thin ACP path replaces it."
+---
+
+The long-term shape is:
+
+```text
+OpenCode → Cursor ACP → MCP servers
+```
+
+The production path remains:
+
+```text
+OpenCode → local HTTP proxy → cursor-agent or SDK
+         ↘ OpenCode-owned tools and local MCP bridge
+```
+
+## What ACP improves
+
+Cursor ships an ACP agent for editors such as Zed and JetBrains. ACP gives the
+host structured sessions and updates instead of the current NDJSON-to-SSE
+translation.
+
+A thin ACP plugin could remove much of the proxy, stream parser, alias map, and
+compatibility layer.
+
+## Why transport is not enough
+
+Local tests found that Cursor's ACP agent still owns its file tools. It emitted
+structured update events and changed files itself. Advertising client
+filesystem capabilities did not hand execution back to the host.
+
+Plan mode left files unchanged, but returned a plan workflow instead of a tool
+call OpenCode could execute.
+
+The same ownership problem appears in the print-mode CLI. ACP cleans up the
+transport without deciding who reads, writes, asks for permission, and
+continues after a tool result.
+
+## MCP status
+
+Cursor's ACP path has accepted MCP server declarations, but connection and
+headless approval behavior have changed between CLI builds. The project has
+not completed a fresh local approval test on the current build.
+
+OpenCode's broad MCP capability tracker
+[#28567](https://github.com/anomalyco/opencode/issues/28567) closed on
+2026-07-08 after a major implementation pass. That removes one stale warning
+from the older design note. It does not prove that Cursor ACP now hands tool
+ownership or approval back to OpenCode.
+
+The production bridge therefore keeps local stdio MCP discovery and exact
+`mcp__<server>__<tool>` calls. See [MCP servers](/docs/guides/mcp-servers).
+
+## Decision gate
+
+Revisit the ACP path when one of these becomes true:
+
+1. Cursor routes file operations through ACP client capabilities and permission
+   requests.
+2. OpenCode accepts a provider session where the remote agent owns tools,
+   permissions, and side effects as an explicit product mode.
+
+Then re-test:
+
+- `session/new` with a local MCP server;
+- headless MCP approval and rejection;
+- file read and write ownership;
+- session resume after restart;
+- cancellation and error propagation;
+- authentication without an interactive Cursor UI.
+
+Until those checks pass on a named Cursor build, ACP stays a research path.
+
+## Keep the branches separate
+
+ACP work should not grow inside `src/proxy/`. A successful ACP implementation
+replaces that translation layer. Porting the whole proxy into a new transport
+would keep the maintenance burden and add another protocol.

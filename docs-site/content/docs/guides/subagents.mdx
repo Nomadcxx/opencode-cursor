@@ -1,0 +1,72 @@
+---
+title: "Subagents"
+description: "Delegate through OpenCode's Task tool without crossing into Cursor's separate agent catalog."
+---
+
+OpenCode and Cursor each have their own idea of a subagent. opencode-cursor
+keeps those catalogs separate: delegation from a Cursor model goes back
+through OpenCode's `task` tool.
+
+This matters because the names visible in OpenCode are not guaranteed to match
+Cursor's built-in Task tool.
+
+## Requirements
+
+The bridge activates only when OpenCode offers a tool named `task` and
+`CURSOR_ACP_BRIDGE_JSON` is enabled. It copies OpenCode's Task description and
+schema into the request so the model sees the currently allowed
+`subagent_type` values.
+
+The default bridge setting is enabled. To disable it:
+
+```bash
+export CURSOR_ACP_BRIDGE_JSON=false
+```
+
+## Bridge envelope
+
+For Task calls, the model is instructed to emit one JSON object:
+
+```json
+{
+  "name": "task",
+  "arguments": {
+    "description": "inspect stream parser",
+    "prompt": "Trace how snapshot events become text deltas and report the edge cases.",
+    "subagent_type": "explore"
+  }
+}
+```
+
+The valid `subagent_type` comes from the Task description in the active
+OpenCode session. Do not copy a name from Cursor's own agent picker.
+
+The bridge requires non-empty `description`, `prompt`, and `subagent_type`
+strings. Optional `task_id` and `command` fields must also be strings. Invalid
+envelopes stay as assistant text instead of becoming a tool call.
+
+## Execution boundary
+
+The sequence is:
+
+```text
+Cursor model
+  → strict Task JSON envelope
+  → opencode-cursor validates and converts it
+  → OpenCode executes task
+  → tool result returns on the next model request
+```
+
+OpenCode therefore keeps control of the Task tool and its permissions. The
+bridge does not invoke Cursor's built-in Task tool.
+
+## Resume interaction
+
+The Task schema participates in the
+[session-resume](/docs/guides/session-resume) fingerprint. If the available
+OpenCode agents change between turns, the old resume entry is rejected rather
+than sending stale subagent metadata.
+
+If a Task call appears as raw JSON, confirm that OpenCode exposed `task`, the
+requested subagent name is in its description, and
+`CURSOR_ACP_BRIDGE_JSON` has not been disabled.

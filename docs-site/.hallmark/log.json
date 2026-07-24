@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-07-25",
+    "scope": "app",
+    "macrostructure": "Index-First home, Long Document content, workbench shell",
+    "genre": "modern-minimal",
+    "theme": "custom Eldritch OKLCH",
+    "theme_axes": "dark / technical sans / chromatic green",
+    "enrichment": "compact geometry mark only",
+    "navigation": "persistent documentation rail with mobile drawer",
+    "brief": "Build the documentation corpus, then audit and redesign the docs site"
+  }
+]

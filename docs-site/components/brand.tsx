@@ -6,10 +6,10 @@ export function Brand({ className, ...props }: ComponentProps<'img'>) {
   return (
     <img
       className={`docs-brand ${className ?? ''}`}
-      src={`${basePath}/occ-mark.svg`}
+      src={`${basePath}/occ-compact.svg`}
       alt=""
-      width="649"
-      height="196"
+      width="144"
+      height="40"
       {...props}
     />
   );

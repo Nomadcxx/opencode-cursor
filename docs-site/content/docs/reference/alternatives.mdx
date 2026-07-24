@@ -1,0 +1,45 @@
+---
+title: "Alternatives"
+description: "Compare the main Cursor-to-OpenCode integration approaches and their trust boundaries."
+---
+
+Several community projects connect Cursor models to OpenCode. They use
+different protocols, authentication methods, and tool-execution boundaries.
+Choose by mechanism, not by name.
+
+| Project | Approach | Authentication | Main trade-off |
+|---|---|---|---|
+| [opencode-cursor](https://github.com/Nomadcxx/opencode-cursor) | Wraps `cursor-agent`, with an optional official Cursor SDK fallback | Existing CLI login or Cursor API key | Keeps the supported CLI path, but translates a process stream into an OpenCode provider |
+| [stablekernel/opencode-cursor](https://github.com/stablekernel/opencode-cursor) | Official `@cursor/sdk` provider | Cursor API key | Direct SDK integration; its README warns that Cursor tools can run outside OpenCode permissions unless sandboxed |
+| [cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) | Cursor Connect-RPC and protobuf provider | Browser OAuth or Cursor API key | Rich native protocol mapping with a larger compatibility surface when Cursor changes its protocol |
+| [yet-another-opencode-cursor-auth](https://github.com/Yukaii/yet-another-opencode-cursor-auth) | Unofficial Cursor service interface | OAuth | Dynamic models and tool calls; the project labels itself experimental and warns about account and compatibility risk |
+| [opencode-cursor-auth](https://github.com/POSO-PocketSolutions/opencode-cursor-auth) | Local `cursor-agent`-backed OpenAI-compatible service | Cursor subscription and CLI login | Straightforward local service; its README calls tool calling experimental and notes missing thinking and usage accounting |
+| [cursor-opencode-auth](https://github.com/R44VC0RP/cursor-opencode-auth) | Standalone OpenAI-compatible proxy | Cursor CLI token from macOS Keychain | Works with any compatible client, but currently requires macOS and a separately running proxy |
+
+The table reflects each project's own documentation as of July 2026. Check the
+linked repository before installing because activity, support, and protocol
+compatibility can change quickly.
+
+## Decision guide
+
+Use this project when you already trust `cursor-agent`, want OpenCode's provider
+surface, and prefer the CLI to remain the default backend.
+
+Consider the official SDK approach when API-key authentication and direct SDK
+model discovery are more important than CLI reuse. Read its security boundary
+carefully before allowing file or shell tools.
+
+Consider a standalone proxy when another OpenAI-compatible client also needs
+the endpoint. That adds a service to operate and protect.
+
+Treat reverse-engineered service or RPC integrations as compatibility work.
+They can expose capabilities earlier, but Cursor can change an undocumented
+contract without preserving it.
+
+Whichever route you choose, verify:
+
+1. where credentials are stored;
+2. which process can mutate the workspace;
+3. whether OpenCode permissions cover those mutations;
+4. how model IDs are discovered;
+5. whether the project documents its failure and account-risk boundaries.

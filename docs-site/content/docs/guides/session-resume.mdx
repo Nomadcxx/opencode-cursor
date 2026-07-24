@@ -1,0 +1,70 @@
+---
+title: "Session resume"
+description: "Reuse cursor-agent chat IDs safely across turns, with the limits made explicit."
+---
+
+Session resume is an opt-in optimisation for the `cursor-agent` backend. It
+lets a continuation use Cursor's `--resume` flag instead of rebuilding every
+earlier turn into a fresh prompt.
+
+Enable it before starting OpenCode:
+
+```bash
+export CURSOR_ACP_SESSION_RESUME=true
+opencode
+```
+
+The accepted true values are `1`, `true`, `on`, and `yes`.
+
+## What gets reused
+
+The plugin keeps an in-memory map from an OpenCode conversation anchor to the
+chat ID emitted by `cursor-agent`. The anchor includes:
+
+- the workspace;
+- the concrete Cursor model;
+- a hash of the first real user message.
+
+Title-generation and other metadata prompts are excluded. Changing the
+workspace, model, or opening message starts a new Cursor chat.
+
+On a later turn, the plugin checks the cached entry before adding `--resume`.
+It compares the known message prefix and a fingerprint of the available tool
+schemas. A changed tool definition, including a changed Task subagent list,
+invalidates the entry.
+
+## Cache limits
+
+Resume state is deliberately short-lived:
+
+| Limit | Behavior |
+|---|---|
+| Storage | Process memory only |
+| Lifetime | One hour |
+| Capacity | 64 entries, least-recently-used eviction |
+| Chat ID | Letters, numbers, hyphens, and underscores only |
+
+Restarting OpenCode or the plugin loses the cache. This is expected and does
+not affect the underlying Cursor account.
+
+## Incremental prompts
+
+When the prior message sequence is an exact prefix, the plugin can send only
+the new messages. If it cannot prove that the delta is safe, it either resumes
+with the full prompt or starts a fresh chat.
+
+Two conversations with the same opener can still diverge. The content-prefix
+check prevents one branch from silently inheriting the other branch's Cursor
+state.
+
+## Failures and eviction
+
+A resume-specific error evicts the cached chat ID so the next request can
+start cleanly. Authentication, network, quota, out-of-memory, and other
+transient failures do not automatically discard a valid entry.
+
+Resume is not a persistence feature and does not replace OpenCode's own
+conversation history. Leave it off when reproducing prompt construction or
+backend problems. See
+[Configuration](/docs/reference/configuration#runtime-and-backends) for the
+other process-reuse controls.

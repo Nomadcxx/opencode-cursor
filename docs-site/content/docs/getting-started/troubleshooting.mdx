@@ -1,0 +1,131 @@
+---
+title: "Troubleshooting"
+description: "Diagnose missing models, empty replies, tool failures, quota errors, and stream cutoffs."
+---
+
+Start with:
+
+```bash
+open-cursor doctor --deep
+```
+
+For a failing request, enable console logging:
+
+```bash
+CURSOR_ACP_LOG_LEVEL=debug CURSOR_ACP_LOG_CONSOLE=1 \
+  opencode run "test" --model cursor-acp/auto
+```
+
+## No cursor-acp models are listed
+
+You ran `opencode models | grep cursor-acp` and got nothing.
+
+Check Cursor first:
+
+```bash
+cursor-agent models
+```
+
+If that fails, run `cursor-agent login`. If it succeeds, repair the OpenCode
+configuration and model list:
+
+```bash
+open-cursor install
+open-cursor sync-models
+```
+
+The Cursor IDE and `cursor-agent` do not have to expose the same model list.
+The plugin can only route to models returned by the CLI. Read
+[Choosing a model](/docs/guides/choosing-a-model) for the full boundary.
+
+## The response is empty
+
+Confirm the backend and authentication state:
+
+```bash
+open-cursor status
+open-cursor doctor
+cursor-agent models
+```
+
+Then retry once with debug console logs enabled. Look for a backend selection,
+an authentication error, or a non-zero `cursor-agent` exit before any streamed
+content.
+
+If you forced `CURSOR_ACP_BACKEND=sdk`, confirm `CURSOR_API_KEY` contains a real
+Cursor API key. Remove the override to return to automatic backend selection.
+
+## Tool calls appear as assistant text
+
+Update the plugin and restart OpenCode first:
+
+```bash
+npm update -g @rama_nigg/open-cursor
+```
+
+Confirm the normal loop mode:
+
+```bash
+CURSOR_ACP_TOOL_LOOP_MODE=opencode opencode
+```
+
+The default provider boundary converts Cursor output into OpenCode tool-call
+parts. Old plugin processes and unsupported loop overrides can leave the raw
+call in assistant text. See [Tool loop](/docs/architecture/tool-loop) and the
+[`CURSOR_ACP_TOOL_LOOP_MODE` reference](/docs/reference/configuration#tool-loop-and-boundary).
+
+## File tools report missing oldString or filePath
+
+Errors such as these point at an old tool-schema compatibility path:
+
+```text
+SchemaError(Missing key at ["oldString"])
+SchemaError(Missing key at ["filePath"])
+```
+
+Update the package, then restart both OpenCode and `cursor-agent`. A stale
+process can keep the previous schema after the package changes.
+
+## The model repeats the same tool call
+
+The provider boundary stops repeated failures and repeated successful
+full-file edits after a small number of identical fingerprints. Check the
+debug log for `Tool loop guard`.
+
+Do not raise `CURSOR_ACP_TOOL_LOOP_MAX_REPEAT` until you understand the repeated
+call. A higher value gives a broken loop more attempts. See
+[Tool loop](/docs/architecture/tool-loop).
+
+## Cursor reports quota exceeded
+
+Check [Cursor settings](https://cursor.com/settings). Quota and account limits
+come from Cursor; opencode-cursor only parses and forwards the error.
+
+If useful output arrived before a quota diagnostic, the plugin keeps the
+successful streamed output instead of replacing it with the later process
+exit.
+
+## The stream stops part way through
+
+Retry with debug logging and keep the log file:
+
+```bash
+CURSOR_ACP_LOG_LEVEL=debug opencode run "test" --model cursor-acp/auto
+```
+
+Logs default to `~/.opencode-cursor`. Check for a `cursor-agent` exit, malformed
+stream event, or network failure at the cutoff. The stream translator handles
+both token deltas and later snapshots; duplicated or truncated output after an
+upgrade is worth reporting with the log and exact model ID.
+
+See [Stream translation](/docs/architecture/stream-translation) for the parser
+behavior.
+
+## Port 32124 is already in use
+
+The plugin reuses a healthy existing proxy by default. If another process owns
+the port, stop it or set a different provider `baseURL` and pass the same URL
+to `open-cursor install --base-url`.
+
+Use [`CURSOR_ACP_REUSE_EXISTING_PROXY`](/docs/reference/configuration#runtime-and-backends)
+only when diagnosing proxy ownership.

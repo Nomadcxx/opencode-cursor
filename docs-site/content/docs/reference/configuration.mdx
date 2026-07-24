@@ -1,0 +1,94 @@
+---
+title: "Configuration"
+description: "Reference for every CURSOR_ACP environment variable and its default."
+---
+
+The normal install works without environment overrides. Use these variables to
+diagnose a specific boundary or opt into an experimental runtime path.
+
+Boolean switches accept the values shown in each row. A switch documented as
+enabled by default turns off only when set to `false`, unless the row says
+otherwise.
+
+## Logging and diagnostics
+
+| Variable | Default | Effect | Change it when |
+|---|---:|---|---|
+| `CURSOR_ACP_LOG_LEVEL` | `info` | Sets `debug`, `info`, `warn`, or `error` logging. Invalid values fall back to `info`. | You need request, backend, or stream diagnostics. |
+| `CURSOR_ACP_LOG_CONSOLE` | off | Sends logs to stderr when set to `1` or `true`. | You want logs beside `opencode run` output. |
+| `CURSOR_ACP_LOG_DIR` | `~/.opencode-cursor` | Changes the file-log directory. | The default home path is unsuitable or logs need a known collection path. |
+| `CURSOR_ACP_LOG_SILENT` | off | Disables logger output when set to `1` or `true`. | A host captures stderr and file logging must stay quiet. |
+| `CURSOR_ACP_TIMING` | off | Emits request timing marks for `1`, `true`, `on`, or `yes`. | You are measuring latency inside the bridge. |
+
+For a one-off debug run:
+
+```bash
+CURSOR_ACP_LOG_LEVEL=debug CURSOR_ACP_LOG_CONSOLE=1 \
+  opencode run "test" --model cursor-acp/auto
+```
+
+## Runtime and backends
+
+| Variable | Default | Effect | Change it when |
+|---|---:|---|---|
+| `CURSOR_ACP_BACKEND` | `auto` | Selects `auto`, `cursor-agent`, or `sdk`. Auto prefers `cursor-agent` and can fall back to the SDK when the binary is unavailable and a real API key exists. | You are isolating a backend failure or testing the SDK path. |
+| `CURSOR_ACP_REUSE_EXISTING_PROXY` | enabled | Reuses a healthy proxy only when its reported workspace matches the current workspace. Set `false` to reject reuse. | A stale proxy owns the configured port. |
+| `CURSOR_ACP_FORCE` | enabled | Adds `--force` to the `cursor-agent` command. Set `false` to omit it. | You need Cursor's own approval behavior instead of forced agent execution. |
+| `CURSOR_ACP_AGENT_POOL` | off | Reuses a persistent `cursor-agent` runner per workspace and model for `1`, `true`, `on`, or `yes`. | Process startup dominates request time and you accept the experimental pool. |
+| `CURSOR_ACP_AGENT_POOL_IDLE_MS` | `900000` | Sets runner idle eviction in milliseconds. Invalid or negative values use 15 minutes. | You enabled the agent pool and need a different idle lifetime. |
+| `CURSOR_ACP_SESSION_RESUME` | off | Enables in-memory `cursor-agent --resume` reuse for `1`, `true`, `on`, or `yes`. | You want smaller continuation prompts and accept the resume constraints. |
+| `CURSOR_ACP_MODEL_AUTO_REFRESH` | direct | Adds newly discovered models at plugin startup. `compact` maintains grouped variants; `false` disables refresh. | You want stable hand-managed model entries or compact variants. |
+
+The SDK backend also requires `CURSOR_API_KEY`, an OpenCode auth-store key, or
+`provider.cursor-acp.options.apiKey`. `CURSOR_API_KEY` is not a
+`CURSOR_ACP_*` setting, but it is part of backend selection.
+
+## Tool loop and boundary
+
+| Variable | Default | Effect | Change it when |
+|---|---:|---|---|
+| `CURSOR_ACP_TOOL_LOOP_MODE` | `opencode` | Chooses `opencode`, legacy `proxy-exec`, or `off`. OpenCode owns tool execution in the normal mode. | You are isolating tool conversion or disabling tools. |
+| `CURSOR_ACP_TOOL_LOOP_MAX_REPEAT` | `2` | Sets the strict repeated-call limit. Values below 1 or non-numbers fall back to 2. Broader fingerprints use higher derived limits. | A legitimate identical call needs more attempts and you have checked the loop. |
+| `CURSOR_ACP_PROVIDER_BOUNDARY` | `v1` | Selects the `v1` or `legacy` request and stream boundary. | You are diagnosing a regression in the current boundary. |
+| `CURSOR_ACP_PROVIDER_BOUNDARY_AUTOFALLBACK` | enabled | Allows a request on the `v1` boundary to retry through the legacy boundary. Set `false` to disable it. | You need a clean failure from `v1` while debugging. |
+| `CURSOR_ACP_BRIDGE_JSON` | enabled | Adds the strict JSON bridge for complete-file writes and OpenCode Task calls. Values `0`, `false`, `off`, `no`, and `disabled` turn it off. | The model mishandles bridge envelopes or you are testing native calls only. |
+| `CURSOR_ACP_EMIT_TOOL_UPDATES` | off | Emits intermediate tool updates in legacy `proxy-exec` mode when set to `true`. | You maintain the legacy executor path. |
+| `CURSOR_ACP_FORWARD_TOOL_CALLS` | enabled | Lets legacy `proxy-exec` forward tool calls. Set `false` to suppress them. | You maintain the legacy executor path. |
+| `CURSOR_ACP_EDIT_COMPAT_REPAIR` | enabled | Repairs Cursor-style edit arguments to the OpenCode schema. Set `false` to disable repair. | You need the raw schema failure while debugging. |
+| `CURSOR_ACP_QUESTION_COMPAT_REPAIR` | enabled | Repairs Cursor-style question payloads, including OpenCode label limits. Set `false` to disable repair. | You need the raw question payload while debugging. |
+| `CURSOR_ACP_WRITE_OVERWRITE_GUARD` | enabled | Refuses suspicious partial overwrites of existing files. Set `false` to disable the guard. | A known full-file workflow conflicts with the heuristic and you accept the data-loss risk. |
+
+`proxy-exec` remains as compatibility code. New setups should keep
+`CURSOR_ACP_TOOL_LOOP_MODE=opencode`.
+
+## MCP and OpenCode tools
+
+| Variable | Default | Effect | Change it when |
+|---|---:|---|---|
+| `CURSOR_ACP_MCP_BRIDGE` | enabled | Discovers configured MCP servers and adds `mcptool` instructions. Set `false` to disable the bridge. | You are isolating MCP discovery or do not want MCP exposed to Cursor models. |
+| `CURSOR_ACP_ENABLE_OPENCODE_TOOLS` | enabled | Enables OpenCode tool discovery and registration. Set `false` to disable it. | You want a text-only runtime for diagnosis. |
+| `CURSOR_ACP_TOOL_EXECUTOR` | `auto` | Chooses `auto`, `sdk`, or `cli` for legacy OpenCode tool discovery. Auto tries the SDK before the CLI. | One discovery path is unavailable. |
+| `CURSOR_ACP_TOOL_CACHE_TTL_MS` | `60000` | Sets the discovered-tool cache lifetime in milliseconds. | Tool definitions change during a long-running process. |
+| `CURSOR_ACP_TOOL_TIMEOUT_MS` | `30000` | Sets the local executor timeout in milliseconds. | A legacy proxy-executed tool has a known longer runtime. |
+
+MCP calls run through the shell-facing `mcptool` command. Read
+[Permissions](/docs/guides/permissions) before broadening `bash` rules.
+
+## Paths and process overrides
+
+| Variable | Default | Effect | Change it when |
+|---|---:|---|---|
+| `CURSOR_ACP_WORKSPACE` | detected | Forces the workspace passed to Cursor. Filesystem roots are rejected. | OpenCode starts the plugin from the wrong directory. |
+| `CURSOR_ACP_HOME_DIR` | OS home | Overrides the home directory used to find Cursor authentication files. | Tests or a managed environment use an alternate home. |
+| `CURSOR_ACP_NODE_BIN` | `node` | Selects the Node executable used for runner processes. | Node is installed under a non-standard executable path. |
+| `CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH` | packaged runner | Overrides `cursor-agent-runner.mjs`; a missing path is an error. | Developing or packaging the runner. |
+| `CURSOR_ACP_SDK_RUNNER_PATH` | packaged runner | Overrides `sdk-runner.mjs`; a missing path is an error. | Developing or packaging the SDK runner. |
+
+These path overrides are development and packaging controls. A normal
+installation should leave them unset.
+
+## Complete variable list
+
+The tables above document all 32 variables read from `src/`. The docs build
+compares this page with the source tree and fails if either side gains or loses
+a `CURSOR_ACP_*` name.

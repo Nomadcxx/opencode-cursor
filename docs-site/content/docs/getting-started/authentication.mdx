@@ -1,0 +1,73 @@
+---
+title: "Authentication"
+description: "Sign in through cursor-agent or configure the optional SDK backend."
+---
+
+## cursor-agent backend
+
+The default backend uses the login owned by `cursor-agent`:
+
+```bash
+cursor-agent login
+```
+
+Check the session by asking the CLI for its model list:
+
+```bash
+cursor-agent models
+```
+
+Then confirm OpenCode sees the provider:
+
+```bash
+opencode models | grep cursor-acp
+```
+
+The two checks answer different questions. `cursor-agent models` confirms that
+Cursor accepts your login and shows which models your account can use.
+`opencode models` confirms that the plugin and provider configuration loaded.
+
+## OpenCode auth
+
+You can also store Cursor credentials through OpenCode:
+
+```bash
+opencode auth login --provider cursor-acp
+```
+
+This matters when you select the SDK backend or when automatic backend
+selection needs an SDK fallback.
+
+## SDK backend
+
+Set a real Cursor API key from
+[Cursor settings](https://cursor.com/settings) when using
+`CURSOR_ACP_BACKEND=sdk`:
+
+```bash
+export CURSOR_API_KEY=<your-api-key>
+export CURSOR_ACP_BACKEND=sdk
+```
+
+The SDK path also reads an API key from the OpenCode auth store or from the
+`apiKey` option in the `cursor-acp` provider block.
+
+Do not use the historical `cursor-agent` placeholder as an SDK key. The SDK
+requires a real key.
+
+## What a failed login looks like
+
+Authentication failures usually surface as `Not authenticated`,
+`fetch() URL is invalid`, or a provider error before any response tokens
+arrive.
+
+Run:
+
+```bash
+open-cursor doctor
+cursor-agent models
+```
+
+If `cursor-agent models` fails, sign in again. If it succeeds but
+`opencode models | grep cursor-acp` returns nothing, check
+[Troubleshooting](/docs/getting-started/troubleshooting#no-cursor-acp-models-are-listed).
