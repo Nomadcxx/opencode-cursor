@@ -223,5 +223,5 @@ BSD-3-Clause
 
 ---
 
-Built by [RAMA](https://github.com/Nomadcxx) — terminal-native tooling for the linux desktop.
-[More projects →](https://github.com/Nomadcxx) · [Sponsor ♥](https://github.com/sponsors/Nomadcxx)
+<a href="https://github.com/Nomadcxx"><img src="https://raw.githubusercontent.com/Nomadcxx/Nomadcxx/main/assets/rama-mark.svg" height="22" alt="RAMA"></a> — terminal-native tooling for the linux desktop.
+[More projects →](https://github.com/Nomadcxx) · [Sponsor](https://github.com/sponsors/Nomadcxx) ❤️
