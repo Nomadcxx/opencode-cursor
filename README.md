@@ -10,7 +10,6 @@
 
 No prompt limits. No broken streams. Full thinking + tool support in OpenCode. Your Cursor subscription, properly integrated.
 
-> **Also worth a look:** [oakimov/cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) takes a different approach, speaking cursor's native agent protocol directly so opencode owns the tool loop. Excellent work, and a compelling read if you want to understand how deep the cursor integration can go.
 
 ## Installation
 
@@ -207,23 +206,6 @@ Default tool-loop mode: `CURSOR_ACP_TOOL_LOOP_MODE=opencode`. Details: [docs/arc
 Startup model refresh is additive by default. Use `CURSOR_ACP_MODEL_AUTO_REFRESH=false` to disable it, or `CURSOR_ACP_MODEL_AUTO_REFRESH=compact` to fold Cursor model variants into opencode variants.
 </details>
 
-## Alternatives
-Cursor integration in opencode still has tradeoffs. Pick the least bad option for your workflow.
-|                   |        open-cursor         | [yet-another-opencode-cursor-auth](https://github.com/Yukaii/yet-another-opencode-cursor-auth) | [opencode-cursor-auth](https://github.com/POSO-PocketSolutions/opencode-cursor-auth) | [cursor-opencode-auth](https://github.com/R44VC0RP/cursor-opencode-auth) |
-| ----------------- | :------------------------: | :--------------------------------------------------------------------------------------------: | :----------------------------------------------------------------------------------: | :----------------------------------------------------------------------: |
-| **Architecture**  | HTTP proxy via cursor-agent |                                       Direct Connect-RPC                                       |                             HTTP proxy via cursor-agent                              |                       Direct Connect-RPC/protobuf                        |
-| **Platform**      |   Linux, macOS, Windows    |                                      Linux, macOS                                           |                                     Linux, macOS                                     |                          macOS only (Keychain)                           |
-| **Max Prompt**    |   Unlimited (HTTP body)    |                                            Unknown                                             |                                   ~128KB (ARG_MAX)                                   |                                 Unknown                                  |
-| **Streaming**     |           ✓ SSE            |                                             ✓ SSE                                              |                                     Undocumented                                     |                                    ✓                                     |
-| **Error Parsing** |   ✓ (quota/auth/model)     |                                               ✗                                                |                                          ✗                                           |                              Debug logging                               |
-| **Installer**     |     ✓ TUI + one-liner      |                                               ✗                                                |                                          ✗                                           |                                    ✗                                     |
-| **OAuth Flow**    |  ✓ OpenCode integration    |                                            ✓ Native                                            |                                    Browser login                                     |                                 Keychain                                 |
-| **Tool Calling**  | ✓ OpenCode-owned loop |                                            ✓ Native                                            |                                    ✓ Experimental                                    |                                    ✗                                     |
-| **MCP Bridge**    | ✓ mcptool CLI (any MCP server) |                                               ✗                                                |                                          ✗                                           |                                    ✗                                     |
-| **Stability**     | Stable (uses official CLI) |                                          Experimental                                          |                                        Stable                                        |                               Experimental                               |
-| **Dependencies**  |     bun, cursor-agent      |                                              npm                                               |                                  bun, cursor-agent                                   |                               Node.js 18+                                |
-| **Port**          |           32124            |                                             18741                                              |                                        32123                                         |                                   4141                                   |
-
 ## Troubleshooting
 
 - `fetch() URL is invalid` or auth errors → `cursor-agent login` or `opencode auth login --provider cursor-acp`
@@ -234,25 +216,6 @@ Cursor integration in opencode still has tradeoffs. Pick the least bad option fo
 - Proxy not starting → ensure port 32124 is available
 
 Debug logging: `CURSOR_ACP_LOG_LEVEL=debug opencode` for TUI use, or `CURSOR_ACP_LOG_LEVEL=debug opencode run "your prompt" --model cursor-acp/auto`
-
-## Roadmap
-
-```mermaid
-flowchart LR
-    P1[/Stabilise/] --> P2[/MCP Bridge/] --> P3[/Simplify/] --> P4[/ACP + MCP/]
-
-    style P1 fill:#264653,stroke:#1d3557,color:#fff
-    style P2 fill:#264653,stroke:#1d3557,color:#fff
-    style P3 fill:#495057,stroke:#343a40,color:#adb5bd
-    style P4 fill:#495057,stroke:#343a40,color:#adb5bd
-```
-
-[X] **Stabilise** — Clean up dead code, fix test isolation
-[X] **MCP Bridge** — Bridge MCP servers into Cursor models via `mcptool` CLI
-[ ] **Simplify** — Rip out serialisation layers
-[ ] **ACP + MCP** — Structured protocols end-to-end
-
-**ACP + MCP (deferred)** — End goal is a thin `OpenCode → Cursor ACP → MCP` plugin, not an evolved proxy. We ship the bridge until Cursor's ACP path passes MCP + headless approval re-validation. [Why and when →](docs/architecture/cursor-acp-mcp-future.md)
 
 ## License
 
