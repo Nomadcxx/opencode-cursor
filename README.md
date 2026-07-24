@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/header.svg" width="762" alt="opencode-cursor — cursor pro models, inside opencode">
+  <img src="docs/header.svg" width="828" alt="opencode-cursor — cursor pro models, inside opencode">
 </p>
 
 <p align="center">
