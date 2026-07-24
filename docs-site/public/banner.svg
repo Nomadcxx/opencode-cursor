@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 828 165" width="828" height="165" role="img" aria-label="opencode-cursor — cursor pro models, inside opencode">
+  <style>
+    text { font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace; white-space: pre; }
+    .sweep { transform-origin: 48px 0; transform: scaleX(0); animation: sweep 800ms cubic-bezier(0.16,1,0.3,1) 300ms forwards; }
+    .scan { animation: scan 3.8s cubic-bezier(0.45,0,0.55,1) 1.3s infinite; }
+    .cursor { animation: blink 1.1s steps(1) infinite; }
+    @keyframes sweep { to { transform: scaleX(1); } }
+    @keyframes scan { 0% { transform: translateX(0); opacity: 0; } 8% { opacity: 1; }
+      62% { transform: translateX(732px); opacity: 1; }
+      72%, 100% { transform: translateX(732px); opacity: 0; } }
+    @keyframes blink { 50% { opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .sweep { animation: none; transform: scaleX(1); }
+      .scan { animation: none; opacity: 0; }
+      .cursor { animation: none; }
+    }
+  </style>
+  <defs>
+    <linearGradient id="banner-gradient" gradientUnits="userSpaceOnUse" x1="48.0" y1="0" x2="780.0" y2="0"><stop offset="0" stop-color="#37f499"/><stop offset="0.55" stop-color="#04d1f9"/><stop offset="1" stop-color="#a48cf2"/></linearGradient>
+    <linearGradient id="scan_g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.55" stop-color="#fff" stop-opacity="1"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <clipPath id="rc"><rect x="48" y="109" width="732" height="6"/></clipPath>
+  </defs>
+  <rect fill="#212337" x="0" y="0" width="828" height="165" rx="8"/>
+  <rect fill="none" stroke="#3b4261" stroke-width="1.5" x="14" y="14" width="800" height="137" rx="6"/>
+  <rect fill="#212337" x="32" y="8" width="117" height="12"/>
+  <text fill="#7081d0" x="38" y="19" font-size="12" textLength="108" lengthAdjust="spacing" xml:space="preserve">opencode-cursor</text>
+  <g fill="url(#banner-gradient)">
+    <rect x="58.87" y="46.69" width="33.72" height="11.35"/>
+    <rect x="114.32" y="46.69" width="44.81" height="11.35"/>
+    <rect x="180.87" y="46.69" width="55.90" height="11.35"/>
+    <rect x="247.41" y="46.69" width="22.63" height="54.99"/>
+    <rect x="291.78" y="46.69" width="22.63" height="54.99"/>
+    <rect x="380.51" y="46.69" width="33.72" height="11.35"/>
+    <rect x="435.96" y="46.69" width="22.63" height="44.08"/>
+    <rect x="469.23" y="46.69" width="22.63" height="44.08"/>
+    <rect x="502.51" y="46.69" width="44.81" height="11.35"/>
+    <rect x="580.14" y="46.69" width="44.81" height="11.35"/>
+    <rect x="657.78" y="46.69" width="33.72" height="11.35"/>
+    <rect x="724.32" y="46.69" width="44.81" height="11.35"/>
+    <rect x="47.78" y="57.60" width="22.63" height="33.17"/>
+    <rect x="81.05" y="57.60" width="22.63" height="33.17"/>
+    <rect x="114.32" y="57.60" width="22.63" height="44.08"/>
+    <rect x="147.60" y="57.60" width="22.63" height="22.26"/>
+    <rect x="180.87" y="57.60" width="22.63" height="44.08"/>
+    <rect x="269.60" y="57.60" width="11.53" height="22.26"/>
+    <rect x="369.41" y="57.60" width="22.63" height="33.17"/>
+    <rect x="402.69" y="57.60" width="22.63" height="11.35"/>
+    <rect x="502.51" y="57.60" width="22.63" height="44.08"/>
+    <rect x="535.78" y="57.60" width="22.63" height="22.26"/>
+    <rect x="569.05" y="57.60" width="22.63" height="22.26"/>
+    <rect x="646.69" y="57.60" width="22.63" height="33.17"/>
+    <rect x="679.96" y="57.60" width="22.63" height="33.17"/>
+    <rect x="724.32" y="57.60" width="22.63" height="44.08"/>
+    <rect x="757.60" y="57.60" width="22.63" height="22.26"/>
+    <rect x="203.05" y="68.51" width="22.63" height="11.35"/>
+    <rect x="280.69" y="68.51" width="11.53" height="22.26"/>
+    <rect x="325.05" y="68.51" width="33.72" height="11.35"/>
+    <rect x="591.23" y="68.51" width="33.72" height="11.35"/>
+    <rect x="136.51" y="79.42" width="22.63" height="11.35"/>
+    <rect x="402.69" y="79.42" width="22.63" height="11.35"/>
+    <rect x="524.69" y="79.42" width="22.63" height="11.35"/>
+    <rect x="602.32" y="79.42" width="22.63" height="11.35"/>
+    <rect x="746.51" y="79.42" width="22.63" height="11.35"/>
+    <rect x="58.87" y="90.33" width="33.72" height="11.35"/>
+    <rect x="203.05" y="90.33" width="33.72" height="11.35"/>
+    <rect x="380.51" y="90.33" width="33.72" height="11.35"/>
+    <rect x="447.05" y="90.33" width="33.72" height="11.35"/>
+    <rect x="535.78" y="90.33" width="22.63" height="11.35"/>
+    <rect x="569.05" y="90.33" width="44.81" height="11.35"/>
+    <rect x="657.78" y="90.33" width="33.72" height="11.35"/>
+    <rect x="757.60" y="90.33" width="22.63" height="11.35"/>
+  </g>
+  <rect class="sweep" x="48" y="111" width="732" height="2" fill="#a48cf2" opacity="0.45"/>
+  <g clip-path="url(#rc)"><rect class="scan" x="-102" y="111" width="150" height="2" fill="url(#scan_g)"/></g>
+  <text fill="#ABB4DA" x="48" y="135" font-size="15" textLength="306" lengthAdjust="spacing" xml:space="preserve">cursor pro models, inside opencode</text>
+  <rect class="cursor" fill="#37f499" x="359" y="123.8" width="7.5" height="14.2"/>
+</svg>

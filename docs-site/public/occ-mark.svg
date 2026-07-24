@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 649 196" width="649" height="196" role="img" aria-label="opencode-cursor">
+  <defs>
+    <linearGradient id="occ-gradient" gradientUnits="userSpaceOnUse" x1="16.0" y1="0" x2="633.0" y2="0"><stop offset="0" stop-color="#37f499"/><stop offset="0.55" stop-color="#04d1f9"/><stop offset="1" stop-color="#a48cf2"/></linearGradient>
+  </defs>
+  <g fill="url(#occ-gradient)">
+    <rect x="41.06" y="13.89" width="151.35" height="42.21"/>
+    <rect x="248.82" y="13.89" width="151.35" height="42.21"/>
+    <rect x="456.59" y="13.89" width="151.35" height="42.21"/>
+    <rect x="15.87" y="34.90" width="25.44" height="126.21"/>
+    <rect x="192.16" y="34.90" width="25.44" height="126.21"/>
+    <rect x="223.64" y="34.90" width="25.44" height="126.21"/>
+    <rect x="399.93" y="34.90" width="25.44" height="21.21"/>
+    <rect x="431.40" y="34.90" width="25.44" height="126.21"/>
+    <rect x="607.69" y="34.90" width="25.44" height="21.21"/>
+    <rect x="41.06" y="55.90" width="25.44" height="126.21"/>
+    <rect x="166.98" y="55.90" width="25.44" height="126.21"/>
+    <rect x="248.82" y="55.90" width="25.44" height="126.21"/>
+    <rect x="456.59" y="55.90" width="25.44" height="126.21"/>
+    <rect x="66.24" y="139.90" width="100.99" height="42.21"/>
+    <rect x="274.01" y="139.90" width="151.35" height="21.21"/>
+    <rect x="481.77" y="139.90" width="151.35" height="21.21"/>
+    <rect x="274.01" y="160.90" width="126.17" height="21.21"/>
+    <rect x="481.77" y="160.90" width="126.17" height="21.21"/>
+  </g>
+</svg>
