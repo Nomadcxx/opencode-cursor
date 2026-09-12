@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { CursorPlugin } from "../../src/plugin";
-import type { PluginInput } from "@opencode-ai/plugin";
+import type { PluginInput } from "@kilocode/plugin";
 
 function createMockInput(directory: string, worktree: string = directory): PluginInput {
   return {
@@ -18,12 +18,12 @@ function createMockInput(directory: string, worktree: string = directory): Plugi
 }
 
 describe("experimental.chat.system.transform", () => {
-  it("injects system guidance for cursor-acp models", async () => {
+  it("injects system guidance for cursor-kilo models", async () => {
     const hooks = await CursorPlugin(createMockInput("/tmp/opencode-cursor-test"));
     const transform = hooks["experimental.chat.system.transform"] as any;
     const output: { system?: string[] } = {};
 
-    await transform({ model: { providerID: "cursor-acp" } }, output);
+    await transform({ model: { providerID: "cursor-kilo" } }, output);
 
     expect(output.system).toBeArray();
     expect(output.system?.length).toBeGreaterThan(0);

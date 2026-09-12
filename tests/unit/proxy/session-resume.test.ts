@@ -14,11 +14,11 @@ import {
 describe("session-resume", () => {
   afterEach(() => {
     _resetSessionResumeCache();
-    delete process.env.CURSOR_ACP_SESSION_RESUME;
+    delete process.env.CURSOR_KILO_SESSION_RESUME;
   });
 
-  it("is disabled by default", () => {
-    expect(isSessionResumeEnabled()).toBe(false);
+  it("is enabled by default", () => {
+    expect(isSessionResumeEnabled()).toBe(true);
   });
 
   it.each([
@@ -29,13 +29,16 @@ describe("session-resume", () => {
     ["yes", true],
     ["0", false],
     ["false", false],
-    ["", false],
-    [undefined, false],
+    ["off", false],
+    ["no", false],
+    ["disabled", false],
+    ["", true],
+    [undefined, true],
   ])("isSessionResumeEnabled(%p) === %p", (value, expected) => {
     if (value !== undefined) {
-      process.env.CURSOR_ACP_SESSION_RESUME = value;
+      process.env.CURSOR_KILO_SESSION_RESUME = value;
     } else {
-      delete process.env.CURSOR_ACP_SESSION_RESUME;
+      delete process.env.CURSOR_KILO_SESSION_RESUME;
     }
     expect(isSessionResumeEnabled()).toBe(expected);
   });
@@ -163,6 +166,15 @@ describe("session-resume", () => {
     const keyC = buildSessionKey("/a", "model-2", anchor);
     expect(keyA).not.toBe(keyB);
     expect(keyA).not.toBe(keyC);
+  });
+
+  it("builds distinct keys for different Kilo session IDs with the same anchor", () => {
+    const { anchor } = deriveConversationAnchor([{ role: "user", content: "hello" }]);
+    const keyA = buildSessionKey("/workspace", "gpt-5", anchor, "kilo-tab-a");
+    const keyB = buildSessionKey("/workspace", "gpt-5", anchor, "kilo-tab-b");
+    const legacyKey = buildSessionKey("/workspace", "gpt-5", anchor);
+    expect(keyA).not.toBe(keyB);
+    expect(keyA).not.toBe(legacyKey);
   });
 
   it("refuses to cache unsafe chat IDs", () => {

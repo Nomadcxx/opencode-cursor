@@ -1,12 +1,14 @@
 import { execFileSync } from "child_process";
 import { stripAnsi } from "../utils/errors.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "../utils/binary.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
 
 export type DiscoveredModel = {
   id: string;
   name: string;
+  /** Context window in tokens when known (from Cursor API or display-name hint). */
+  contextLimit?: number;
 };
 
 export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
@@ -31,26 +33,22 @@ export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
   return models;
 }
 
-export type DiscoverDeps = {
-  platform?: NodeJS.Platform;
-  execFileSync?: typeof execFileSync;
-  resolveBinary?: () => string;
-};
+export function discoverModelsFromCursorAgent(options?: {
+  accessToken?: string;
+  apiKey?: string;
+}): DiscoveredModel[] {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  if (options?.accessToken) {
+    env.CURSOR_AUTH_TOKEN = options.accessToken;
+  }
+  if (options?.apiKey) {
+    env.CURSOR_API_KEY = options.apiKey;
+  }
 
-export function discoverModelsFromCursorAgent(deps: DiscoverDeps = {}): DiscoveredModel[] {
-  const platform = deps.platform ?? process.platform;
-  const exec = deps.execFileSync ?? execFileSync;
-  const resolveBinary = deps.resolveBinary ?? resolveCursorAgentBinary;
-
-  // On Windows cursor-agent is a .cmd shim, which requires shell mode when
-  // spawned from Node (execFileSync of a bare .cmd fails with EINVAL). Shell
-  // mode hands the command to cmd.exe unquoted, so the resolved path must go
-  // through formatShellCommandForPlatform() or a profile name containing a
-  // space splits the command. See the contract in utils/binary.ts.
-  const raw = exec(formatShellCommandForPlatform(resolveBinary(), platform), ["models"], {
+  const raw = execFileSync(resolveCursorAgentBinary(), ["models"], {
     encoding: "utf8",
-    shell: platform === "win32",
-    ...(platform !== "win32" && { killSignal: "SIGTERM" as const }),
+    env,
+    ...(process.platform !== "win32" && { killSignal: "SIGTERM" as const }),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: MODEL_DISCOVERY_TIMEOUT_MS,
   });

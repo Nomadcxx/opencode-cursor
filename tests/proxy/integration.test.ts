@@ -11,7 +11,7 @@ describe("Proxy Integration", () => {
     // Initialize to start the proxy server
     const initialized = await provider.init();
 
-    expect(provider.id).toBe("cursor-acp");
+    expect(provider.id).toBe("cursor-kilo");
     expect(initialized.baseURL).toContain("http://127.0.0.1:32126");
 
     // Clean up

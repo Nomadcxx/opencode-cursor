@@ -72,7 +72,7 @@ describe("cursor-agent pool: cancellation + demux", () => {
     stopCursorAgentPool();
     _resetCursorAgentPoolForTests();
     delete process.env.CURSOR_AGENT_EXECUTABLE;
-    delete process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS;
+    delete process.env.CURSOR_KILO_AGENT_POOL_IDLE_MS;
   });
 
   it("runner cancels an in-flight request and emits done promptly", async () => {
@@ -186,7 +186,7 @@ describe("cursor-agent pool: cancellation + demux", () => {
   });
 
   it("emits close and error when runner spawn fails", async () => {
-    process.env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH = "/nonexistent/runner.mjs";
+    process.env.CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH = "/nonexistent/runner.mjs";
     const child = createCursorAgentPoolNodeChild({ model: "m", prompt: "hi", cwd: tmpdir() });
 
     const errorPromise = waitForEvent(child, "error", 3000);
@@ -194,12 +194,12 @@ describe("cursor-agent pool: cancellation + demux", () => {
     expect(await errorPromise).toBe(true);
     expect(await closePromise).toBe(true);
 
-    delete process.env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH;
+    delete process.env.CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH;
   });
 
   it("evicts idle runners after the configured idle timeout", async () => {
     process.env.CURSOR_AGENT_EXECUTABLE = mockPath;
-    process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS = "25";
+    process.env.CURSOR_KILO_AGENT_POOL_IDLE_MS = "25";
 
     const child = createCursorAgentPoolNodeChild({ model: "m", prompt: "hi", cwd: tmpdir() });
     const first = await firstChunk(child.stdout as unknown as PassThrough, 3000);

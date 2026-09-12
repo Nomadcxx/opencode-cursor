@@ -3,6 +3,7 @@ import {
   readFileSync as nodeReadFileSync,
 } from "node:fs";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
+import { parseConfigJson } from "../kilo/platform.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("mcp:config");
@@ -49,10 +50,8 @@ export function readMcpConfigs(deps: ReadMcpConfigsDeps = {}): McpServerConfig[]
     }
   }
 
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+  const parsed = parseConfigJson(raw);
+  if (!parsed) {
     return [];
   }
 

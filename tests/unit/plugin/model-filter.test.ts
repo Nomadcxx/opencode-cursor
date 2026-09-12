@@ -3,10 +3,10 @@ import { shouldProcessModel } from "../../../src/plugin.js";
 
 describe("model filter", () => {
   describe("shouldProcessModel", () => {
-    it("should return true for cursor-acp/ models", () => {
-      expect(shouldProcessModel("cursor-acp/claude-sonnet")).toBe(true);
-      expect(shouldProcessModel("cursor-acp/gpt-4")).toBe(true);
-      expect(shouldProcessModel("cursor-acp/o1-mini")).toBe(true);
+    it("should return true for cursor-kilo/ models", () => {
+      expect(shouldProcessModel("cursor-kilo/claude-sonnet")).toBe(true);
+      expect(shouldProcessModel("cursor-kilo/gpt-4")).toBe(true);
+      expect(shouldProcessModel("cursor-kilo/o1-mini")).toBe(true);
     });
 
     it("should return false for non-cursor models", () => {
@@ -22,9 +22,9 @@ describe("model filter", () => {
     });
 
     it("should return false for partial prefix matches", () => {
-      // Must have full "cursor-acp/" prefix, not just "cursor-acp"
-      expect(shouldProcessModel("cursor-acp")).toBe(false);
-      expect(shouldProcessModel("cursor-acpmodel")).toBe(false);
+      // Must have full "cursor-kilo/" prefix, not just "cursor-kilo"
+      expect(shouldProcessModel("cursor-kilo")).toBe(false);
+      expect(shouldProcessModel("cursor-kilomodel")).toBe(false);
     });
   });
 });

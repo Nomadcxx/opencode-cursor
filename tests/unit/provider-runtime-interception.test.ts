@@ -163,7 +163,7 @@ describe("provider runtime interception parity", () => {
     const legacyOptions = createBaseOptions();
     const v1Options = {
       ...createBaseOptions(),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     };
 
     const legacyResult = await handleToolLoopEventLegacy(legacyOptions);
@@ -193,7 +193,7 @@ describe("provider runtime interception parity", () => {
           interceptedV1.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(legacyResult).toEqual({ intercepted: true, skipConverter: true });
@@ -257,7 +257,7 @@ describe("provider runtime interception parity", () => {
     const legacyResult = await handleToolLoopEventLegacy(createOptions(updatesLegacy, resultsLegacy));
     const v1Result = await handleToolLoopEventV1({
       ...createOptions(updatesV1, resultsV1),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(legacyResult).toEqual({ intercepted: false, skipConverter: true });
@@ -292,7 +292,7 @@ describe("provider runtime interception parity", () => {
         allowedToolNames: new Set(["read"]),
         suppressConverterToolEvents: true,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(legacyResult).toEqual({ intercepted: false, skipConverter: true });
@@ -306,7 +306,7 @@ describe("provider runtime interception fallback", () => {
     let mapperCalls = 0;
     let interceptedName = "";
 
-    const boundary = createProviderBoundary("v1", "cursor-acp");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
     const brokenBoundary = {
       ...boundary,
       maybeExtractToolCall() {
@@ -351,7 +351,7 @@ describe("provider runtime interception fallback", () => {
           },
         } as any,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -366,7 +366,7 @@ describe("provider runtime interception fallback", () => {
   it("uses legacy path directly when boundary mode is legacy", async () => {
     const result = await handleToolLoopEventWithFallback({
       ...createBaseOptions(),
-      boundary: createProviderBoundary("legacy", "cursor-acp"),
+      boundary: createProviderBoundary("legacy", "cursor-kilo"),
       boundaryMode: "legacy",
       autoFallbackToLegacy: true,
     });
@@ -405,7 +405,7 @@ describe("provider runtime interception fallback", () => {
           interceptedArgs = toolCall.function.arguments;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -464,7 +464,7 @@ describe("provider runtime interception fallback", () => {
           intercepted.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -495,7 +495,7 @@ describe("provider runtime interception fallback", () => {
           intercepted.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -529,7 +529,7 @@ describe("provider runtime interception fallback", () => {
           intercepted.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -563,7 +563,7 @@ describe("provider runtime interception fallback", () => {
           intercepted.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -597,7 +597,7 @@ describe("provider runtime interception fallback", () => {
           intercepted.push(toolCall);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: true, skipConverter: true });
@@ -634,7 +634,7 @@ describe("provider runtime interception fallback", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: false, skipConverter: true });
@@ -675,7 +675,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: false, skipConverter: true });
@@ -717,7 +717,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({
@@ -770,7 +770,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       schemaValidationFailureMode: "pass_through",
     });
 
@@ -825,7 +825,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     expect(result).toEqual({ intercepted: false, skipConverter: true });
@@ -872,7 +872,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       schemaValidationFailureMode: "pass_through",
     });
 
@@ -919,7 +919,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       schemaValidationFailureMode: "pass_through",
     });
 
@@ -966,7 +966,7 @@ describe("provider runtime interception fallback", () => {
           interceptedCount += 1;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       schemaValidationFailureMode: "pass_through",
     });
 
@@ -1012,7 +1012,7 @@ describe("provider runtime interception fallback", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1045,7 +1045,7 @@ describe("provider runtime interception fallback", () => {
       ...createBaseOptions({
         toolLoopGuard: guard,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: false,
     });
@@ -1075,7 +1075,7 @@ describe("provider runtime interception fallback", () => {
       ...createBaseOptions({
         toolLoopGuard: guard,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1124,7 +1124,7 @@ describe("provider runtime interception fallback", () => {
         } as any,
         allowedToolNames: new Set(["edit"]),
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1202,7 +1202,7 @@ describe("provider runtime interception fallback", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1289,7 +1289,7 @@ describe("provider runtime interception fallback", () => {
         ]),
         toolLoopGuard: guard,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1328,7 +1328,7 @@ describe("provider runtime interception fallback", () => {
           interceptedName = toolCall.function.name;
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {
@@ -1377,7 +1377,7 @@ describe("graduated response (soft/hard termination)", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: false,
     });
@@ -1421,7 +1421,7 @@ describe("graduated response (soft/hard termination)", () => {
         toolSchemaMap: new Map(),
         toolLoopGuard: guard,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: false,
     });
@@ -1476,7 +1476,7 @@ describe("graduated response (soft/hard termination)", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
     });
 
     // Soft block for schema validation: hint emitted, no termination
@@ -1511,7 +1511,7 @@ describe("graduated response (soft/hard termination)", () => {
         allowedToolNames: new Set(["edit"]),
         toolLoopGuard: guard,
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: false,
     });
@@ -1600,7 +1600,7 @@ describe("graduated response (soft/hard termination)", () => {
           toolResults.push(toolResult);
         },
       }),
-      boundary: createProviderBoundary("v1", "cursor-acp"),
+      boundary: createProviderBoundary("v1", "cursor-kilo"),
       boundaryMode: "v1",
       autoFallbackToLegacy: true,
       onFallbackToLegacy: () => {

@@ -4,9 +4,9 @@ import { ModelDiscoveryService } from "../../../src/models/discovery.js";
 describe("models/discovery", () => {
   it("does not pass the legacy cursor-agent placeholder to SDK model discovery", async () => {
     const originalApiKey = process.env.CURSOR_API_KEY;
-    const originalRunnerPath = process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+    const originalRunnerPath = process.env.CURSOR_KILO_SDK_RUNNER_PATH;
     process.env.CURSOR_API_KEY = "cursor-agent";
-    process.env.CURSOR_ACP_SDK_RUNNER_PATH = "/definitely/missing/sdk-runner.mjs";
+    process.env.CURSOR_KILO_SDK_RUNNER_PATH = "/definitely/missing/sdk-runner.mjs";
 
     const service = new ModelDiscoveryService();
 
@@ -19,9 +19,9 @@ describe("models/discovery", () => {
         process.env.CURSOR_API_KEY = originalApiKey;
       }
       if (originalRunnerPath === undefined) {
-        delete process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+        delete process.env.CURSOR_KILO_SDK_RUNNER_PATH;
       } else {
-        process.env.CURSOR_ACP_SDK_RUNNER_PATH = originalRunnerPath;
+        process.env.CURSOR_KILO_SDK_RUNNER_PATH = originalRunnerPath;
       }
     }
   });

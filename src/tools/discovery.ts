@@ -1,6 +1,7 @@
-import type { ToolListResponse } from "@opencode-ai/sdk";
+import type { ToolListResponse } from "@kilocode/sdk";
 import { createLogger } from "../utils/logger";
 import stripAnsi from "strip-ansi";
+import { resolveKiloCliCommand } from "../kilo/platform.js";
 
 const log = createLogger("tools:discovery");
 
@@ -26,9 +27,8 @@ export class OpenCodeToolDiscovery {
 
   constructor(client: any, opts: DiscoveryOptions = {}) {
     this.client = client;
-    this.ttl = opts.ttlMs ?? Number(process.env.CURSOR_ACP_TOOL_CACHE_TTL_MS || 60000);
-    // Default: auto (SDK first, CLI fallback). Users can force sdk or cli.
-    const envPref = process.env.CURSOR_ACP_TOOL_EXECUTOR as any;
+    this.ttl = opts.ttlMs ?? Number(process.env.CURSOR_KILO_TOOL_CACHE_TTL_MS || process.env.CURSOR_ACP_TOOL_CACHE_TTL_MS || 60000);
+    const envPref = (process.env.CURSOR_KILO_TOOL_EXECUTOR ?? process.env.CURSOR_ACP_TOOL_EXECUTOR) as any;
     this.executorPref = opts.executor ?? (envPref === "sdk" || envPref === "cli" ? envPref : "auto");
   }
 
@@ -40,14 +40,12 @@ export class OpenCodeToolDiscovery {
 
     let tools: OpenCodeTool[] = [];
 
-    // Try SDK first (tool.list) if available
     if (this.executorPref !== "cli" && this.client?.tool?.list) {
       try {
         const resp: ToolListResponse = await this.client.tool.list({});
         const rawTools = Array.isArray(resp?.data) ? resp.data : (resp?.data as any)?.tools || [];
         tools = rawTools.map((t: any) => this.normalize(t, "sdk"));
 
-        // Merge MCP tools if available on client (best-effort)
         const mcpTools = await this.tryListMcpTools();
         tools = tools.concat(mcpTools);
       } catch (err) {
@@ -55,14 +53,16 @@ export class OpenCodeToolDiscovery {
       }
     }
 
-    // Fallback: CLI opencode tool list --json (only if executorPref allows)
+    // Fallback: `kilo tool list --json` (Kilo fork; same as opencode tool list)
     if (tools.length === 0 && this.executorPref !== "sdk") {
       try {
         const { spawnSync } = await import("node:child_process");
-        const cliCmd = process.env.OPENCODE_TOOL_LIST_SHIM
-          ? process.env.OPENCODE_TOOL_LIST_SHIM.split(" ")
-          : ["opencode", "tool", "list", "--json"];
-        const res = spawnSync(cliCmd[0], cliCmd.slice(1), { encoding: "utf-8" });
+        const { resolveToolExecMaxBuffer } = await import("./exec-utils.js");
+        const cliCmd = resolveKiloCliCommand();
+        const res = spawnSync(cliCmd[0], cliCmd.slice(1), {
+          encoding: "utf-8",
+          maxBuffer: resolveToolExecMaxBuffer(),
+        });
         const parsed = this.parseCliJson(res.stdout || "");
         if (parsed?.data?.tools?.length) {
           tools = parsed.data.tools.map((t: any) => this.normalize(t, "cli"));
@@ -74,16 +74,17 @@ export class OpenCodeToolDiscovery {
       }
     }
 
-    // Silent skip if none
-
-    // Deduplicate by id after namespace
     const map = new Map<string, OpenCodeTool>();
     for (const t of tools) {
       map.set(t.name, t);
+      // Also index by native id so cursor-agent can call read/glob/websearch directly
+      if (t.id !== t.name) {
+        map.set(t.id, t);
+      }
     }
     this.cache = map;
     this.cacheExpiry = now + this.ttl;
-    return Array.from(this.cache.values());
+    return Array.from(new Map(Array.from(map.values()).map((t) => [t.name, t])).values());
   }
 
   getToolByName(name: string): OpenCodeTool | undefined {
@@ -96,18 +97,17 @@ export class OpenCodeToolDiscovery {
     return {
       id,
       name,
-      description: String(t.description || "OpenCode tool"),
+      description: String(t.description || "Kilo tool"),
       parameters: t.parameters || { type: "object", properties: {} },
       source,
     };
   }
 
   private namespace(id: string): string {
-    const sanitized = id.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 59); // leave room for prefix
+    const sanitized = id.replace(/[^a-zA-Z0-9_\-]/g, "_").slice(0, 59);
     return `oc_${sanitized}`;
   }
 
-  // Best-effort MCP discovery (if SDK exposes it)
   private async tryListMcpTools(): Promise<OpenCodeTool[]> {
     try {
       const mcpList = this.client?.mcp?.tool?.list ? await this.client.mcp.tool.list() : null;
@@ -119,15 +119,12 @@ export class OpenCodeToolDiscovery {
     }
   }
 
-  // Parse JSON from noisy CLI output (strip ANSI, take last JSON object)
   private parseCliJson(stdout: string): any | null {
     const clean = stripAnsi(stdout || "").trim();
     if (!clean) return null;
-    // Fast path
     try {
       return JSON.parse(clean);
     } catch {}
-    // Find last '{'
     const lastBrace = clean.lastIndexOf("{");
     if (lastBrace >= 0) {
       const substr = clean.slice(lastBrace);

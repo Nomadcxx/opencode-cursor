@@ -33,14 +33,14 @@ describe("resolveWorkspaceDirectory", () => {
 
   beforeEach(() => {
     previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
-    previousWorkspaceEnv = process.env.CURSOR_ACP_WORKSPACE;
+    previousWorkspaceEnv = process.env.CURSOR_KILO_WORKSPACE;
     previousProjectDirEnv = process.env.OPENCODE_CURSOR_PROJECT_DIR;
     previousCwd = process.cwd();
 
     tempConfigHome = mkdtempSync(join(tmpdir(), "opencode-cursor-cfg-"));
     tempWorkspace = mkdtempSync(join(tmpdir(), "opencode-cursor-ws-"));
     process.env.XDG_CONFIG_HOME = tempConfigHome;
-    delete process.env.CURSOR_ACP_WORKSPACE;
+    delete process.env.CURSOR_KILO_WORKSPACE;
     delete process.env.OPENCODE_CURSOR_PROJECT_DIR;
   });
 
@@ -57,9 +57,9 @@ describe("resolveWorkspaceDirectory", () => {
       process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
     }
     if (previousWorkspaceEnv === undefined) {
-      delete process.env.CURSOR_ACP_WORKSPACE;
+      delete process.env.CURSOR_KILO_WORKSPACE;
     } else {
-      process.env.CURSOR_ACP_WORKSPACE = previousWorkspaceEnv;
+      process.env.CURSOR_KILO_WORKSPACE = previousWorkspaceEnv;
     }
     if (previousProjectDirEnv === undefined) {
       delete process.env.OPENCODE_CURSOR_PROJECT_DIR;
@@ -94,8 +94,8 @@ describe("resolveWorkspaceDirectory", () => {
     expect(result).not.toBe("/");
   });
 
-  it("rejects '/' provided via CURSOR_ACP_WORKSPACE", () => {
-    process.env.CURSOR_ACP_WORKSPACE = "/";
+  it("rejects '/' provided via CURSOR_KILO_WORKSPACE", () => {
+    process.env.CURSOR_KILO_WORKSPACE = "/";
     process.chdir(tempWorkspace);
     const result = resolveWorkspaceDirectory(undefined, undefined);
     expect(result).toBe(resolve(tempWorkspace));
@@ -108,8 +108,8 @@ describe("resolveWorkspaceDirectory", () => {
     expect(result).toBe(resolve(tempWorkspace));
   });
 
-  it("respects CURSOR_ACP_WORKSPACE when it is a real directory", () => {
-    process.env.CURSOR_ACP_WORKSPACE = tempWorkspace;
+  it("respects CURSOR_KILO_WORKSPACE when it is a real directory", () => {
+    process.env.CURSOR_KILO_WORKSPACE = tempWorkspace;
     const result = resolveWorkspaceDirectory(undefined, undefined);
     expect(result).toBe(resolve(tempWorkspace));
   });

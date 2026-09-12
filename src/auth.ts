@@ -28,7 +28,7 @@ export interface ResolveSdkApiKeyInput {
 const PLACEHOLDER_API_KEYS = new Set(["cursor-agent"]);
 
 function getHomeDir(): string {
-  const override = process.env.CURSOR_ACP_HOME_DIR;
+  const override = process.env.CURSOR_KILO_HOME_DIR;
   if (override && override.length > 0) {
     return override;
   }

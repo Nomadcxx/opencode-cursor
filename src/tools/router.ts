@@ -1,6 +1,7 @@
 import { createLogger } from "../utils/logger";
 import type { OpenCodeTool } from "./discovery";
 import type { ExecutionResult } from "./core/types.js";
+import { isInterceptableToolName } from "../kilo/platform.js";
 
 const log = createLogger("tools:router");
 
@@ -34,7 +35,12 @@ export class ToolRouter {
   }
 
   isOpenCodeTool(name: string | undefined): boolean {
-    return !!name && name.startsWith("oc_");
+    if (!name) return false;
+    // oc_* prefix (same convention as OpenCode/Kilo fork)
+    if (name.startsWith("oc_")) return true;
+    // Native Kilo tools: read, glob, websearch, MCP server_tool, etc.
+    if (isInterceptableToolName(name)) return true;
+    return this.ctx.toolsByName.has(name);
   }
 
   async handleToolCall(event: ToolCallEvent, meta: { id: string; created: number; model: string }): Promise<ToolResultChunk | null> {
@@ -42,22 +48,21 @@ export class ToolRouter {
     let name = event.name || this.inferName(event);
     if (!this.isOpenCodeTool(name)) return null;
 
-    // Resolve aliases via SkillResolver if configured
     if (this.ctx.resolveName) {
-      const resolved = this.ctx.resolveName(name);
+      const resolved = this.ctx.resolveName(name!);
       if (resolved) {
         name = resolved;
       }
     }
 
-    const tool = this.ctx.toolsByName.get(name);
+    const tool = this.ctx.toolsByName.get(name!) ?? this.ctx.toolsByName.get(name!.replace(/^oc_/, ""));
     if (!tool) {
       log.warn("Unknown tool call", { name });
-      return this.buildResult(meta, callId, name, { status: "error", error: `Unknown tool ${name}` });
+      return this.buildResult(meta, callId, name!, { status: "error", error: `Unknown tool ${name}` });
     }
 
     const args = this.extractArgs(event);
-    log.debug("Executing tool", { name, toolId: tool.id });
+    log.debug("Executing tool via Kilo", { name, toolId: tool.id });
     const t0 = Date.now();
     const result = await this.ctx.execute(tool.id, args);
     const elapsed = Date.now() - t0;
@@ -66,7 +71,7 @@ export class ToolRouter {
     } else {
       log.debug("Tool execution completed", { name, toolId: tool.id, elapsed });
     }
-    return this.buildResult(meta, callId, name, result);
+    return this.buildResult(meta, callId, name!, result);
   }
 
   private extractArgs(event: ToolCallEvent): any {
@@ -74,7 +79,6 @@ export class ToolRouter {
       const [key] = Object.keys(event.tool_call);
       return event.tool_call[key]?.args || {};
     }
-    // Some agents send args at top-level
     return (event as any).arguments || {};
   }
 
@@ -101,10 +105,9 @@ export class ToolRouter {
       ],
     };
 
-    // OpenAI tool result convention: include output in a message? We'll place in a synthetic "content" string.
     const content = result.status === "success" ? result.output ?? "" : (result.error || "unknown error");
 
-    delta.tool_calls[0].function.arguments = JSON.stringify({ result: content }).slice(0, 8000); // guard size
+    delta.tool_calls[0].function.arguments = JSON.stringify({ result: content }).slice(0, 8000);
 
     return {
       id: meta.id,

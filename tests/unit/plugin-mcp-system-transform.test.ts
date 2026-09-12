@@ -19,7 +19,7 @@ describe("Plugin MCP system transform", () => {
       [
         {
           type: "function",
-          function: { name: "mcp__hybrid_memory__memory_search" },
+          function: { name: "hybrid_memory_memory_search" },
         },
       ],
       [
@@ -37,9 +37,9 @@ describe("Plugin MCP system transform", () => {
       ],
     );
 
-    expect(systemMessage).toContain("FULL exact name");
-    expect(systemMessage).toContain("mcp__");
-    expect(systemMessage).toContain("mcp__hybrid_memory__memory_search");
+    expect(systemMessage).toContain("Kilo name");
+    expect(systemMessage).toContain("GetDynamicTools");
+    expect(systemMessage).toContain("hybrid_memory_memory_search");
     expect(systemMessage).toContain("hybrid-memory");
     expect(systemMessage).toContain("memory_search");
     expect(systemMessage).toContain("memory_stats");
@@ -53,7 +53,7 @@ describe("Plugin MCP system transform", () => {
       [
         {
           type: "function",
-          function: { name: "mcp__test_filesystem__list_directory" },
+          function: { name: "test_filesystem_list_directory" },
         },
       ],
       [
@@ -66,7 +66,7 @@ describe("Plugin MCP system transform", () => {
       ],
     );
 
-    expect(systemMessage).toContain("mcp__test_filesystem__list_directory");
+    expect(systemMessage).toContain("test_filesystem_list_directory");
     expect(systemMessage).toContain("server: test-filesystem");
     expect(systemMessage).toContain("tool: list-directory");
   });
@@ -96,8 +96,22 @@ describe("Plugin MCP system transform", () => {
     expect(systemMessage).toContain("list_directory");
   });
 
-  it("returns null when no tools at all", () => {
+  it("includes skill invocation guidance when the tool list is empty", () => {
     const result = buildAvailableToolsSystemMessage([], [], []);
-    expect(result).toBeNull();
+    expect(result).toContain('skill({ name: "<id-from-available_skills>" })');
+    expect(result).toContain("name argument is required");
+    expect(result).toContain("available_skills");
+  });
+
+  it("always includes the agent skill invocation instruction", () => {
+    const systemMessage = buildAvailableToolsSystemMessage(
+      ["read", "skill"],
+      [],
+      [],
+    );
+
+    expect(systemMessage).toContain('skill({ name: "<id-from-available_skills>" })');
+    expect(systemMessage).toContain("name argument is required");
+    expect(systemMessage).toContain("available_skills");
   });
 });

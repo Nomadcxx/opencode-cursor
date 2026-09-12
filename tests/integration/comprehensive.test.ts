@@ -15,13 +15,13 @@ describe("Comprehensive End-to-End Integration", () => {
 
       await provider.init();
 
-      expect(provider.id).toBe("cursor-acp");
+      expect(provider.id).toBe("cursor-kilo");
       expect(provider.baseURL).toContain("32132");
 
       // Get language model
-      const model = provider.languageModel("cursor-acp/auto");
-      expect(model.modelId).toBe("cursor-acp/auto");
-      expect(model.provider).toBe("cursor-acp");
+      const model = provider.languageModel("cursor-kilo/auto");
+      expect(model.modelId).toBe("cursor-kilo/auto");
+      expect(model.provider).toBe("cursor-kilo");
 
       // Cleanup
       await provider.proxy.stop();
@@ -32,12 +32,12 @@ describe("Comprehensive End-to-End Integration", () => {
         mode: 'direct'
       });
 
-      expect(provider.id).toBe("cursor-acp");
+      expect(provider.id).toBe("cursor-kilo");
       expect(provider.name).toBe("Cursor ACP Provider");
 
       // Get language model
-      const model = provider.languageModel("cursor-acp/gpt-5.2");
-      expect(model.modelId).toBe("cursor-acp/gpt-5.2");
+      const model = provider.languageModel("cursor-kilo/gpt-5.2");
+      expect(model.modelId).toBe("cursor-kilo/gpt-5.2");
     });
   });
 

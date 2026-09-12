@@ -29,7 +29,7 @@ export function createCursorProvider(options: ProviderOptions = {}) {
 
     // Create the provider object
     const provider = {
-      id: "cursor-acp",
+      id: "cursor-kilo",
       name: "Cursor ACP Provider (Proxy Mode)",
       proxy,
       baseURL: '',
@@ -46,12 +46,12 @@ export function createCursorProvider(options: ProviderOptions = {}) {
       /**
        * Returns a language model for the given model ID
        */
-      languageModel(modelId: string = "cursor-acp/auto") {
-        const model = modelId.replace("cursor-acp/", "") || "auto";
+      languageModel(modelId: string = "cursor-kilo/auto") {
+        const model = modelId.replace("cursor-kilo/", "") || "auto";
 
         return {
           modelId,
-          provider: "cursor-acp",
+          provider: "cursor-kilo",
 
           /**
            * Generate text (non-streaming)
@@ -109,18 +109,18 @@ export function createCursorProvider(options: ProviderOptions = {}) {
   });
 
   return {
-    id: "cursor-acp",
+    id: "cursor-kilo",
     name: "Cursor ACP Provider",
 
     /**
      * Returns a language model for the given model ID
      */
-    languageModel(modelId: string = "cursor-acp/auto") {
-      const model = modelId.replace("cursor-acp/", "") || "auto";
+    languageModel(modelId: string = "cursor-kilo/auto") {
+      const model = modelId.replace("cursor-kilo/", "") || "auto";
 
       return {
         modelId,
-        provider: "cursor-acp",
+        provider: "cursor-kilo",
 
         /**
          * Generate text (non-streaming)

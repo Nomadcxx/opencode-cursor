@@ -1,3 +1,4 @@
+import { formatSseDone } from "./streaming/openai-sse.js";
 import type { StreamJsonResultEvent } from "./streaming/types.js";
 
 export type CursorUsageMetrics = {
@@ -109,4 +110,52 @@ export function createChatCompletionUsageChunk(
     choices: [],
     usage,
   };
+}
+
+function readFinishReason(payload: Record<string, unknown>): string | undefined {
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || choices.length === 0) {
+    return undefined;
+  }
+  const first = choices[0];
+  if (!first || typeof first !== "object") {
+    return undefined;
+  }
+  const finishReason = (first as Record<string, unknown>).finish_reason;
+  return typeof finishReason === "string" ? finishReason : undefined;
+}
+
+/** Kilo sums per-step usage into context %; skip intermediate tool-call turns. */
+export function shouldEmitOpenAiUsage(finishReason?: string | null): boolean {
+  return finishReason !== "tool_calls";
+}
+
+/** Attach OpenAI usage to a non-streaming chat completion payload. */
+export function appendOpenAiUsage<T extends Record<string, unknown>>(
+  payload: T,
+  usage?: OpenAiUsage,
+): T {
+  if (!usage || !shouldEmitOpenAiUsage(readFinishReason(payload))) {
+    return payload;
+  }
+  return { ...payload, usage };
+}
+
+/** Final SSE payloads: optional usage chunk, then [DONE]. */
+export function formatStreamUsageAndDoneSse(
+  id: string,
+  created: number,
+  model: string,
+  usage?: OpenAiUsage,
+  options?: { finishReason?: string | null },
+): string[] {
+  const payloads: string[] = [];
+  const emitUsage = usage && shouldEmitOpenAiUsage(options?.finishReason);
+  if (emitUsage) {
+    payloads.push(
+      `data: ${JSON.stringify(createChatCompletionUsageChunk(id, created, model, usage))}\n\n`,
+    );
+  }
+  payloads.push(formatSseDone());
+  return payloads;
 }

@@ -32,7 +32,7 @@ async function loadDefaultDeps(): Promise<McpClientManagerDeps> {
 
   defaultDeps = {
     createClient: () =>
-      new Client({ name: "open-cursor", version: "1.0.0" }, { capabilities: {} }),
+      new Client({ name: "kilo-cursor-plugin", version: "1.0.0" }, { capabilities: {} }),
     createTransport: (config: McpServerConfig) => {
       if (config.type === "local") {
         return new StdioClientTransport({

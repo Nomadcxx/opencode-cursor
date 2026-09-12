@@ -66,7 +66,7 @@ export class StreamToSseConverter {
 
   constructor(model: string, options?: { id?: string; created?: number }) {
     this.model = model;
-    this.id = options?.id ?? `cursor-acp-${Date.now()}`;
+    this.id = options?.id ?? `cursor-kilo-${Date.now()}`;
     this.created = options?.created ?? Math.floor(Date.now() / 1000);
   }
 

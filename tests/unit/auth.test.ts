@@ -5,7 +5,7 @@ import { tmpdir } from "os";
 import { pollForAuthFile, verifyCursorAuth, getAuthFilePath, getPossibleAuthPaths } from "../../src/auth";
 
 const TEST_TIMEOUT = 10000;
-const ORIGINAL_CURSOR_ACP_HOME_DIR = process.env.CURSOR_ACP_HOME_DIR;
+const ORIGINAL_CURSOR_KILO_HOME_DIR = process.env.CURSOR_KILO_HOME_DIR;
 const ORIGINAL_HOME = process.env.HOME;
 const ORIGINAL_XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
 let testHome = "";
@@ -42,7 +42,7 @@ describe("Auth Module", () => {
     testHome = mkdtempSync(join(tmpdir(), "cursor-auth-test-"));
     process.env.HOME = testHome;
     process.env.XDG_CONFIG_HOME = join(testHome, ".config");
-    process.env.CURSOR_ACP_HOME_DIR = testHome;
+    process.env.CURSOR_KILO_HOME_DIR = testHome;
     cleanupAuthFiles();
   });
 
@@ -55,10 +55,10 @@ describe("Auth Module", () => {
   });
 
   afterAll(() => {
-    if (ORIGINAL_CURSOR_ACP_HOME_DIR === undefined) {
-      delete process.env.CURSOR_ACP_HOME_DIR;
+    if (ORIGINAL_CURSOR_KILO_HOME_DIR === undefined) {
+      delete process.env.CURSOR_KILO_HOME_DIR;
     } else {
-      process.env.CURSOR_ACP_HOME_DIR = ORIGINAL_CURSOR_ACP_HOME_DIR;
+      process.env.CURSOR_KILO_HOME_DIR = ORIGINAL_CURSOR_KILO_HOME_DIR;
     }
     if (ORIGINAL_HOME === undefined) {
       delete process.env.HOME;

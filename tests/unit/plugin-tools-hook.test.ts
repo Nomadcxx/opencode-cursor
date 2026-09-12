@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync, mkdirSync, existsSync,
 import { tmpdir } from "os";
 import { join } from "path";
 import { CursorPlugin, shouldRegisterNativeToolHook } from "../../src/plugin";
-import type { PluginInput } from "@opencode-ai/plugin";
+import type { PluginInput } from "@kilocode/plugin";
 
 function createMockInput(directory: string, worktree: string = directory): PluginInput {
   return {

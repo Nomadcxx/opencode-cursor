@@ -4,7 +4,7 @@ import { parseOpenAIRequest } from "../../src/proxy/handler.js";
 describe("RequestHandler", () => {
   it("should parse OpenAI chat completion request", () => {
     const body = {
-      model: "cursor-acp/auto",
+      model: "cursor-kilo/auto",
       messages: [
         { role: "user", content: "Hello" }
       ],

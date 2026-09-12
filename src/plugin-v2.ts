@@ -21,6 +21,7 @@ import {
   setStoredApiKey,
 } from "./plugin.js";
 import { readMcpConfigs } from "./mcp/config.js";
+import { isDirectMcpEnabled } from "./kilo/cursor-cli-bridge.js";
 import { McpClientManager } from "./mcp/client-manager.js";
 import {
   buildMcpToolHookEntries,
@@ -154,7 +155,7 @@ export function createV2Setup() {
     let mcpToolEntries: Record<string, any> = {};
     let mcpToolDefs: any[] = [];
     let mcpToolSummaries: Array<{ serverName: string; toolName: string; callName?: string; description?: string; params?: string[] }> = [];
-    const mcpEnabled = process.env.CURSOR_ACP_MCP_BRIDGE !== "false";
+    const mcpEnabled = isDirectMcpEnabled();
 
     if (mcpEnabled) {
       try {
@@ -182,7 +183,7 @@ export function createV2Setup() {
     }
 
     // Tools (skills) discovery/execution wiring (same as V1).
-    const toolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS !== "false";
+    const toolsEnabled = process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS !== "false";
     const legacyProxyToolPathsEnabled = toolsEnabled && TOOL_LOOP_MODE === "proxy-exec";
 
     const localRegistry = new CoreRegistry();
@@ -217,7 +218,7 @@ export function createV2Setup() {
       event.request = routeRequestToProxy(event.request, proxyBaseURL);
     }));
 
-    // Register the cursor-acp provider + auth via catalog/integration transforms.
+    // Register the cursor-kilo provider + auth via catalog/integration transforms.
     registrations.push(await ctx.catalog.transform((catalog) => {
       catalog.provider.update(CURSOR_PROVIDER_ID, (p) => {
         p.name = "Cursor";

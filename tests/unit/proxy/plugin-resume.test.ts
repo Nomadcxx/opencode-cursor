@@ -17,7 +17,7 @@ import { isResumeSpecificFailure } from "../../../src/utils/errors.js";
 describe("plugin resume orchestration", () => {
   afterEach(() => {
     _resetSessionResumeCache();
-    delete process.env.CURSOR_ACP_SESSION_RESUME;
+    delete process.env.CURSOR_KILO_SESSION_RESUME;
   });
 
   const baseInput = {
@@ -39,7 +39,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("resolvePromptForBackend: enabled + no chatId → full prompt + sessionKey", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const result = resolvePromptForBackend(baseInput);
     expect(result.prompt).toBe("USER: Remember BETA");
     expect(result.resumeChatId).toBeUndefined();
@@ -51,7 +51,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("resolvePromptForBackend: enabled + no usable anchor → full prompt, no sessionKey", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const messages = [{ role: "system", content: "You are helpful" }];
     const result = resolvePromptForBackend({
       ...baseInput,
@@ -64,7 +64,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("resolvePromptForBackend: enabled + chatId + incremental → incremental + resume", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
     // Seed the cache as if turn 1 produced a session_id.
     const chatId = "chat-abc";
@@ -92,8 +92,32 @@ describe("plugin resume orchestration", () => {
     expect(followUp.usedIncremental).toBe(true);
   });
 
+  it("resolvePromptForBackend: forceFreshCursorSession skips cached resume", () => {
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
+    const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
+    captureResumeChatIdFromEvent(
+      { type: "system", session_id: "chat-abc" } as any,
+      sessionKey,
+      "gpt-5",
+      "/workspace",
+      contentPrefix,
+    );
+    const followUp = resolvePromptForBackend({
+      ...baseInput,
+      messages: [
+        { role: "user", content: "Remember BETA" },
+        { role: "assistant", content: "Got it." },
+        { role: "user", content: "What was the codeword?" },
+      ],
+      forceFreshCursorSession: true,
+    });
+    expect(followUp.resumeChatId).toBeUndefined();
+    expect(followUp.usedIncremental).toBe(false);
+    expect(followUp.prompt).toContain("Remember BETA");
+  });
+
   it("resolvePromptForBackend: resumed tool continuation includes matching tool call context", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const firstTurn = {
       ...baseInput,
       messages: [{ role: "user", content: "Read foo.txt" }],
@@ -128,8 +152,76 @@ describe("plugin resume orchestration", () => {
     expect(followUp.prompt).toContain('TOOL_RESULT (name: read, call_id: call_1): {"content":"file contents"}');
   });
 
+  it("isolates resume cache per Kilo session ID for the same opening message", () => {
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
+    const anchor = deriveConversationAnchor(baseInput.messages)!.anchor;
+
+    const tabAFirst = resolvePromptForBackend({
+      ...baseInput,
+      kiloSessionId: "kilo-tab-a",
+    });
+    const tabBFirst = resolvePromptForBackend({
+      ...baseInput,
+      kiloSessionId: "kilo-tab-b",
+    });
+
+    expect(tabAFirst.sessionKey).not.toBe(tabBFirst.sessionKey);
+    expect(tabAFirst.sessionKey).toBe(
+      buildSessionKey("/workspace", "gpt-5", anchor, "kilo-tab-a"),
+    );
+
+    captureResumeChatIdFromEvent(
+      { type: "system", session_id: "chat-tab-a" } as any,
+      tabAFirst.sessionKey,
+      "gpt-5",
+      "/workspace",
+      tabAFirst.contentPrefix,
+    );
+
+    const tabBFollowUp = resolvePromptForBackend({
+      ...baseInput,
+      kiloSessionId: "kilo-tab-b",
+      messages: [
+        { role: "user", content: "Remember BETA" },
+        { role: "assistant", content: "Got it." },
+        { role: "user", content: "What was the codeword?" },
+      ],
+    });
+
+    expect(tabBFollowUp.resumeChatId).toBeUndefined();
+  });
+
+  it("keeps the same session key after compaction while skipping cached resume", () => {
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
+    const first = resolvePromptForBackend({
+      ...baseInput,
+      kiloSessionId: "kilo-1",
+    });
+    captureResumeChatIdFromEvent(
+      { type: "system", session_id: "chat-before" } as any,
+      first.sessionKey!,
+      "gpt-5",
+      "/workspace",
+      first.contentPrefix,
+    );
+
+    const afterCompaction = resolvePromptForBackend({
+      ...baseInput,
+      kiloSessionId: "kilo-1",
+      forceFreshCursorSession: true,
+      messages: [
+        { role: "user", content: "Remember BETA" },
+        { role: "assistant", content: "Compacted summary." },
+        { role: "user", content: "Continue from summary" },
+      ],
+    });
+
+    expect(afterCompaction.sessionKey).toBe(first.sessionKey);
+    expect(afterCompaction.resumeChatId).toBeUndefined();
+  });
+
   it("does not reuse a resume chat across diverged same-opening conversations", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const firstTurn = resolvePromptForBackend(baseInput);
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-abc" } as any,
@@ -186,7 +278,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("resolvePromptForBackend: enabled + chatId + incremental null → full prompt + resume", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
     const chatId = "chat-abc";
     captureResumeChatIdFromEvent(
@@ -210,7 +302,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captureResumeChatIdFromEvent records a string session_id", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-123" } as any,
@@ -223,7 +315,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captureResumeChatIdFromEvent ignores non-string or empty session_id", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
     captureResumeChatIdFromEvent({ type: "system" } as any, key, "gpt-5", "/workspace", "prefix");
     captureResumeChatIdFromEvent({ type: "system", session_id: 123 } as any, key, "gpt-5", "/workspace", "prefix");
@@ -232,6 +324,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captureResumeChatIdFromEvent no-ops when disabled or no sessionKey", () => {
+    process.env.CURSOR_KILO_SESSION_RESUME = "false";
     const key = "/workspace\0gpt-5\0anchor";
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-123" } as any,
@@ -242,7 +335,7 @@ describe("plugin resume orchestration", () => {
     );
     expect(getResumeChatId(key, "prefix")).toBeUndefined();
 
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-123" } as any,
       undefined,
@@ -254,7 +347,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captureResumeChatIdFromOutput parses NDJSON lines and records session_id", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
     const output = [
       '{"type":"system","session_id":"chat-xyz"}',
@@ -309,7 +402,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captureResumeChatIdFromOutput ignores malformed and empty lines", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
     const output = [
       "",
@@ -323,7 +416,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("falls back to full prompt when tool fingerprint changes", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const { sessionKey, contentPrefix, toolFingerprint } = resolvePromptForBackend({
       ...baseInput,
       tools: [{ function: { name: "read", description: "Read files", parameters: { properties: {} } } }],
@@ -355,7 +448,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("invalidates Task metadata through the tool fingerprint alone", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
 
     const task = (agent: string) => ({
       type: "function",
@@ -404,7 +497,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("captures session_id from stream result events", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const key = "/workspace\0gpt-5\0anchor";
     captureResumeChatIdFromEvent(
       { type: "result", session_id: "chat-stream" } as any,
@@ -417,7 +510,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("evicts cached chatId on resume-specific failures", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-abc" } as any,
@@ -438,7 +531,7 @@ describe("plugin resume orchestration", () => {
   });
 
   it("does not evict cached chatId on transient failures", () => {
-    process.env.CURSOR_ACP_SESSION_RESUME = "1";
+    process.env.CURSOR_KILO_SESSION_RESUME = "1";
     const { sessionKey, contentPrefix } = resolvePromptForBackend(baseInput);
     captureResumeChatIdFromEvent(
       { type: "system", session_id: "chat-abc" } as any,

@@ -52,6 +52,14 @@ export function shouldFallbackToSdk(
   return preference === "auto" && isUsableSdkApiKey(sdkApiKey);
 }
 
+/** In auto mode, prefer SDK when Kilo/OpenCode auth provided a real token. */
+export function shouldPreferSdkInAuto(
+  preference: CursorBackendPreference,
+  sdkApiKey: string | undefined,
+): boolean {
+  return preference === "auto" && isUsableSdkApiKey(sdkApiKey);
+}
+
 export function selectBackendForRequest(
   input: SelectBackendForRequestInput,
 ): CursorRuntimeBackend {
@@ -59,11 +67,18 @@ export function selectBackendForRequest(
     return "sdk";
   }
 
-  if (
-    input.preference === "auto" &&
-    !input.cursorAgentAvailable &&
-    isUsableSdkApiKey(input.sdkApiKey)
-  ) {
+  if (input.preference === "cursor-agent") {
+    return "cursor-agent";
+  }
+
+  // Auto: Kilo OAuth/API credentials live in the auth store and feed the SDK
+  // runner. cursor-agent uses its own cli-config.json login, so prefer SDK when
+  // we already have a real token from `kilo auth login cursor`.
+  if (shouldPreferSdkInAuto(input.preference, input.sdkApiKey)) {
+    return "sdk";
+  }
+
+  if (!input.cursorAgentAvailable) {
     return "sdk";
   }
 

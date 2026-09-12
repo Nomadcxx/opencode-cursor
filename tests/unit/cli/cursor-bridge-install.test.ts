@@ -18,7 +18,7 @@ describe("cli cursor bridge hook install", () => {
   });
 
   it("installs the Cursor sessionStart hook into the current workspace", () => {
-    const dir = mkdtempSync(join(tmpdir(), "open-cursor-bridge-"));
+    const dir = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-bridge-"));
 
     try {
       const result = ensureCursorBridgeHook(dir, { dryRun: false });
@@ -38,7 +38,7 @@ describe("cli cursor bridge hook install", () => {
   });
 
   it("preserves existing Cursor hooks and avoids duplicate bridge hooks", () => {
-    const dir = mkdtempSync(join(tmpdir(), "open-cursor-bridge-"));
+    const dir = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-bridge-"));
     const cursorDir = join(dir, ".cursor");
     const hooksPath = join(cursorDir, "hooks.json");
 
@@ -69,7 +69,7 @@ describe("cli cursor bridge hook install", () => {
   });
 
   it("does not write Cursor files during dry-run", () => {
-    const dir = mkdtempSync(join(tmpdir(), "open-cursor-bridge-"));
+    const dir = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-bridge-"));
 
     try {
       const result = ensureCursorBridgeHook(dir, { dryRun: true });
@@ -82,7 +82,7 @@ describe("cli cursor bridge hook install", () => {
   });
 
   it("uses the user hook command shape for user-level Cursor hooks", () => {
-    const dir = mkdtempSync(join(tmpdir(), "open-cursor-bridge-user-"));
+    const dir = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-bridge-user-"));
 
     try {
       ensureCursorBridgeHook(dir, { dryRun: false, scope: "user" });

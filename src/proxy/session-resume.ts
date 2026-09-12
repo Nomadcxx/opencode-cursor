@@ -13,8 +13,10 @@
  * - Anchor is derived from the first non-meta user message using a heuristic
  *   filter for OpenCode's title-generation prompts. If OpenCode rewords those
  *   prompts, the filter may need updating.
- * - Session resume is keyed per workspace + model + first-message hash. Changing
- *   any of those starts a fresh chat.
+ * - Session resume is keyed per workspace + model + Kilo session ID (when sent
+ *   via X-Kilo-Session-ID) + first-message hash. Changing any of those starts a
+ *   fresh chat. The Kilo session ID survives compaction, so compaction invalidation
+ *   clears the cached Cursor chat for that tab without changing the key.
  * - Session resume is only supported for the cursor-agent backend.
  */
 
@@ -149,14 +151,34 @@ function canonicalizeContentForAnchor(content: unknown): string {
     .join("\n");
 }
 
-/** Build a unique session key from workspace, model, and conversation anchor. */
-export function buildSessionKey(workspace: string, model: string, anchor: string): string {
+/** Build a unique session key from workspace, model, optional Kilo session ID, and anchor. */
+export function buildSessionKey(
+  workspace: string,
+  model: string,
+  anchor: string,
+  kiloSessionId?: string,
+): string {
+  const normalizedKiloSessionId = typeof kiloSessionId === "string" ? kiloSessionId.trim() : "";
+  if (normalizedKiloSessionId) {
+    return `${workspace}\0${model}\0${normalizedKiloSessionId}\0${anchor}`;
+  }
   return `${workspace}\0${model}\0${anchor}`;
 }
 
-/** Return whether `CURSOR_ACP_SESSION_RESUME` is enabled (1/true/on/yes). */
+const SESSION_RESUME_FALSE_VALUES = new Set(["0", "false", "off", "no", "disabled"]);
+
+/**
+ * Return whether session resume is enabled.
+ * Enabled by default; set `CURSOR_KILO_SESSION_RESUME=false` (or `0`/`off`/`no`) to disable.
+ */
 export function isSessionResumeEnabled(): boolean {
-  const value = process.env.CURSOR_ACP_SESSION_RESUME?.toLowerCase();
+  const value = process.env.CURSOR_KILO_SESSION_RESUME?.trim().toLowerCase();
+  if (value === undefined || value === "") {
+    return true;
+  }
+  if (SESSION_RESUME_FALSE_VALUES.has(value)) {
+    return false;
+  }
   return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 

@@ -1,0 +1,1452 @@
+#!/usr/bin/env node
+
+import { execFileSync } from "child_process";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { homedir } from "os";
+import { basename, dirname, join, resolve } from "path";
+import { fileURLToPath } from "url";
+import {
+  discoverModelsFromCursorAgent,
+  fallbackModels,
+} from "./model-discovery.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
+import { parseCursorBackendPreference } from "../provider/backend.js";
+import { parseConfigJson } from "../kilo/platform.js";
+import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent-child.js";
+import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
+import { mergeKiloModelCatalog } from "../models/kilo-catalog.js";
+import {
+  discoverModelsAuthenticated,
+  migrateLegacyModelKeys,
+} from "../models/discover-with-auth.js";
+import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
+import { isSessionResumeEnabled } from "../proxy/session-resume.js";
+import { BRIDGE_JSON_CONTEXT } from "../proxy/bridge-json.js";
+import type { DiscoveredModel } from "./model-discovery.js";
+
+const BRANDING_HEADER = `
+ ▄▄▄  ▄▄▄▄  ▄▄▄▄▄ ▄▄  ▄▄      ▄▄▄  ▄▄ ▄▄ ▄▄▄▄   ▄▄▄▄   ▄▄▄   ▄▄▄▄
+██ ██ ██ ██ ██▄▄  ███▄██ ▄▄▄ ██ ▀▀ ██ ██ ██ ██ ██▄▄▄  ██ ██  ██ ██
+▀█▄█▀ ██▀▀  ██▄▄▄ ██ ▀██     ▀█▄█▀ ▀█▄█▀ ██▀█▄ ▄▄▄█▀  ▀█▄█▀  ██▀█▄
+`;
+
+export function getBrandingHeader(): string {
+  return BRANDING_HEADER.trim();
+}
+
+type CheckResult = {
+  name: string;
+  passed: boolean;
+  message: string;
+  warning?: boolean;
+};
+
+type StatusResult = {
+  installMethod: "symlink" | "npm-direct" | "none";
+  plugin: {
+    path: string;
+    type: "symlink" | "file" | "missing";
+    target?: string;
+  };
+  provider: {
+    configPath: string;
+    name: string;
+    enabled: boolean;
+    baseUrl: string;
+    modelCount: number;
+  };
+  aiSdk: {
+    installed: boolean;
+  };
+  auth: {
+    legacyCursorAuthFile: boolean;
+    sdkApiKey: boolean;
+    sdkApiKeySource?: "CURSOR_API_KEY" | "provider.options.apiKey";
+  };
+  runtime: {
+    backend: {
+      preference: "auto" | "cursor-agent" | "sdk";
+    };
+    agentPool: {
+      enabled: boolean;
+      idleMs: number;
+    };
+    sessionResume: {
+      enabled: boolean;
+    };
+    logging: {
+      level: string;
+      console: boolean;
+      dir: string;
+    };
+  };
+};
+
+type ModelExplanation = {
+  modelCount: number;
+  groupedCount: number;
+  directCount: number;
+  groups: Array<{
+    id: string;
+    name: string;
+    defaultCursorModel: string;
+    memberCount: number;
+    variants: Record<string, string>;
+  }>;
+  direct: string[];
+};
+
+export function checkBun(): CheckResult {
+  try {
+    const version = execFileSync("bun", ["--version"], { encoding: "utf8" }).trim();
+    return { name: "bun", passed: true, message: `v${version}` };
+  } catch {
+    return {
+      name: "bun",
+      passed: false,
+      message: "not found - install with: curl -fsSL https://bun.sh/install | bash",
+    };
+  }
+}
+
+export function checkCursorAgent(): CheckResult {
+  try {
+    const output = execFileSync(resolveCursorAgentBinary(), ["--version"], { encoding: "utf8" }).trim();
+    const version = output.split("\n")[0] || "installed";
+    return { name: "cursor-agent", passed: true, message: version };
+  } catch {
+    return {
+      name: "cursor-agent",
+      passed: false,
+      message: "not found - install with: curl -fsS https://cursor.com/install | bash",
+    };
+  }
+}
+
+export function checkCursorAgentLogin(): CheckResult {
+  try {
+    // cursor-agent stores credentials in ~/.cursor-agent or similar
+    // Try running a command that requires auth
+    execFileSync(resolveCursorAgentBinary(), ["models"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 3000,
+    });
+    return { name: "cursor-agent login", passed: true, message: "logged in" };
+  } catch {
+    return {
+      name: "cursor-agent login",
+      passed: false,
+      message: "not logged in - run: cursor-agent login",
+      warning: true,
+    };
+  }
+}
+
+function getProviderApiKey(config: unknown): string | undefined {
+  const provider = (config as any)?.provider?.[PROVIDER_ID];
+  const apiKey = provider?.options?.apiKey;
+  return typeof apiKey === "string" ? apiKey : undefined;
+}
+
+function resolveCliSdkAuthSource(config: unknown): StatusResult["auth"]["sdkApiKeySource"] | undefined {
+  if (isUsableSdkApiKey(process.env.CURSOR_API_KEY)) {
+    return "CURSOR_API_KEY";
+  }
+  if (isUsableSdkApiKey(getProviderApiKey(config))) {
+    return "provider.options.apiKey";
+  }
+  return undefined;
+}
+
+function getRuntimeStatus(): StatusResult["runtime"] {
+  return {
+    backend: {
+      preference: parseCursorBackendPreference(process.env.CURSOR_KILO_BACKEND).preference,
+    },
+    agentPool: {
+      enabled: isAgentPoolEnabled(),
+      idleMs: parseAgentPoolIdleMs(),
+    },
+    sessionResume: {
+      enabled: isSessionResumeEnabled(),
+    },
+    logging: {
+      level: process.env.CURSOR_KILO_LOG_LEVEL || "info",
+      console: process.env.CURSOR_KILO_LOG_CONSOLE === "1",
+      dir: process.env.CURSOR_KILO_LOG_DIR || process.env.CURSOR_ACP_LOG_DIR || join(homedir(), ".kilo-cursor"),
+    },
+  };
+}
+
+function checkSdkApiKey(config: unknown): CheckResult {
+  const source = resolveCliSdkAuthSource(config);
+  if (source) {
+    return {
+      name: "Cursor SDK API key",
+      passed: true,
+      message: `available via ${source}`,
+    };
+  }
+
+  const backend = parseCursorBackendPreference(process.env.CURSOR_KILO_BACKEND).preference;
+  return {
+    name: "Cursor SDK API key",
+    passed: false,
+    warning: backend !== "sdk",
+    message: backend === "sdk"
+      ? "not configured - required for CURSOR_KILO_BACKEND=sdk"
+      : "not configured - required when CURSOR_KILO_BACKEND=sdk or when no Kilo auth credentials exist",
+  };
+}
+
+function adjustCursorAgentCheckForBackend(
+  check: CheckResult,
+  config: unknown,
+): CheckResult {
+  if (check.passed) {
+    return check;
+  }
+
+  const backend = parseCursorBackendPreference(process.env.CURSOR_KILO_BACKEND).preference;
+  const sdkSource = resolveCliSdkAuthSource(config);
+  const sdkCanHandleRequest = backend === "sdk" || (backend === "auto" && sdkSource);
+  if (!sdkCanHandleRequest) {
+    return check;
+  }
+
+  return {
+    ...check,
+    warning: true,
+    message: sdkSource
+      ? `${check.message}; SDK backend can be used via ${sdkSource}`
+      : `${check.message}; SDK backend selected but no SDK API key is configured`,
+  };
+}
+
+function checkKilo(): CheckResult {
+  try {
+    const version = execFileSync("kilo", ["--version"], { encoding: "utf8" }).trim();
+    return { name: "Kilo Code", passed: true, message: version };
+  } catch {
+    return {
+      name: "Kilo Code",
+      passed: false,
+      message: "not found - install from https://kilo.ai",
+    };
+  }
+}
+
+function isNpmDirectInstalled(config: unknown): boolean {
+  if (!config || typeof config !== "object") return false;
+  const plugins = (config as Record<string, unknown>).plugin;
+  if (!Array.isArray(plugins)) return false;
+  return plugins.some((p) => typeof p === "string" && p.startsWith(NPM_PACKAGE_PREFIX));
+}
+
+function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
+  try {
+    if (!existsSync(pluginPath)) {
+      if (isNpmDirectInstalled(config)) {
+        return {
+          name: "Plugin file",
+          passed: true,
+          message: "Installed via npm package (no symlink needed)",
+        };
+      }
+      return {
+        name: "Plugin file",
+        passed: false,
+        message: "not found - run: kilo-cursor-plugin install",
+      };
+    }
+    const stat = lstatSync(pluginPath);
+    if (stat.isSymbolicLink()) {
+      const target = readFileSync(pluginPath, "utf8");
+      return { name: "Plugin file", passed: true, message: `symlink → ${target}` };
+    }
+    return { name: "Plugin file", passed: true, message: "file (copy)" };
+  } catch {
+    return {
+      name: "Plugin file",
+      passed: false,
+      message: "error reading plugin file",
+    };
+  }
+}
+
+function checkProviderConfig(configPath: string): CheckResult {
+  try {
+    if (!existsSync(configPath)) {
+      return {
+        name: "Provider config",
+        passed: false,
+        message: "config not found - run: kilo-cursor-plugin install",
+      };
+    }
+    const config = readConfig(configPath);
+    const provider = config.provider?.["cursor-kilo"];
+    if (!provider) {
+      return {
+        name: "Provider config",
+        passed: false,
+        message: "cursor-kilo provider missing - run: kilo-cursor-plugin install",
+      };
+    }
+    const modelCount = Object.keys(provider.models || {}).length;
+    return { name: "Provider config", passed: true, message: `${modelCount} models` };
+  } catch {
+    return {
+      name: "Provider config",
+      passed: false,
+      message: "error reading config",
+    };
+  }
+}
+
+function checkAiSdk(opencodeDir: string): CheckResult {
+  try {
+    const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
+    if (existsSync(sdkPath)) {
+      return { name: "AI SDK", passed: true, message: "@ai-sdk/openai-compatible installed" };
+    }
+    return {
+      name: "AI SDK",
+      passed: false,
+      message: "not installed - run: kilo-cursor-plugin install",
+    };
+  } catch {
+    return {
+      name: "AI SDK",
+      passed: false,
+      message: "error checking AI SDK",
+    };
+  }
+}
+
+export function runDoctorChecks(configPath: string, pluginPath: string): CheckResult[] {
+  const kiloDir = dirname(configPath);
+  let config: unknown;
+  try {
+    config = readConfig(configPath);
+  } catch {
+    config = undefined;
+  }
+  return [
+    checkBun(),
+    adjustCursorAgentCheckForBackend(checkCursorAgent(), config),
+    checkCursorAgentLogin(),
+    checkSdkApiKey(config),
+    checkKilo(),
+    checkPluginFile(pluginPath, config),
+    checkProviderConfig(configPath),
+    checkAiSdk(kiloDir),
+  ];
+}
+
+type Command = "install" | "sync-models" | "models" | "uninstall" | "status" | "doctor" | "help";
+
+type Options = {
+  config?: string;
+  pluginDir?: string;
+  baseUrl?: string;
+  copy?: boolean;
+  skipModels?: boolean;
+  skipCursorBridge?: boolean;
+  installCursorBridge?: boolean;
+  cursorBridgeScope?: "project" | "user" | "both";
+  noBackup?: boolean;
+  variants?: boolean;
+  compact?: boolean;
+  dryRun?: boolean;
+  deep?: boolean;
+  explain?: boolean;
+  json?: boolean;
+};
+
+type SyncSummary = {
+  added: number;
+  updated: number;
+  removed: number;
+  priced: number;
+  skipped: number;
+};
+
+type SyncModelsResult = {
+  syncedCount: number;
+  groupedCount: number;
+  removedCount: number;
+  summary: SyncSummary;
+};
+
+type SyncModelsJsonResult = SyncModelsResult & {
+  configPath: string;
+  dryRun: boolean;
+  variants: boolean;
+  compact: boolean;
+};
+
+const PROVIDER_ID = "cursor";
+const NPM_PACKAGE_PREFIX = "kilo-cursor-plugin";
+const DEFAULT_SYNC_VARIANTS = true;
+const DEFAULT_SYNC_COMPACT = true;
+const DEFAULT_BASE_URL = "http://127.0.0.1:32124/v1";
+
+function printHelp() {
+  const binName = basename(process.argv[1] || "kilo-cursor-plugin");
+  console.log(getBrandingHeader());
+  console.log(`${binName}
+
+Commands:
+  install     Configure Kilo Code for Cursor (idempotent, safe to re-run)
+  sync-models Refresh model list from cursor-agent
+  models      Explain discovered Cursor model groups and variants
+  status      Show current configuration state
+  doctor      Diagnose common issues
+  uninstall   Remove cursor-kilo from Kilo config
+  help        Show this help message
+
+Options:
+  --config <path>       Path to kilo.jsonc (default: KILO_CONFIG or ~/.config/kilo/kilo.jsonc)
+  --plugin-dir <path>   Path to plugin directory (default: ~/.config/kilo/plugin)
+  --base-url <url>      Proxy base URL (default: http://127.0.0.1:32124/v1)
+  --copy                Copy plugin instead of symlink
+  --skip-models         Skip model sync during install
+  --install-cursor-bridge
+                       Also write the optional .cursor bridge hook and rule
+  --skip-cursor-bridge  Legacy no-op; .cursor bridge files are opt-in
+  --cursor-bridge-scope <scope>
+                       Cursor hook scope: project, user, or both; implies --install-cursor-bridge
+  --variants            Generate compact Kilo model variants from Cursor models
+  --compact             With --variants, remove raw grouped Cursor model entries
+  --dry-run             Preview sync/install config changes without writing files
+  --deep                Run extra doctor checks for models and variant config
+  --explain             Show model grouping explanation (models command)
+  --no-backup           Don't create config backup
+  --json                Output in JSON format where supported
+`);
+}
+
+function parseArgs(argv: string[]): { command: Command; options: Options } {
+  const [commandRaw, ...rest] = argv;
+  const command = normalizeCommand(commandRaw);
+  const options: Options = {};
+
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === "--copy") {
+      options.copy = true;
+    } else if (arg === "--skip-models") {
+      options.skipModels = true;
+    } else if (arg === "--install-cursor-bridge") {
+      options.installCursorBridge = true;
+    } else if (arg === "--skip-cursor-bridge") {
+      options.skipCursorBridge = true;
+    } else if (arg === "--cursor-bridge-scope" && rest[i + 1]) {
+      options.cursorBridgeScope = parseCursorBridgeScope(rest[i + 1]);
+      i += 1;
+    } else if (arg === "--variants") {
+      options.variants = true;
+    } else if (arg === "--compact") {
+      options.compact = true;
+    } else if (arg === "--dry-run") {
+      options.dryRun = true;
+    } else if (arg === "--deep") {
+      options.deep = true;
+    } else if (arg === "--explain") {
+      options.explain = true;
+    } else if (arg === "--no-backup") {
+      options.noBackup = true;
+    } else if (arg === "--config" && rest[i + 1]) {
+      options.config = rest[i + 1];
+      i += 1;
+    } else if (arg === "--plugin-dir" && rest[i + 1]) {
+      options.pluginDir = rest[i + 1];
+      i += 1;
+    } else if (arg === "--base-url" && rest[i + 1]) {
+      options.baseUrl = rest[i + 1];
+      i += 1;
+    } else if (arg === "--json") {
+      options.json = true;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
+  }
+
+  return { command, options };
+}
+
+function parseCursorBridgeScope(value: string): "project" | "user" | "both" {
+  if (value === "project" || value === "user" || value === "both") {
+    return value;
+  }
+  throw new Error(`Invalid --cursor-bridge-scope: ${value}`);
+}
+
+function normalizeCommand(value: string | undefined): Command {
+  switch ((value || "help").toLowerCase()) {
+    case "install":
+    case "sync-models":
+    case "models":
+    case "uninstall":
+    case "status":
+    case "doctor":
+    case "help":
+      return value ? (value.toLowerCase() as Command) : "help";
+    default:
+      throw new Error(`Unknown command: ${value}`);
+  }
+}
+
+function getConfigHome(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  if (xdg && xdg.length > 0) return xdg;
+  return join(homedir(), ".config");
+}
+
+export function resolvePaths(options: Options) {
+  const kiloDir = join(getConfigHome(), "kilo");
+  const configPath = options.config ? resolve(options.config) : resolveOpenCodeConfigPath();
+  const pluginDir = resolve(options.pluginDir || join(kiloDir, "plugin"));
+  const pluginPath = join(pluginDir, `${PROVIDER_ID}.js`);
+  return { opencodeDir: kiloDir, configPath, pluginDir, pluginPath };
+}
+
+function resolvePluginSource(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const currentDir = dirname(currentFile);
+  const candidates = [
+    join(currentDir, "plugin-entry.js"),
+    join(currentDir, "..", "plugin-entry.js"),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("Unable to locate plugin-entry.js next to CLI distribution files");
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}
+
+function readConfig(configPath: string): any {
+  if (!existsSync(configPath)) {
+    return { plugin: [], provider: {} };
+  }
+  let raw: string;
+  try {
+    raw = readFileSync(configPath, "utf8");
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return { plugin: [], provider: {} };
+    }
+    throw error;
+  }
+  try {
+    const parsed = parseConfigJson(raw);
+    if (!parsed) {
+      throw new SyntaxError("parseConfigJson returned null");
+    }
+    return parsed;
+  } catch (error) {
+    throw new Error(`Invalid JSON in config: ${configPath} (${String(error)})`);
+  }
+}
+
+function writeConfig(configPath: string, config: any, noBackup: boolean, silent = false) {
+  mkdirSync(dirname(configPath), { recursive: true });
+  if (!noBackup && existsSync(configPath)) {
+    const backupPath = `${configPath}.bak.${new Date().toISOString().replace(/[:]/g, "-")}`;
+    copyFileSync(configPath, backupPath);
+    if (!silent) {
+      console.log(`Backup written: ${backupPath}`);
+    }
+  }
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+}
+
+function ensureProvider(config: any, baseUrl: string) {
+  config.plugin = Array.isArray(config.plugin) ? config.plugin : [];
+
+  // Kilo loads npm plugins by package name in the `plugin` array (not provider ID).
+  // See https://kilo.ai/docs/automate/extending/plugins
+  const hasPlugin = config.plugin.some((entry: unknown) => {
+    if (typeof entry === "string") {
+      return entry === NPM_PACKAGE_PREFIX || entry.startsWith(`${NPM_PACKAGE_PREFIX}@`) || entry === PROVIDER_ID;
+    }
+    if (Array.isArray(entry) && typeof entry[0] === "string") {
+      return entry[0] === NPM_PACKAGE_PREFIX || entry[0].startsWith(`${NPM_PACKAGE_PREFIX}@`);
+    }
+    return false;
+  });
+  if (!hasPlugin) {
+    config.plugin.push(NPM_PACKAGE_PREFIX);
+  }
+
+  config.provider = config.provider && typeof config.provider === "object" ? config.provider : {};
+  const current = config.provider[PROVIDER_ID] && typeof config.provider[PROVIDER_ID] === "object"
+    ? config.provider[PROVIDER_ID]
+    : {};
+  const options = current.options && typeof current.options === "object" ? current.options : {};
+  const models = current.models && typeof current.models === "object" ? current.models : {};
+
+  config.provider[PROVIDER_ID] = {
+    ...current,
+    name: "Cursor",
+    npm: "@ai-sdk/openai-compatible",
+    options: {
+      ...options,
+      baseURL: baseUrl,
+    },
+    models,
+  };
+}
+
+function ensurePluginLink(pluginSource: string, pluginPath: string, copyMode: boolean) {
+  mkdirSync(dirname(pluginPath), { recursive: true });
+  rmSync(pluginPath, { force: true });
+  if (copyMode) {
+    copyFileSync(pluginSource, pluginPath);
+    return;
+  }
+  symlinkSync(pluginSource, pluginPath);
+}
+
+async function discoverModelsSafe(): Promise<DiscoveredModel[]> {
+  const result = await discoverModelsAuthenticated();
+  for (const warning of result.warnings) {
+    console.warn(`Warning: ${warning}`);
+  }
+  if (result.source !== "fallback") {
+    console.log(`Discovered ${result.models.length} models via ${result.source}`);
+  }
+  return result.models;
+}
+
+async function syncModelsIntoProvider(config: any, options: Options): Promise<SyncModelsResult> {
+  const useVariants = options.variants ?? DEFAULT_SYNC_VARIANTS;
+  const useCompact = options.compact ?? DEFAULT_SYNC_COMPACT;
+  if (useCompact && !useVariants) {
+    throw new Error("--compact requires --variants");
+  }
+
+  const discoveredModels = await discoverModelsSafe();
+  const provider = config.provider[PROVIDER_ID];
+  const existingModels = provider.models && typeof provider.models === "object"
+    ? provider.models
+    : {};
+  migrateLegacyModelKeys(existingModels);
+  const beforeModels = snapshotModels(existingModels);
+
+  // Kilo catalog format (cursor/model + reasoning variants) — default
+  if (useVariants && process.env.CURSOR_KILO_MODEL_FORMAT !== "legacy") {
+    const kiloResult = mergeKiloModelCatalog(existingModels, discoveredModels, useCompact);
+    provider.models = kiloResult.models;
+    return {
+      syncedCount: kiloResult.syncedCount,
+      groupedCount: kiloResult.syncedCount,
+      removedCount: kiloResult.removedCount,
+      summary: summarizeModelSync(beforeModels, kiloResult.models),
+    };
+  }
+
+  const result = mergeCursorModelEntries(existingModels, discoveredModels, {
+    variants: useVariants,
+    compact: useCompact,
+  });
+
+  provider.models = result.models;
+  return {
+    syncedCount: result.syncedCount,
+    groupedCount: result.groupedCount,
+    removedCount: result.removedCount,
+    summary: summarizeModelSync(beforeModels, result.models),
+  };
+}
+
+export function explainCursorModels(models: DiscoveredModel[]): ModelExplanation {
+  const grouped = groupCursorModels(models);
+  const groupedCount = grouped.groups.reduce((total, group) => total + group.members.length, 0);
+
+  return {
+    modelCount: models.length,
+    groupedCount,
+    directCount: grouped.direct.length,
+    groups: grouped.groups.map(group => ({
+      id: group.baseId,
+      name: group.name,
+      defaultCursorModel: group.defaultCursorModelId,
+      memberCount: group.members.length,
+      variants: group.variants,
+    })),
+    direct: grouped.direct.map(model => model.id),
+  };
+}
+
+function createSyncJsonResult(
+  result: SyncModelsResult,
+  options: Options,
+  configPath: string,
+): SyncModelsJsonResult {
+  return {
+    ...result,
+    configPath,
+    dryRun: options.dryRun === true,
+    variants: options.variants === true,
+    compact: options.compact === true,
+  };
+}
+
+function snapshotModels(models: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(models));
+}
+
+export function summarizeModelSync(
+  beforeModels: Record<string, unknown>,
+  afterModels: Record<string, unknown>,
+): SyncSummary {
+  let added = 0;
+  let updated = 0;
+  let removed = 0;
+  let skipped = 0;
+
+  for (const [modelId, afterEntry] of Object.entries(afterModels)) {
+    if (!Object.prototype.hasOwnProperty.call(beforeModels, modelId)) {
+      added++;
+      continue;
+    }
+
+    if (JSON.stringify(beforeModels[modelId]) === JSON.stringify(afterEntry)) {
+      skipped++;
+    } else {
+      updated++;
+    }
+  }
+
+  for (const modelId of Object.keys(beforeModels)) {
+    if (!Object.prototype.hasOwnProperty.call(afterModels, modelId)) {
+      removed++;
+    }
+  }
+
+  return {
+    added,
+    updated,
+    removed,
+    priced: countPricedModelEntries(afterModels),
+    skipped,
+  };
+}
+
+function countPricedModelEntries(models: Record<string, unknown>): number {
+  let priced = 0;
+
+  for (const entry of Object.values(models)) {
+    if (!isRecord(entry)) continue;
+    if (isRecord(entry.cost)) priced++;
+
+    if (!isRecord(entry.variants)) continue;
+    for (const variantEntry of Object.values(entry.variants)) {
+      if (isRecord(variantEntry) && isRecord(variantEntry.cost)) {
+        priced++;
+      }
+    }
+  }
+
+  return priced;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function installAiSdk(opencodeDir: string) {
+  try {
+    execFileSync("bun", ["install", "@ai-sdk/openai-compatible"], {
+      cwd: opencodeDir,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`Warning: failed to install @ai-sdk/openai-compatible via bun (${message})`);
+  }
+}
+
+export const CURSOR_BRIDGE_HOOK_COMMAND = "node .cursor/hooks/opencode-bridge-context.mjs";
+export const CURSOR_BRIDGE_USER_HOOK_COMMAND = "node ./hooks/opencode-bridge-context.mjs";
+const CURSOR_BRIDGE_RULE_CONTENT = `---
+description: opencode-cursor bridge instructions for cursor-agent.
+alwaysApply: true
+---
+
+# opencode-cursor bridge
+
+When opencode-cursor provides active bridge instructions for a complete-file write, prefer returning the requested bridge JSON if you can produce the full file content in one response. If you use a normal tool call instead, use the available tool schema exactly and do not retry invalid schemas.
+`;
+
+type CursorBridgeScope = "project" | "user";
+
+type CursorBridgeInstallResult = {
+  changed: boolean;
+  hooksPath: string;
+  scriptPath: string;
+  rulePath: string;
+};
+
+export function ensureCursorBridgeHook(
+  rootDir: string,
+  options: { dryRun?: boolean; scope?: CursorBridgeScope } = {},
+): CursorBridgeInstallResult {
+  const scope = options.scope ?? "project";
+  const cursorDir = join(rootDir, ".cursor");
+  const hooksDir = join(cursorDir, "hooks");
+  const rulesDir = join(cursorDir, "rules");
+  const hooksPath = join(cursorDir, "hooks.json");
+  const scriptPath = join(hooksDir, "opencode-bridge-context.mjs");
+  const rulePath = join(rulesDir, "opencode-bridge.mdc");
+  const script = buildCursorBridgeHookScript();
+  const current = readCursorHooksConfig(hooksPath);
+  const next = mergeCursorBridgeHook(current, scope);
+  const currentJson = JSON.stringify(current);
+  const nextJson = JSON.stringify(next);
+  const scriptChanged = !existsSync(scriptPath) || readFileSync(scriptPath, "utf8") !== script;
+  const ruleChanged = !existsSync(rulePath) || readFileSync(rulePath, "utf8") !== CURSOR_BRIDGE_RULE_CONTENT;
+  const changed = currentJson !== nextJson || scriptChanged || ruleChanged;
+
+  if (!options.dryRun && changed) {
+    mkdirSync(hooksDir, { recursive: true });
+    mkdirSync(rulesDir, { recursive: true });
+    writeFileSync(scriptPath, script, "utf8");
+    writeFileSync(rulePath, CURSOR_BRIDGE_RULE_CONTENT, "utf8");
+    writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  }
+
+  return { changed, hooksPath, scriptPath, rulePath };
+}
+
+function removeCursorBridgeHook(
+  rootDir: string,
+  options: { scope?: CursorBridgeScope } = {},
+): CursorBridgeInstallResult {
+  const scope = options.scope ?? "project";
+  const cursorDir = join(rootDir, ".cursor");
+  const hooksPath = join(cursorDir, "hooks.json");
+  const scriptPath = join(cursorDir, "hooks", "opencode-bridge-context.mjs");
+  const rulePath = join(cursorDir, "rules", "opencode-bridge.mdc");
+  const current = readCursorHooksConfig(hooksPath);
+  const next = removeCursorBridgeHookEntry(current, scope);
+  const changed = JSON.stringify(current) !== JSON.stringify(next) || existsSync(scriptPath) || existsSync(rulePath);
+
+  rmSync(scriptPath, { force: true });
+  rmSync(rulePath, { force: true });
+  if (existsSync(hooksPath)) {
+    writeFileSync(hooksPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+  }
+
+  return { changed, hooksPath, scriptPath, rulePath };
+}
+
+function buildCursorBridgeHookScript(): string {
+  return [
+    "#!/usr/bin/env node",
+    `const context = ${JSON.stringify(BRIDGE_JSON_CONTEXT)};`,
+    "process.stdout.write(JSON.stringify({ additional_context: context }) + \"\\n\");",
+    "",
+  ].join("\n");
+}
+
+function readCursorHooksConfig(hooksPath: string): any {
+  if (!existsSync(hooksPath)) {
+    return { version: 1, hooks: {} };
+  }
+  const raw = readFileSync(hooksPath, "utf8");
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed
+      : { version: 1, hooks: {} };
+  } catch (error) {
+    throw new Error(`Invalid JSON in Cursor hooks config: ${hooksPath} (${String(error)})`);
+  }
+}
+
+function mergeCursorBridgeHook(config: any, scope: CursorBridgeScope): any {
+  const next = {
+    ...config,
+    version: typeof config.version === "number" ? config.version : 1,
+    hooks: config.hooks && typeof config.hooks === "object" && !Array.isArray(config.hooks)
+      ? { ...config.hooks }
+      : {},
+  };
+  const sessionStart = Array.isArray(next.hooks.sessionStart)
+    ? [...next.hooks.sessionStart]
+    : [];
+  const command = scope === "user" ? CURSOR_BRIDGE_USER_HOOK_COMMAND : CURSOR_BRIDGE_HOOK_COMMAND;
+  if (!sessionStart.some((hook: any) => hook?.command === command)) {
+    sessionStart.push({ command });
+  }
+  next.hooks.sessionStart = sessionStart;
+  return next;
+}
+
+function removeCursorBridgeHookEntry(config: any, scope: CursorBridgeScope): any {
+  const next = {
+    ...config,
+    hooks: config.hooks && typeof config.hooks === "object" && !Array.isArray(config.hooks)
+      ? { ...config.hooks }
+      : {},
+  };
+  const command = scope === "user" ? CURSOR_BRIDGE_USER_HOOK_COMMAND : CURSOR_BRIDGE_HOOK_COMMAND;
+  if (Array.isArray(next.hooks.sessionStart)) {
+    next.hooks.sessionStart = next.hooks.sessionStart.filter(
+      (hook: any) => hook?.command !== command,
+    );
+  }
+  return next;
+}
+
+function getCursorBridgeRoots(scope: Options["cursorBridgeScope"]): Array<{ label: string; root: string; scope: CursorBridgeScope }> {
+  const requested = scope ?? "project";
+  if (requested === "user") {
+    return [{ label: "user", root: homedir(), scope: "user" }];
+  }
+  if (requested === "both") {
+    return [
+      { label: "project", root: process.cwd(), scope: "project" },
+      { label: "user", root: homedir(), scope: "user" },
+    ];
+  }
+  return [{ label: "project", root: process.cwd(), scope: "project" }];
+}
+
+export function shouldInstallCursorBridge(
+  options: Pick<Options, "installCursorBridge" | "skipCursorBridge" | "cursorBridgeScope">,
+): boolean {
+  if (options.skipCursorBridge) {
+    return false;
+  }
+  return options.installCursorBridge === true || options.cursorBridgeScope !== undefined;
+}
+
+function commandInstall(options: Options) {
+  void commandInstallAsync(options);
+}
+
+async function commandInstallAsync(options: Options) {
+  const { opencodeDir, configPath, pluginPath } = resolvePaths(options);
+  const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
+  const copyMode = options.copy === true;
+  const pluginSource = resolvePluginSource();
+
+  if (!options.dryRun) {
+    mkdirSync(opencodeDir, { recursive: true });
+    ensurePluginLink(pluginSource, pluginPath, copyMode);
+  }
+  const config = readConfig(configPath);
+  ensureProvider(config, baseUrl);
+
+  if (!options.skipModels) {
+    const result = await syncModelsIntoProvider(config, options);
+    printSyncResult(result, options);
+  }
+
+  if (options.dryRun) {
+    console.log("Dry run: no files changed.");
+  } else {
+    writeConfig(configPath, config, options.noBackup === true);
+    installAiSdk(opencodeDir);
+  }
+  if (shouldInstallCursorBridge(options)) {
+    for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
+      const bridge = ensureCursorBridgeHook(target.root, {
+        dryRun: options.dryRun,
+        scope: target.scope,
+      });
+      console.log(`${options.dryRun ? "Would write" : "Cursor bridge hook"} (${target.label}): ${bridge.hooksPath}`);
+      console.log(`${options.dryRun ? "Would write" : "Cursor bridge rule"} (${target.label}): ${bridge.rulePath}`);
+    }
+  } else {
+    console.log("Cursor bridge hook and rule: not installed (.cursor files are opt-in)");
+  }
+
+  console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);
+  console.log(`Plugin path: ${pluginPath}${copyMode ? " (copy)" : " (symlink)"}`);
+  console.log(`Config path: ${configPath}`);
+}
+
+function commandSyncModels(options: Options) {
+  void commandSyncModelsAsync(options);
+}
+
+async function commandSyncModelsAsync(options: Options) {
+  const { configPath } = resolvePaths(options);
+  const config = readConfig(configPath);
+  ensureProvider(config, options.baseUrl || DEFAULT_BASE_URL);
+
+  const result = await syncModelsIntoProvider(config, options);
+
+  if (!options.dryRun) {
+    writeConfig(configPath, config, options.noBackup === true, options.json === true);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify(createSyncJsonResult(result, options, configPath), null, 2));
+    return;
+  }
+
+  printSyncResult(result, options);
+  if (options.dryRun) {
+    console.log("Dry run: no changes written.");
+  }
+  console.log(`Config path: ${configPath}`);
+}
+
+function commandModels(options: Options) {
+  void commandModelsAsync(options);
+}
+
+async function commandModelsAsync(options: Options) {
+  const models = await discoverModelsSafe();
+  const explanation = explainCursorModels(models);
+
+  if (options.json) {
+    console.log(JSON.stringify(explanation, null, 2));
+    return;
+  }
+
+  console.log(`Cursor models discovered: ${explanation.modelCount}`);
+  console.log(`Grouped Cursor models: ${explanation.groupedCount}`);
+  console.log(`Direct models: ${explanation.directCount}`);
+
+  if (!options.explain) {
+    return;
+  }
+
+  console.log("");
+  console.log("Model groups:");
+  for (const group of explanation.groups) {
+    console.log(`  ${group.id}`);
+    console.log(`    Default: ${group.defaultCursorModel}`);
+    const variants = Object.entries(group.variants);
+    if (variants.length === 0) {
+      console.log("    Variants: none");
+      continue;
+    }
+    console.log("    Variants:");
+    for (const [variant, cursorModel] of variants) {
+      console.log(`      ${variant}: ${cursorModel}`);
+    }
+  }
+
+  console.log("");
+  console.log("Direct models:");
+  for (const modelId of explanation.direct) {
+    console.log(`  ${modelId}`);
+  }
+}
+
+function printSyncResult(result: SyncModelsResult, options: Options) {
+  console.log(`Models synced: ${result.syncedCount}`);
+  if (options.variants) {
+    console.log(`Grouped Cursor models: ${result.groupedCount}`);
+  }
+  if (result.removedCount > 0) {
+    console.log(`Raw grouped models removed: ${result.removedCount}`);
+  }
+
+  console.log("Sync summary:");
+  console.log(`  Added: ${result.summary.added}`);
+  console.log(`  Updated: ${result.summary.updated}`);
+  console.log(`  Removed: ${result.summary.removed}`);
+  console.log(`  Priced: ${result.summary.priced}`);
+  console.log(`  Skipped: ${result.summary.skipped}`);
+}
+
+const NPM_PACKAGE = NPM_PACKAGE_PREFIX;
+
+function commandUninstall(options: Options) {
+  const { configPath, pluginPath } = resolvePaths(options);
+  rmSync(pluginPath, { force: true });
+
+  if (existsSync(configPath)) {
+    const config = readConfig(configPath);
+    if (Array.isArray(config.plugin)) {
+      config.plugin = config.plugin.filter((entry: unknown) => {
+        if (typeof entry === "string") {
+          if (entry === PROVIDER_ID) return false;
+          if (entry === NPM_PACKAGE || entry.startsWith(`${NPM_PACKAGE}@`)) return false;
+          return true;
+        }
+        if (Array.isArray(entry) && typeof entry[0] === "string") {
+          const name = entry[0];
+          if (name === NPM_PACKAGE || name.startsWith(`${NPM_PACKAGE}@`)) return false;
+        }
+        return true;
+      });
+    }
+    if (config.provider && typeof config.provider === "object") {
+      delete config.provider[PROVIDER_ID];
+    }
+    writeConfig(configPath, config, options.noBackup === true);
+  }
+
+  console.log(`Removed plugin link: ${pluginPath}`);
+  console.log(`Removed provider "${PROVIDER_ID}" from ${configPath}`);
+  for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
+    const bridge = removeCursorBridgeHook(target.root, { scope: target.scope });
+    if (bridge.changed) {
+      console.log(`Removed Cursor bridge hook (${target.label}): ${bridge.hooksPath}`);
+      console.log(`Removed Cursor bridge rule (${target.label}): ${bridge.rulePath}`);
+    }
+  }
+}
+
+export function getStatusResult(configPath: string, pluginPath: string): StatusResult {
+  // Plugin
+  let pluginType: "symlink" | "file" | "missing" = "missing";
+  let pluginTarget: string | undefined;
+  if (existsSync(pluginPath)) {
+    try {
+      const stat = lstatSync(pluginPath);
+      pluginType = stat.isSymbolicLink() ? "symlink" : "file";
+      if (pluginType === "symlink") {
+        try {
+          pluginTarget = readFileSync(pluginPath, "utf8");
+        } catch {
+          pluginTarget = undefined;
+        }
+      }
+    } catch (error) {
+      if (!isErrnoException(error) || error.code !== "ENOENT") {
+        throw error;
+      }
+      pluginType = "missing";
+      pluginTarget = undefined;
+    }
+  }
+
+  // Provider
+  let config: any;
+  let providerEnabled = false;
+  let baseUrl = "http://127.0.0.1:32124/v1";
+  let modelCount = 0;
+  if (existsSync(configPath)) {
+    config = readConfig(configPath);
+    const provider = config.provider?.["cursor-kilo"];
+    providerEnabled = !!provider;
+    if (provider?.options?.baseURL) {
+      baseUrl = provider.options.baseURL;
+    }
+    modelCount = Object.keys(provider?.models || {}).length;
+  } else {
+    config = undefined;
+  }
+
+  // AI SDK
+  const opencodeDir = dirname(configPath);
+  const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
+  const aiSdkInstalled = existsSync(sdkPath);
+  const sdkApiKeySource = resolveCliSdkAuthSource(config);
+  const legacyCursorAuthFile = getPossibleAuthPaths().some((authPath) => existsSync(authPath));
+
+  let installMethod: "symlink" | "npm-direct" | "none" = "none";
+  if (pluginType !== "missing") {
+    installMethod = "symlink";
+  } else if (isNpmDirectInstalled(config)) {
+    installMethod = "npm-direct";
+  }
+
+  return {
+    installMethod,
+    plugin: {
+      path: pluginPath,
+      type: pluginType,
+      target: pluginTarget,
+    },
+    provider: {
+      configPath,
+      name: "cursor-kilo",
+      enabled: providerEnabled,
+      baseUrl,
+      modelCount,
+    },
+    aiSdk: {
+      installed: aiSdkInstalled,
+    },
+    auth: {
+      legacyCursorAuthFile,
+      sdkApiKey: sdkApiKeySource !== undefined,
+      sdkApiKeySource,
+    },
+    runtime: getRuntimeStatus(),
+  };
+}
+
+export function runDeepDoctorChecks(configPath: string): CheckResult[] {
+  const checks: CheckResult[] = [];
+  let config: any;
+
+  try {
+    config = readConfig(configPath);
+  } catch (error) {
+    return [{
+      name: "Deep config read",
+      passed: false,
+      message: error instanceof Error ? error.message : String(error),
+    }];
+  }
+
+  const provider = config.provider?.[PROVIDER_ID];
+  const models = isRecord(provider?.models) ? provider.models : {};
+  const baseUrl = typeof provider?.options?.baseURL === "string" ? provider.options.baseURL : "";
+
+  checks.push({
+    name: "Provider base URL",
+    passed: baseUrl.startsWith("http://") || baseUrl.startsWith("https://"),
+    message: baseUrl || "missing - run: kilo-cursor-plugin install",
+  });
+
+  checks.push({
+    name: "Provider models",
+    passed: Object.keys(models).length > 0,
+    message: `${Object.keys(models).length} configured model(s)`,
+  });
+
+  const variantEntryCount = countVariantModelEntries(models);
+  checks.push({
+    name: "Compact variants",
+    passed: variantEntryCount > 0,
+    warning: variantEntryCount === 0,
+    message: variantEntryCount > 0
+      ? `${variantEntryCount} model entr${variantEntryCount === 1 ? "y" : "ies"} with variants`
+      : "no compact variants found - run: kilo-cursor-plugin sync-models --variants --compact",
+  });
+
+  let discoveredModels: DiscoveredModel[];
+  try {
+    discoveredModels = discoverModelsFromCursorAgent();
+    checks.push({
+      name: "Cursor model discovery",
+      passed: true,
+      message: `${discoveredModels.length} model(s) from cursor-agent`,
+    });
+  } catch (error) {
+    checks.push({
+      name: "Cursor model discovery",
+      passed: false,
+      message: error instanceof Error ? error.message : String(error),
+      warning: true,
+    });
+    return checks;
+  }
+
+  const knownModelIds = new Set(discoveredModels.map(model => model.id));
+  const unknownTargets = collectConfiguredCursorModels(models)
+    .filter(modelId => !knownModelIds.has(modelId));
+  checks.push({
+    name: "Configured Cursor model targets",
+    passed: unknownTargets.length === 0,
+    warning: unknownTargets.length > 0,
+    message: unknownTargets.length === 0
+      ? "all configured targets exist in cursor-agent models"
+      : `${unknownTargets.length} target(s) not found: ${unknownTargets.slice(0, 5).join(", ")}`,
+  });
+
+  return checks;
+}
+
+function countVariantModelEntries(models: Record<string, unknown>): number {
+  return Object.values(models).filter(entry => {
+    return isRecord(entry) && isRecord(entry.variants) && Object.keys(entry.variants).length > 0;
+  }).length;
+}
+
+function collectConfiguredCursorModels(models: Record<string, unknown>): string[] {
+  const targets: string[] = [];
+
+  for (const [modelId, entry] of Object.entries(models)) {
+    if (!isRecord(entry)) {
+      targets.push(modelId);
+      continue;
+    }
+
+    const optionTarget = readCursorModel(entry.options);
+    targets.push(optionTarget || modelId);
+
+    if (!isRecord(entry.variants)) continue;
+    for (const variantEntry of Object.values(entry.variants)) {
+      const variantTarget = readCursorModel(variantEntry);
+      if (variantTarget) targets.push(variantTarget);
+    }
+  }
+
+  return [...new Set(targets)];
+}
+
+function readCursorModel(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined;
+  const cursorModel = value.cursorModel;
+  return typeof cursorModel === "string" && cursorModel.trim().length > 0
+    ? cursorModel.trim()
+    : undefined;
+}
+
+function commandStatus(options: Options) {
+  const { configPath, pluginPath } = resolvePaths(options);
+  const result = getStatusResult(configPath, pluginPath);
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log("");
+  console.log("Plugin");
+  console.log(`  Path: ${result.plugin.path}`);
+  if (result.plugin.type === "symlink" && result.plugin.target) {
+    console.log(`  Type: symlink → ${result.plugin.target}`);
+  } else if (result.plugin.type === "file") {
+    console.log(`  Type: file (copy)`);
+  } else {
+    console.log(`  Type: missing`);
+  }
+  console.log(`  Install method: ${result.installMethod}`);
+
+  console.log("");
+  console.log("Provider");
+  console.log(`  Config: ${result.provider.configPath}`);
+  console.log(`  Name: ${result.provider.name}`);
+  console.log(`  Enabled: ${result.provider.enabled ? "yes" : "no"}`);
+  console.log(`  Base URL: ${result.provider.baseUrl}`);
+  console.log(`  Models: ${result.provider.modelCount}`);
+
+  console.log("");
+  console.log("AI SDK");
+  console.log(`  @ai-sdk/openai-compatible: ${result.aiSdk.installed ? "installed" : "not installed"}`);
+
+  console.log("");
+  console.log("Authentication");
+  console.log(`  Legacy cursor-agent auth file: ${result.auth.legacyCursorAuthFile ? "found" : "not found"}`);
+  console.log(
+    `  Cursor SDK API key: ${result.auth.sdkApiKey ? `found via ${result.auth.sdkApiKeySource}` : "not configured"}`,
+  );
+
+  console.log("");
+  console.log("Runtime");
+  console.log(`  Backend preference: ${result.runtime.backend.preference}`);
+  console.log(`  Agent pool: ${result.runtime.agentPool.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Agent pool idle: ${result.runtime.agentPool.idleMs}ms`);
+  console.log(`  Session resume: ${result.runtime.sessionResume.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Log level: ${result.runtime.logging.level}`);
+  console.log(`  Console logging: ${result.runtime.logging.console ? "enabled" : "disabled"}`);
+  console.log(`  Log dir: ${result.runtime.logging.dir}`);
+}
+
+function commandDoctor(options: Options) {
+  const { configPath, pluginPath } = resolvePaths(options);
+  const checks = [
+    ...runDoctorChecks(configPath, pluginPath),
+    ...(options.deep ? runDeepDoctorChecks(configPath) : []),
+  ];
+
+  if (options.json) {
+    const failed = checks.filter(c => !c.passed && !c.warning);
+    console.log(JSON.stringify({ deep: options.deep === true, checks, failed: failed.length }, null, 2));
+    return;
+  }
+
+  console.log("");
+  for (const check of checks) {
+    const symbol = check.passed ? "\u2713" : (check.warning ? "\u26A0" : "\u2717");
+    const color = check.passed ? "\x1b[32m" : (check.warning ? "\x1b[33m" : "\x1b[31m");
+    console.log(` ${color}${symbol}\x1b[0m ${check.name}: ${check.message}`);
+  }
+
+  const failed = checks.filter(c => !c.passed && !c.warning);
+  console.log("");
+  if (failed.length === 0) {
+    console.log("All checks passed!");
+  } else {
+    console.log(`${failed.length} check(s) failed. See messages above.`);
+  }
+}
+
+function main() {
+  let parsed: { command: Command; options: Options };
+  try {
+    parsed = parseArgs(process.argv.slice(2));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    printHelp();
+    process.exit(1);
+    return;
+  }
+
+  try {
+    switch (parsed.command) {
+      case "install":
+        commandInstall(parsed.options);
+        return;
+      case "sync-models":
+        commandSyncModels(parsed.options);
+        return;
+      case "models":
+        commandModels(parsed.options);
+        return;
+      case "uninstall":
+        commandUninstall(parsed.options);
+        return;
+      case "status":
+        commandStatus(parsed.options);
+        return;
+      case "doctor":
+        commandDoctor(parsed.options);
+        return;
+      case "help":
+        printHelp();
+        return;
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`Error: ${message}`);
+    process.exit(1);
+  }
+}
+
+function resolveEntrypointArg(argvPath: string | undefined): string {
+  if (!argvPath) return "";
+  return resolve(argvPath);
+}
+
+function toRealPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+export function isCliEntrypoint(metaUrl: string, argvPath: string | undefined): boolean {
+  const currentPath = fileURLToPath(metaUrl);
+  const argvResolved = resolveEntrypointArg(argvPath);
+  if (!argvResolved) return false;
+  return currentPath === argvResolved || toRealPath(currentPath) === toRealPath(argvResolved);
+}
+
+if (process.env.NODE_ENV !== "test" && isCliEntrypoint(import.meta.url, process.argv[1])) {
+  main();
+}

@@ -20,6 +20,7 @@ export const CURSOR_PRICING_DOC_URL = "https://cursor.com/docs/models-and-pricin
 
 export const CURSOR_PRICING_DOC_MARKERS = [
   "Auto",
+  "Composer 2.5",
   "Composer 2",
   "Composer 1.5",
   "Claude 4.6",
@@ -30,6 +31,8 @@ export const CURSOR_PRICING_DOC_MARKERS = [
   "GPT-5.3 Codex",
   "GPT-5.4",
   "GPT-5.5",
+  "Grok 4.6",
+  "Grok 4.5",
   "Grok 4.20",
   "Kimi K2.5",
 ];
@@ -38,6 +41,8 @@ export const CURSOR_PRICING_DOC_MARKERS = [
 const AUTO_COST = cost(1.25, 6, 0.25, 1.25);
 const COMPOSER_2_COST = cost(0.5, 2.5, 0.2, 0.5);
 const COMPOSER_2_FAST_COST = cost(1.5, 7.5, 0.35, 1.5);
+const COMPOSER_2_5_COST = cost(0.5, 2.5, 0.2, 0);
+const COMPOSER_2_5_FAST_COST = cost(3, 15, 0.5, 0);
 const COMPOSER_1_5_COST = cost(3.5, 17.5, 0.35, 3.5);
 
 const CLAUDE_SONNET_COST = cost(3, 15, 0.3, 3.75);
@@ -62,43 +67,61 @@ const GPT_5_4_NANO_COST = cost(0.2, 1.25, 0.02, 0.2);
 const GPT_5_5_COST = withLongContext(cost(5, 30, 0.5, 5), cost(10, 45, 1, 10));
 const GPT_5_MINI_COST = cost(0.25, 2, 0.025, 0.25);
 
+const GROK_4_6_COST = cost(2, 6, 0.5, 0);
+const GROK_4_6_FAST_COST = cost(4, 12, 1, 0);
+const GROK_4_5_COST = cost(2, 6, 0.5, 0);
+const GROK_4_5_FAST_COST = cost(4, 18, 1, 0);
 const GROK_4_20_COST = withLongContext(cost(2, 6, 0.2, 2), cost(4, 12, 0.4, 4));
 const KIMI_K2_5_COST = cost(0.6, 3, 0.1, 0.6);
 
+function normalizePricingModelId(modelId: string): string {
+  return modelId.replace(/^cursor-/, "");
+}
+
 export function getCursorModelCost(modelId: string): OpenCodeModelCost | undefined {
-  if (modelId === "auto") return AUTO_COST;
-  if (modelId === "composer-2-fast") return COMPOSER_2_FAST_COST;
-  if (modelId === "composer-2") return COMPOSER_2_COST;
-  if (modelId === "composer-1.5") return COMPOSER_1_5_COST;
-
-  if (modelId.startsWith("claude-opus-4-7")) return CLAUDE_OPUS_COST;
-  if (modelId.startsWith("claude-4.6-opus")) {
-    return modelId.endsWith("-fast") ? CLAUDE_OPUS_FAST_COST : CLAUDE_OPUS_COST;
+  const id = normalizePricingModelId(modelId);
+  if (id === "auto") return AUTO_COST;
+  if (id === "composer-2-fast") return COMPOSER_2_FAST_COST;
+  if (id === "composer-2") return COMPOSER_2_COST;
+  if (id.startsWith("composer-2.5")) {
+    return id.endsWith("-fast") ? COMPOSER_2_5_FAST_COST : COMPOSER_2_5_COST;
   }
-  if (modelId.startsWith("claude-4.5-opus")) return CLAUDE_OPUS_COST;
-  if (modelId.startsWith("claude-4.6-sonnet")) return CLAUDE_SONNET_WITH_LONG_CONTEXT_COST;
-  if (modelId.startsWith("claude-4.5-sonnet")) return CLAUDE_SONNET_WITH_LONG_CONTEXT_COST;
-  if (modelId.startsWith("claude-4-sonnet")) return CLAUDE_SONNET_COST;
+  if (id === "composer-1.5") return COMPOSER_1_5_COST;
 
-  if (modelId === "gemini-3.1-pro") return GEMINI_3_PRO_COST;
-  if (modelId === "gemini-3-flash") return GEMINI_3_FLASH_COST;
-
-  if (modelId.startsWith("gpt-5.5")) return GPT_5_5_COST;
-  if (modelId.startsWith("gpt-5.4-mini")) return GPT_5_4_MINI_COST;
-  if (modelId.startsWith("gpt-5.4-nano")) return GPT_5_4_NANO_COST;
-  if (modelId.startsWith("gpt-5.4")) {
-    return modelId.endsWith("-fast") ? GPT_5_4_FAST_COST : GPT_5_4_COST;
+  if (id.startsWith("claude-opus-4-7")) return CLAUDE_OPUS_COST;
+  if (id.startsWith("claude-4.6-opus")) {
+    return id.includes("-fast") ? CLAUDE_OPUS_FAST_COST : CLAUDE_OPUS_COST;
   }
-  if (modelId.startsWith("gpt-5.3-codex")) return GPT_5_3_CODEX_COST;
-  if (modelId.startsWith("gpt-5.2-codex")) return GPT_5_2_COST;
-  if (modelId.startsWith("gpt-5.2")) return GPT_5_2_COST;
-  if (modelId.startsWith("gpt-5.1-codex-mini")) return GPT_5_MINI_COST;
-  if (modelId.startsWith("gpt-5.1-codex-max")) return GPT_5_1_COST;
-  if (modelId.startsWith("gpt-5.1")) return GPT_5_1_COST;
-  if (modelId === "gpt-5-mini") return GPT_5_MINI_COST;
+  if (id.startsWith("claude-4.5-opus")) return CLAUDE_OPUS_COST;
+  if (id.startsWith("claude-4.6-sonnet")) return CLAUDE_SONNET_WITH_LONG_CONTEXT_COST;
+  if (id.startsWith("claude-4.5-sonnet")) return CLAUDE_SONNET_WITH_LONG_CONTEXT_COST;
+  if (id.startsWith("claude-4-sonnet")) return CLAUDE_SONNET_COST;
 
-  if (modelId.startsWith("grok-4-20")) return GROK_4_20_COST;
-  if (modelId === "kimi-k2.5") return KIMI_K2_5_COST;
+  if (id === "gemini-3.1-pro") return GEMINI_3_PRO_COST;
+  if (id === "gemini-3-flash") return GEMINI_3_FLASH_COST;
+
+  if (id.startsWith("gpt-5.5")) return GPT_5_5_COST;
+  if (id.startsWith("gpt-5.4-mini")) return GPT_5_4_MINI_COST;
+  if (id.startsWith("gpt-5.4-nano")) return GPT_5_4_NANO_COST;
+  if (id.startsWith("gpt-5.4")) {
+    return id.includes("-fast") ? GPT_5_4_FAST_COST : GPT_5_4_COST;
+  }
+  if (id.startsWith("gpt-5.3-codex")) return GPT_5_3_CODEX_COST;
+  if (id.startsWith("gpt-5.2-codex")) return GPT_5_2_COST;
+  if (id.startsWith("gpt-5.2")) return GPT_5_2_COST;
+  if (id.startsWith("gpt-5.1-codex-mini")) return GPT_5_MINI_COST;
+  if (id.startsWith("gpt-5.1-codex-max")) return GPT_5_1_COST;
+  if (id.startsWith("gpt-5.1")) return GPT_5_1_COST;
+  if (id === "gpt-5-mini") return GPT_5_MINI_COST;
+
+  if (id.startsWith("grok-4.6")) {
+    return id.includes("-fast") ? GROK_4_6_FAST_COST : GROK_4_6_COST;
+  }
+  if (id.startsWith("grok-4.5")) {
+    return id.includes("-fast") ? GROK_4_5_FAST_COST : GROK_4_5_COST;
+  }
+  if (id.startsWith("grok-4-20")) return GROK_4_20_COST;
+  if (id === "kimi-k2.5") return KIMI_K2_5_COST;
 
   return undefined;
 }

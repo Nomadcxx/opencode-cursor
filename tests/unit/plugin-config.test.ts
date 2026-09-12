@@ -41,14 +41,14 @@ describe("Plugin Configuration", () => {
 
   describe("FORWARD_TOOL_CALLS default", () => {
     it("should default to true when not set", () => {
-      delete process.env.CURSOR_ACP_FORWARD_TOOL_CALLS;
-      const enabled = process.env.CURSOR_ACP_FORWARD_TOOL_CALLS !== "false";
+      delete process.env.CURSOR_KILO_FORWARD_TOOL_CALLS;
+      const enabled = process.env.CURSOR_KILO_FORWARD_TOOL_CALLS !== "false";
       expect(enabled).toBe(true);
     });
 
     it("should be false when explicitly set to 'false'", () => {
-      process.env.CURSOR_ACP_FORWARD_TOOL_CALLS = "false";
-      const enabled = process.env.CURSOR_ACP_FORWARD_TOOL_CALLS !== "false";
+      process.env.CURSOR_KILO_FORWARD_TOOL_CALLS = "false";
+      const enabled = process.env.CURSOR_KILO_FORWARD_TOOL_CALLS !== "false";
       expect(enabled).toBe(false);
     });
   });

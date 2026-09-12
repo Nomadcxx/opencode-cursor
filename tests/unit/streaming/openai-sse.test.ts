@@ -111,7 +111,7 @@ describe("openai-sse", () => {
     });
     const now = Date.now();
 
-    // Simulate real cursor-acp protocol: events with timestamp_ms carry delta text
+    // Simulate real cursor-kilo protocol: events with timestamp_ms carry delta text
     const first = converter.handleEvent({
       type: "assistant",
       timestamp_ms: now + 1,

@@ -16,7 +16,7 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
 };
 
 function getConfiguredLevel(): LogLevel {
-  const env = process.env.CURSOR_ACP_LOG_LEVEL?.toLowerCase();
+  const env = process.env.CURSOR_KILO_LOG_LEVEL?.toLowerCase();
   if (env && env in LEVEL_PRIORITY) {
     return env as LogLevel;
   }
@@ -24,8 +24,8 @@ function getConfiguredLevel(): LogLevel {
 }
 
 function isSilent(): boolean {
-  return process.env.CURSOR_ACP_LOG_SILENT === "1" ||
-         process.env.CURSOR_ACP_LOG_SILENT === "true";
+  return process.env.CURSOR_KILO_LOG_SILENT === "1" ||
+         process.env.CURSOR_KILO_LOG_SILENT === "true";
 }
 
 function shouldLog(level: LogLevel): boolean {
@@ -35,7 +35,7 @@ function shouldLog(level: LogLevel): boolean {
 }
 
 function formatMessage(level: LogLevel, component: string, message: string, data?: unknown): string {
-  const prefix = `[cursor-acp:${component}]`;
+  const prefix = `[cursor-kilo:${component}]`;
   const levelTag = level.toUpperCase().padEnd(5);
 
   let formatted = `${prefix} ${levelTag} ${message}`;
@@ -52,7 +52,7 @@ function formatMessage(level: LogLevel, component: string, message: string, data
 }
 
 function isConsoleEnabled(): boolean {
-  const consoleEnv = process.env.CURSOR_ACP_LOG_CONSOLE;
+  const consoleEnv = process.env.CURSOR_KILO_LOG_CONSOLE;
   return consoleEnv === "1" || consoleEnv === "true";
 }
 
@@ -62,7 +62,7 @@ let logStream: fs.WriteStream | null = null;
 let logBytesWritten = 0;
 
 function getLogDir(): string {
-  const override = process.env.CURSOR_ACP_LOG_DIR?.trim();
+  const override = process.env.CURSOR_KILO_LOG_DIR?.trim();
   return override || path.join(os.homedir(), ".opencode-cursor");
 }
 
@@ -110,7 +110,7 @@ function openLogStream(): void {
     logStream.on("error", () => {
       if (!logFileError) {
         logFileError = true;
-        console.error(`[cursor-acp] Failed to write logs. Using: ${getLogFile()}`);
+        console.error(`[cursor-kilo] Failed to write logs. Using: ${getLogFile()}`);
       }
       logStream = null;
     });

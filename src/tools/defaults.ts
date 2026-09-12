@@ -1,5 +1,10 @@
 import type { ToolRegistry } from "./core/registry.js";
 import { createLogger } from "../utils/logger.js";
+import {
+  execFirstStdoutLines,
+  resolveGlobMaxLines,
+  resolveGrepMaxLines,
+} from "./exec-utils.js";
 
 export const WRITE_TOOL_TARGETED_EDIT_CONTRACT =
   "Use only for new files or intentional full-file replacement. For targeted edits to existing files, use edit with old_string and new_string.";
@@ -269,9 +274,7 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     },
     source: "local" as const
   }, async (args) => {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileAsync = promisify(execFile);
+    const grepMaxLines = resolveGrepMaxLines();
 
     const pattern = args.pattern as string;
     const path = args.path as string;
@@ -288,7 +291,20 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     grepArgs.push("-e", pattern, path);
 
     const runGrep = async (extraArgs: string[] = []) => {
-      return execFileAsync("grep", [...extraArgs, ...grepArgs], { timeout: 30000 });
+      try {
+        const output = await execFirstStdoutLines(
+          "grep",
+          [...extraArgs, ...grepArgs],
+          grepMaxLines,
+          { timeoutMs: 30000, treatExitCodeOneAsEmpty: true },
+        );
+        return { stdout: output };
+      } catch (error: any) {
+        if (error?.code === 1) {
+          return { stdout: "No matches found" };
+        }
+        throw error;
+      }
     };
 
     try {
@@ -379,10 +395,6 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     },
     source: "local" as const
   }, async (args) => {
-    const { execFile } = await import("child_process");
-    const { promisify } = await import("util");
-    const execFileAsync = promisify(execFile);
-
     const pattern = resolveGlobPattern(args);
     if (!pattern) {
       throw new Error("glob: missing required argument 'pattern'");
@@ -411,17 +423,18 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     }
 
     try {
-      const { stdout } = await execFileAsync("find", findArgs, { timeout: 30000 });
-      // Limit output to 50 lines (replaces piped `| head -50`)
-      const lines = (stdout || "").split("\n").filter(Boolean);
-      return lines.slice(0, 50).join("\n") || "No files found";
+      const output = await execFirstStdoutLines("find", findArgs, resolveGlobMaxLines(), {
+        timeoutMs: 30000,
+        treatExitCodeOneAsEmpty: true,
+      });
+      return output || "No files found";
     } catch (error: any) {
       const stdout = typeof error?.stdout === "string" ? error.stdout : "";
       const stderr = typeof error?.stderr === "string" ? error.stderr : "";
       // Permission-denied and "no results" scenarios from find should not be fatal.
       if (error?.code === 1 || stderr.includes("Permission denied")) {
         const lines = stdout.split("\n").filter(Boolean);
-        return lines.slice(0, 50).join("\n") || "No files found";
+        return lines.slice(0, resolveGlobMaxLines()).join("\n") || "No files found";
       }
       throw error;
     }
@@ -588,7 +601,7 @@ function detectSuspiciousPartialOverwrite(
   next: string,
   minimumExistingLines = 5,
 ): { existingLines: number; nextLines: number } | null {
-  if (process.env.CURSOR_ACP_WRITE_OVERWRITE_GUARD === "false") {
+  if (process.env.CURSOR_KILO_WRITE_OVERWRITE_GUARD === "false") {
     return null;
   }
   if (existing.length === 0) {

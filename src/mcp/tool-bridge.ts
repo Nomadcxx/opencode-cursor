@@ -1,6 +1,7 @@
-import { tool } from "@opencode-ai/plugin/tool";
+import { tool } from "@kilocode/plugin/tool";
 import { createLogger } from "../utils/logger.js";
 import type { McpClientManager } from "./client-manager.js";
+import { namespaceMcpToolKilo, namespaceMcpToolKiloNative } from "../kilo/platform.js";
 
 const log = createLogger("mcp:tool-bridge");
 
@@ -13,11 +14,27 @@ interface DiscoveredMcpTool {
   inputSchema?: Record<string, unknown>;
 }
 
+function makeMcpExecutor(
+  manager: McpClientManager,
+  serverName: string,
+  toolName: string,
+) {
+  return async (args: any) => {
+    log.debug("Executing MCP tool", { server: serverName, tool: toolName });
+    const result = await manager.callTool(serverName, toolName, args ?? {});
+    if (result.startsWith("Error:")) {
+      throw new Error(result);
+    }
+    return result;
+  };
+}
+
 /**
  * Build plugin `tool()` hook entries for discovered MCP tools.
  *
- * Each MCP tool is namespaced as `mcp__<server_name>__<tool_name>`
- * to avoid collision with local tools and to make the source clear.
+ * Registers both naming conventions for transparent Kilo <-> cursor-agent bridging:
+ * - cursor-agent: `mcp__<server>__<tool>`
+ * - Kilo native:  `<server>_<tool>`
  */
 export function buildMcpToolHookEntries(
   tools: DiscoveredMcpTool[],
@@ -27,29 +44,17 @@ export function buildMcpToolHookEntries(
   const entries: Record<string, any> = {};
 
   for (const t of tools) {
-    const hookName = namespaceMcpTool(t.serverName, t.name);
-
-    if (entries[hookName]) {
-      log.debug("Duplicate MCP tool name, skipping", { hookName });
-      continue;
-    }
-
+    const cursorName = namespaceMcpTool(t.serverName, t.name);
+    const kiloSanitized = namespaceMcpToolKilo(t.serverName, t.name);
+    const kiloNative = namespaceMcpToolKiloNative(t.serverName, t.name);
     const zodArgs = mcpSchemaToZod(t.inputSchema, z);
-    const serverName = t.serverName;
-    const toolName = t.name;
+    const execute = makeMcpExecutor(manager, t.serverName, t.name);
+    const description = t.description || `MCP tool: ${t.name} (server: ${t.serverName})`;
 
-    entries[hookName] = tool({
-      description: t.description || `MCP tool: ${t.name} (server: ${t.serverName})`,
-      args: zodArgs,
-      async execute(args: any) {
-        log.debug("Executing MCP tool", { server: serverName, tool: toolName });
-        const result = await manager.callTool(serverName, toolName, args ?? {});
-        if (result.startsWith("Error:")) {
-          throw new Error(result);
-        }
-        return result;
-      },
-    });
+    for (const hookName of [cursorName, kiloSanitized, kiloNative]) {
+      if (entries[hookName]) continue;
+      entries[hookName] = tool({ description, args: zodArgs, execute });
+    }
   }
 
   log.debug("Built MCP tool hook entries", { count: Object.keys(entries).length });
@@ -58,20 +63,22 @@ export function buildMcpToolHookEntries(
 
 /**
  * Build OpenAI-format tool definitions for discovered MCP tools.
- * These are injected into chat.params so the model sees the tools.
+ * Visible names match Kilo (`<server>_<tool>`); mcp__ aliases stay off the catalog.
  */
 export function buildMcpToolDefinitions(tools: DiscoveredMcpTool[]): any[] {
   const defs: any[] = [];
+  const seen = new Set<string>();
 
   for (const t of tools) {
-    const name = namespaceMcpTool(t.serverName, t.name);
+    const description = t.description || `MCP tool: ${t.name} (server: ${t.serverName})`;
+    const parameters = t.inputSchema ?? { type: "object", properties: {} };
+
+    const name = namespaceMcpToolKiloNative(t.serverName, t.name);
+    if (seen.has(name)) continue;
+    seen.add(name);
     defs.push({
       type: "function",
-      function: {
-        name,
-        description: t.description || `MCP tool: ${t.name} (server: ${t.serverName})`,
-        parameters: t.inputSchema ?? { type: "object", properties: {} },
-      },
+      function: { name, description, parameters },
     });
   }
 

@@ -1,6 +1,6 @@
-import type { Plugin, PluginInput } from "@opencode-ai/plugin";
-import { tool } from "@opencode-ai/plugin/tool";
-import type { Auth } from "@opencode-ai/sdk";
+import type { Plugin, PluginInput } from "@kilocode/plugin";
+import { tool } from "@kilocode/plugin/tool";
+import type { Auth } from "@kilocode/sdk";
 import { spawn, spawnSync } from "child_process";
 import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
@@ -22,20 +22,38 @@ import {
   type StreamJsonEvent,
 } from "./streaming/types.js";
 import {
-  createChatCompletionUsageChunk,
+  appendOpenAiUsage,
   extractOpenAiUsageFromResult,
+  formatStreamUsageAndDoneSse,
   type OpenAiUsage,
 } from "./usage.js";
 import { createLogger } from "./utils/logger.js";
 import { RequestPerf } from "./utils/perf.js";
 import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure } from "./utils/errors.js";
+import { buildCursorAuthMethods, isExpiringSoon, refreshAccessToken } from "./auth/oauth.js";
+import { readStoredAuth } from "./kilo/auth-store.js";
+import {
+  classifyStoredAuth,
+  describeCredentialRequirement,
+  oauthRequiresCursorAgent,
+  sdkApiKeyFromCredential,
+  type CursorCredential,
+} from "./kilo/credential.js";
+import { syncOAuthToCursorCliConfig } from "./kilo/cursor-cli-config.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
+import { rewriteMessagesWithAttachments } from "./proxy/attachments.js";
 import {
   applyBridgeJsonPrompt,
   BridgeJsonStreamDetector,
   extractBridgeToolCallFromStreamOutput,
   isBridgeJsonEnabled,
 } from "./proxy/bridge-json.js";
+import {
+  buildKiloSubagentSystemMessage,
+  extractKiloSubagentsFromTools,
+  rewriteCursorNativeTaskMisuse,
+  type KiloSubagentSummary,
+} from "./proxy/kilo-subagents.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
 import {
   buildSessionKey,
@@ -51,7 +69,15 @@ import {
   RESUME_CHAT_ID_SAFE_RE,
 } from "./proxy/session-resume.js";
 import {
-  extractAllowedToolNames,
+  clearResumeForKiloSession,
+  consumeCompactionInvalidation,
+  readKiloSessionIdFromHeaders,
+  reaffirmKiloSessionMapping,
+  registerKiloSessionKey,
+  trackKiloSession,
+} from "./proxy/kilo-session-registry.js";
+import { buildProxyAllowedToolNames, KILO_SKILL_CALL_DYNAMIC_FALLBACK } from "./mcp/kilo-bridge.js";
+import {
   type OpenAiToolCall,
 } from "./proxy/tool-loop.js";
 import { OpenCodeToolDiscovery } from "./tools/discovery.js";
@@ -60,15 +86,28 @@ import { ToolRouter } from "./tools/router.js";
 import { SkillLoader } from "./tools/skills/loader.js";
 import { SkillResolver } from "./tools/skills/resolver.js";
 import { autoRefreshModels } from "./models/sync.js";
+import {
+  loadRuntimeModelCatalog,
+  resolveChatParamsModelRef,
+  resolveChatParamsWireModel,
+  resolveProxyRuntimeModel,
+} from "./models/runtime-catalog.js";
+import type { KiloCatalogResult } from "./models/kilo-catalog.js";
 import { readMcpConfigs } from "./mcp/config.js";
 import { McpClientManager } from "./mcp/client-manager.js";
+import { buildKiloMcpAliasHint } from "./mcp/kilo-bridge.js";
+import { buildKiloMcpDiscoveryToolEntries, rememberMcpCatalogFromTools } from "./mcp/dynamic-catalog.js";
 import {
-  MCP_TOOL_PREFIX,
+  createChatParamToolSnapshotResolver,
+  resetPromptToolSchemaCacheOnFingerprintChange,
+} from "./mcp/tool-snapshot.js";
+import { isDirectMcpEnabled, ensureNativeMcpDenied, syncKiloPassthroughBridgeCliConfig } from "./kilo/cursor-cli-bridge.js";
+import { namespaceMcpToolKiloNative } from "./kilo/platform.js";
+import {
   buildMcpToolHookEntries,
   buildMcpToolDefinitions,
-  namespaceMcpTool,
 } from "./mcp/tool-bridge.js";
-import { createOpencodeClient } from "@opencode-ai/sdk";
+import { createKiloClient } from "@kilocode/sdk";
 import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
 import { LocalExecutor } from "./tools/executors/local.js";
 import { SdkExecutor } from "./tools/executors/sdk.js";
@@ -117,18 +156,38 @@ function getMcpToolDefinitionName(mcpToolDefs: any[], index: number): string | u
   return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
+/** Injected into experimental.chat.system.transform for every cursor-provider session. */
+export const KILO_AGENT_SKILL_SYSTEM_INSTRUCTION =
+  "Agent Skills: load SKILL.md with skill({ name: \"<id-from-available_skills>\" }). "
+  + "The name argument is required (example: skill({ name: \"bmad-spec\" })). "
+  + "Do not call skill() with empty arguments. "
+  + "If skill is not in the native tool list, use "
+  + KILO_SKILL_CALL_DYNAMIC_FALLBACK
+  + ". Prefer either over Read on SKILL.md paths.";
+
 export function buildAvailableToolsSystemMessage(
   lastToolNames: string[],
   lastToolMap: Array<{ id: string; name: string }>,
   mcpToolDefs: any[],
   mcpToolSummaries?: McpToolSummary[],
-): string | null {
+  kiloSubagents: KiloSubagentSummary[] = [],
+): string {
   const parts: string[] = [];
+
+  const kiloSubagentMessage = buildKiloSubagentSystemMessage(kiloSubagents);
+  if (kiloSubagentMessage) {
+    parts.push(kiloSubagentMessage);
+  }
 
   if (lastToolNames.length > 0 || lastToolMap.length > 0) {
     const names = lastToolNames.join(", ");
     const mapping = lastToolMap.map((m) => `${m.id} -> ${m.name}`).join("; ");
-    parts.push(`Available OpenCode tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`);
+    parts.push(`Available Kilo tools (use via tool calls): ${names}. Original skill ids mapped as: ${mapping}. Aliases include oc_skill_* and oc_superskill_* when applicable.`);
+  }
+
+  const kiloMcpHint = buildKiloMcpAliasHint(lastToolNames);
+  if (kiloMcpHint) {
+    parts.push(kiloMcpHint);
   }
 
   if (mcpToolSummaries && mcpToolSummaries.length > 0) {
@@ -136,7 +195,7 @@ export function buildAvailableToolsSystemMessage(
       ...summary,
       callName: summary.callName
         ?? getMcpToolDefinitionName(mcpToolDefs, index)
-        ?? namespaceMcpTool(summary.serverName, summary.toolName),
+        ?? namespaceMcpToolKiloNative(summary.serverName, summary.toolName),
     }));
 
     const servers = new Map<string, Array<McpToolSummary & { callName: string }>>();
@@ -147,9 +206,8 @@ export function buildAvailableToolsSystemMessage(
     }
 
     const lines: string[] = [
-      `MCP TOOLS — Call these tools by their FULL exact name (e.g. mcp__filesystem__read_file).`,
-      `Important: There is NO tool named 'mcp'. Every MCP tool has the format mcp__<server>__<tool>.`,
-      "Do NOT call a tool named 'mcp' with parameters. Always use the complete tool name below.",
+      "MCP TOOLS — Call these tools by their Kilo name (e.g. openviking_search, context7_query-docs, browser-harness_browser_list_tabs).",
+      "GetDynamicTools() with no arguments lists Kilo MCP namespaces — not only namespace \"cursor\". Do not use mcp__ prefixes.",
       "",
     ];
 
@@ -166,14 +224,37 @@ export function buildAvailableToolsSystemMessage(
     parts.push(lines.join("\n"));
   }
 
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  parts.push(KILO_AGENT_SKILL_SYSTEM_INSTRUCTION);
+
+  return parts.join("\n\n");
+}
+
+function applyProxyBridgeJsonPrompt(
+  prompt: string,
+  tools: Array<any>,
+  allowedToolNames: Set<string>,
+): string {
+  const kiloSubagents = extractKiloSubagentsFromTools(tools);
+  return applyBridgeJsonPrompt(prompt, {
+    allowedToolNames,
+    tools,
+    kiloSubagents,
+  });
+}
+
+function finalizeProxyAssistantText(text: string, tools: Array<any>): string {
+  return rewriteCursorNativeTaskMisuse(text, extractKiloSubagentsFromTools(tools));
+}
+
+function proxyKiloSubagents(tools: Array<any>): KiloSubagentSummary[] {
+  return extractKiloSubagentsFromTools(tools);
 }
 
 export async function ensurePluginDirectory(): Promise<void> {
   const configHome = process.env.XDG_CONFIG_HOME
     ? resolve(process.env.XDG_CONFIG_HOME)
     : join(homedir(), ".config");
-  const pluginDir = join(configHome, "opencode", "plugin");
+  const pluginDir = join(configHome, "kilo", "plugin");
   try {
     await mkdir(pluginDir, { recursive: true });
     log.debug("Plugin directory ensured", { path: pluginDir });
@@ -182,7 +263,7 @@ export async function ensurePluginDirectory(): Promise<void> {
   }
 }
 
-export const CURSOR_PROVIDER_ID = "cursor-acp";
+export const CURSOR_PROVIDER_ID = "cursor";
 const CURSOR_PROVIDER_PREFIX = `${CURSOR_PROVIDER_ID}/`;
 
 export function shouldProcessModel(model: string | undefined): boolean {
@@ -194,10 +275,65 @@ const CURSOR_PROXY_HOST = "127.0.0.1";
 const CURSOR_PROXY_DEFAULT_PORT = 32124;
 const CURSOR_PROXY_DEFAULT_BASE_URL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
 const CURSOR_PROXY_HEALTH_TIMEOUT_MS = 3000;
-const REUSE_EXISTING_PROXY = process.env.CURSOR_ACP_REUSE_EXISTING_PROXY !== "false";
+const REUSE_EXISTING_PROXY = process.env.CURSOR_KILO_REUSE_EXISTING_PROXY !== "false";
 
 // Stored API key from auth loader (OpenCode auth store)
 let storedApiKey: string | undefined;
+let storedCredential: CursorCredential | undefined;
+let cachedGetAuth: (() => Promise<Auth>) | undefined;
+
+async function applyAuthRecord(auth: Auth | undefined): Promise<void> {
+  storedCredential = classifyStoredAuth(auth);
+  storedApiKey = sdkApiKeyFromCredential(storedCredential);
+
+  if (!auth) return;
+
+  if (auth.type === "oauth" && auth.access) {
+    let access = auth.access;
+    if (auth.refresh && isExpiringSoon(auth.access)) {
+      try {
+        const refreshed = await refreshAccessToken(auth.refresh);
+        access = refreshed.accessToken;
+        storedCredential = {
+          kind: "oauth-jwt",
+          accessToken: access,
+          refreshToken: refreshed.refreshToken,
+        };
+        storedApiKey = undefined;
+      } catch {
+        // Keep existing access token if refresh fails.
+      }
+    }
+    await syncOAuthToCursorCliConfig(access, auth.refresh);
+    log.debug("Stored OAuth access token from auth store");
+    return;
+  }
+
+  if (auth.type === "api" && auth.key) {
+    storedCredential = classifyStoredAuth(auth);
+    storedApiKey = sdkApiKeyFromCredential(storedCredential);
+    log.debug("Stored API credential from auth store", { kind: storedCredential?.kind });
+  }
+}
+
+async function ensureStoredAuthLoaded(): Promise<void> {
+  if (storedCredential || storedApiKey) return;
+
+  if (cachedGetAuth) {
+    try {
+      await applyAuthRecord(await cachedGetAuth());
+    } catch (err) {
+      log.debug("Failed to load auth via getAuth()", { error: String(err) });
+    }
+    if (storedCredential || storedApiKey) return;
+  }
+
+  try {
+    await applyAuthRecord(await readStoredAuth(CURSOR_PROVIDER_ID));
+  } catch (err) {
+    log.debug("Failed to load auth from Kilo auth store", { error: String(err) });
+  }
+}
 
 export function setStoredApiKey(apiKey: string | undefined): void {
   storedApiKey = apiKey;
@@ -232,11 +368,24 @@ function isCursorAgentAvailable(): boolean {
 }
 
 function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeBackend {
-  const parsed = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND);
+  const parsed = parseCursorBackendPreference(process.env.CURSOR_KILO_BACKEND);
   if (!parsed.valid) {
-    log.warn("Invalid CURSOR_ACP_BACKEND value; falling back to auto", {
-      value: process.env.CURSOR_ACP_BACKEND,
+    log.warn("Invalid CURSOR_KILO_BACKEND value; falling back to auto", {
+      value: process.env.CURSOR_KILO_BACKEND,
     });
+  }
+
+  if (parsed.preference === "sdk") {
+    return "sdk";
+  }
+
+  if (parsed.preference === "cursor-agent") {
+    return "cursor-agent";
+  }
+
+  // Auto: OAuth JWT → cursor-agent (after cli-config sync). Raw API keys → SDK.
+  if (oauthRequiresCursorAgent(storedCredential)) {
+    return "cursor-agent";
   }
 
   return selectBackendForRequest({
@@ -244,6 +393,13 @@ function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeB
     cursorAgentAvailable: isCursorAgentAvailable(),
     sdkApiKey,
   });
+}
+
+function missingBackendAuthMessage(backend: CursorRuntimeBackend): string {
+  if (backend === "sdk") {
+    return "Cursor SDK backend requires a Cursor API key (cursor.com/settings). OAuth browser login needs cursor-agent installed, or re-auth with API key: kilo auth login --provider cursor";
+  }
+  return describeCredentialRequirement(storedCredential);
 }
 
 
@@ -315,16 +471,21 @@ export function resolvePromptForBackend(input: {
   tools: Array<any>;
   model: string;
   workspaceDirectory: string;
+  /** Kilo/OpenCode session ID from X-Kilo-Session-ID when available. */
+  kiloSessionId?: string;
+  /** Skip cached --resume after Kilo compaction reset for this turn. */
+  forceFreshCursorSession?: boolean;
 }): ResolvedPrompt {
+  const messages = rewriteMessagesWithAttachments(input.messages, input.workspaceDirectory);
   let fullPrompt: string | undefined;
   const getFullPrompt = () =>
-    fullPrompt ??= buildPromptFromMessages(input.messages, input.tools);
+    fullPrompt ??= buildPromptFromMessages(messages, input.tools);
 
   if (input.backend !== "cursor-agent" || !isSessionResumeEnabled()) {
     return { prompt: getFullPrompt(), usedIncremental: false };
   }
 
-  const anchorResult = deriveConversationAnchor(input.messages);
+  const anchorResult = deriveConversationAnchor(messages);
   if (!anchorResult) {
     log.warn("Session resume enabled but no usable conversation anchor; skipping resume", {
       model: input.model,
@@ -333,16 +494,27 @@ export function resolvePromptForBackend(input: {
     return { prompt: getFullPrompt(), usedIncremental: false };
   }
   const { anchor, contentPrefix: anchorContentPrefix } = anchorResult;
-  const resumePrefixes = deriveConversationResumePrefixes(input.messages);
+  const resumePrefixes = deriveConversationResumePrefixes(messages);
   const contentPrefix = resumePrefixes?.lookupContentPrefix ?? anchorContentPrefix;
   const recordContentPrefix = resumePrefixes?.recordContentPrefix ?? contentPrefix;
-  const sessionKey = buildSessionKey(input.workspaceDirectory, input.model, anchor);
+  const sessionKey = buildSessionKey(
+    input.workspaceDirectory,
+    input.model,
+    anchor,
+    input.kiloSessionId,
+  );
   const sessionKeyHash = sanitizeSessionKey(sessionKey);
   const toolFingerprint = buildToolFingerprint(input.tools);
+  if (input.forceFreshCursorSession) {
+    clearResumeChatId(sessionKey);
+    log.info("Skipping cursor resume after Kilo compaction invalidation", {
+      sessionKeyHash,
+    });
+  }
   const resumeChatId = getResumeChatId(sessionKey, contentPrefix, toolFingerprint);
   const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
   if (!resumeChatId) {
-    const isContinuation = input.messages.some((m: any) => m?.role === "assistant");
+    const isContinuation = messages.some((m: any) => m?.role === "assistant");
     if (isContinuation) {
       log.warn("Session resume enabled but no chatId found for sessionKey; falling back to full prompt", {
         sessionKeyHash,
@@ -351,7 +523,7 @@ export function resolvePromptForBackend(input: {
     return { prompt: getFullPrompt(), sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint };
   }
 
-  const incremental = buildIncrementalPrompt(input.messages);
+  const incremental = buildIncrementalPrompt(messages);
   if (incremental) {
     // Guard the debug log behind isDebugEnabled() so getFullPrompt() is not
     // eagerly evaluated on the incremental hot path. JS evaluates call
@@ -488,6 +660,34 @@ function createAssistantThinkingEvent(
       content: event.message.content.filter((content) => content.type === "thinking"),
     },
   };
+}
+
+function handleBridgeJsonAssistantEvent(
+  bridgeDetector: BridgeJsonStreamDetector | null,
+  event: StreamJsonEvent,
+  emitBridgeText: (text: string) => void,
+  emitToolCallAndTerminate: (toolCall: OpenAiToolCall) => void,
+): boolean {
+  if (!bridgeDetector || !isAssistantText(event)) {
+    return false;
+  }
+
+  const decision = bridgeDetector.push(event);
+  if (decision.action === "tool_call") {
+    emitToolCallAndTerminate(decision.toolCall);
+    return true;
+  }
+  if (decision.action === "buffer") {
+    return true;
+  }
+  if (decision.text) {
+    emitBridgeText(decision.text);
+    return true;
+  }
+  if (decision.action === "passthrough") {
+    return true;
+  }
+  return false;
 }
 
 function shouldTreatCursorAgentFailureAsDiagnostic(
@@ -644,7 +844,7 @@ function getOpenCodeConfigPrefix(): string {
   const configHome = process.env.XDG_CONFIG_HOME
     ? resolve(process.env.XDG_CONFIG_HOME)
     : join(homedir(), ".config");
-  return join(configHome, "opencode");
+  return join(configHome, "kilo");
 }
 
 function canonicalizePathForCompare(pathValue: string): string {
@@ -723,7 +923,7 @@ export function resolveWorkspaceDirectory(
 ): string {
   const configPrefix = getOpenCodeConfigPrefix();
 
-  const envWorkspace = resolveCandidate(process.env.CURSOR_ACP_WORKSPACE);
+  const envWorkspace = resolveCandidate(process.env.CURSOR_KILO_WORKSPACE);
   if (envWorkspace && !isRootPath(envWorkspace)) {
     return envWorkspace;
   }
@@ -800,9 +1000,26 @@ export async function fetchProxyHealthWithTimeout(
   }
 }
 
-const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
-const EMIT_TOOL_UPDATES = process.env.CURSOR_ACP_EMIT_TOOL_UPDATES === "true";
-const FORWARD_TOOL_CALLS = process.env.CURSOR_ACP_FORWARD_TOOL_CALLS !== "false";
+const FORCE_TOOL_MODE = process.env.CURSOR_KILO_FORCE !== "false";
+
+function isUsageDrainDisabled(): boolean {
+  const raw = process.env.CURSOR_KILO_USAGE_DRAIN?.trim().toLowerCase();
+  return raw === "0" || raw === "false" || raw === "off" || raw === "no";
+}
+
+function readUsageDrainTimeoutMs(): number {
+  const raw = process.env.CURSOR_KILO_USAGE_DRAIN_MS;
+  if (raw === undefined || raw.trim() === "") {
+    return 30_000;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 30_000;
+  }
+  return parsed;
+}
+const EMIT_TOOL_UPDATES = process.env.CURSOR_KILO_EMIT_TOOL_UPDATES === "true";
+const FORWARD_TOOL_CALLS = process.env.CURSOR_KILO_FORWARD_TOOL_CALLS !== "false";
 
 function parseToolLoopMode(value: string | undefined): { mode: ToolLoopMode; valid: boolean } {
   const normalized = (value ?? "opencode").trim().toLowerCase();
@@ -812,9 +1029,9 @@ function parseToolLoopMode(value: string | undefined): { mode: ToolLoopMode; val
   return { mode: "opencode", valid: false };
 }
 
-const TOOL_LOOP_MODE_RAW = process.env.CURSOR_ACP_TOOL_LOOP_MODE;
+const TOOL_LOOP_MODE_RAW = process.env.CURSOR_KILO_TOOL_LOOP_MODE;
 export const { mode: TOOL_LOOP_MODE, valid: TOOL_LOOP_MODE_VALID } = parseToolLoopMode(TOOL_LOOP_MODE_RAW);
-const PROVIDER_BOUNDARY_MODE_RAW = process.env.CURSOR_ACP_PROVIDER_BOUNDARY;
+const PROVIDER_BOUNDARY_MODE_RAW = process.env.CURSOR_KILO_PROVIDER_BOUNDARY;
 const {
   mode: PROVIDER_BOUNDARY_MODE,
   valid: PROVIDER_BOUNDARY_MODE_VALID,
@@ -825,8 +1042,8 @@ const PROVIDER_BOUNDARY =
     ? LEGACY_PROVIDER_BOUNDARY
     : createProviderBoundary(PROVIDER_BOUNDARY_MODE, CURSOR_PROVIDER_ID);
 const ENABLE_PROVIDER_BOUNDARY_AUTOFALLBACK =
-  process.env.CURSOR_ACP_PROVIDER_BOUNDARY_AUTOFALLBACK !== "false";
-const TOOL_LOOP_MAX_REPEAT_RAW = process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
+  process.env.CURSOR_KILO_PROVIDER_BOUNDARY_AUTOFALLBACK !== "false";
+const TOOL_LOOP_MAX_REPEAT_RAW = process.env.CURSOR_KILO_TOOL_LOOP_MAX_REPEAT;
 const {
   value: TOOL_LOOP_MAX_REPEAT,
   valid: TOOL_LOOP_MAX_REPEAT_VALID,
@@ -968,7 +1185,7 @@ function createChatCompletionResponse(
     }>;
     usage?: OpenAiUsage;
   } = {
-    id: `cursor-acp-${Date.now()}`,
+    id: `cursor-kilo-${Date.now()}`,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
     model,
@@ -1196,7 +1413,11 @@ async function findFirstAllowedToolCallInOutput(
   return { toolCall: null, terminationMessage: null };
 }
 
-export async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: ToolRouter): Promise<string> {
+export async function ensureCursorProxyServer(
+  workspaceDirectory: string,
+  toolRouter?: ToolRouter,
+  modelCatalog?: KiloCatalogResult | null,
+): Promise<string> {
   const key = getGlobalKey();
   const g = globalThis as any;
   const normalizedWorkspace = normalizeWorkspaceForCompare(workspaceDirectory);
@@ -1218,6 +1439,9 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       storedApiKey,
       authorizationHeader: authHeader,
     });
+
+  const resolveRequestModel = (body: Record<string, unknown>): string =>
+    resolveProxyRuntimeModel(modelCatalog ?? null, body);
 
       const handler = async (req: Request): Promise<Response> => {
         try {
@@ -1270,6 +1494,8 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const messages: Array<any> = Array.isArray(body?.messages) ? body.messages : [];
       const stream = body?.stream === true;
       const tools = Array.isArray(body?.tools) ? body.tools : [];
+      const kiloSubagents = proxyKiloSubagents(tools);
+      rememberMcpCatalogFromTools(tools);
 
       log.debug("raw request body", {
         model: body?.model,
@@ -1283,27 +1509,59 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         hasToolResultMessages: messages.some((m: any) => m?.role === "tool"),
       });
 
-      const allowedToolNames = extractAllowedToolNames(tools);
+      const allowedToolNames = buildProxyAllowedToolNames(tools);
       const bridgeJsonEnabled = isBridgeJsonEnabled();
       const toolSchemaMap = buildToolSchemaMap(tools);
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("bun-handler");
 
-      const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
-        boundary.resolveRuntimeModel(body?.model, body?.cursorModel),
-      );
+      const model = resolveRequestModel(body as Record<string, unknown>);
+      await ensureStoredAuthLoaded();
       const authHeader = req.headers.get("authorization");
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
       const backend = resolveBackendForRequest(sdkApiKey);
+      log.debug("Selected runtime backend", {
+        backend,
+        credentialKind: storedCredential?.kind,
+        hasSdkKey: Boolean(sdkApiKey),
+        model,
+      });
       reqPerf.mark("backend-resolved");
+
+      const kiloSessionId = readKiloSessionIdFromHeaders(req.headers);
+
+      if (backend === "cursor-agent" && oauthRequiresCursorAgent(storedCredential) && !isCursorAgentAvailable()) {
+        const message = `cursor-kilo error: ${describeCredentialRequirement(storedCredential)}`;
+        if (!stream) {
+          return new Response(JSON.stringify(createChatCompletionResponse(model, message)), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const id = `cursor-kilo-${Date.now()}`;
+        const created = Math.floor(Date.now() / 1000);
+        const errChunk = createChatCompletionChunk(id, created, model, message, true);
+        return new Response(
+          `data: ${JSON.stringify(errChunk)}\n\ndata: [DONE]\n\n`,
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        );
+      }
+
       const resolvedPrompt = resolvePromptForBackend({
         backend,
         messages,
         tools,
         model,
         workspaceDirectory,
+        kiloSessionId,
+        forceFreshCursorSession: kiloSessionId
+          ? consumeCompactionInvalidation(kiloSessionId)
+          : false,
       });
-      const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
+      if (kiloSessionId && resolvedPrompt.sessionKey) {
+        registerKiloSessionKey(kiloSessionId, resolvedPrompt.sessionKey);
+      }
+      const prompt = applyProxyBridgeJsonPrompt(resolvedPrompt.prompt, tools, allowedToolNames);
       const {
         resumeChatId,
         sessionKey: sessionResumeKey,
@@ -1379,7 +1637,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           model,
         );
         const meta = {
-          id: `cursor-acp-${Date.now()}`,
+          id: `cursor-kilo-${Date.now()}`,
           created: Math.floor(Date.now() / 1000),
           model,
         };
@@ -1405,9 +1663,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             name: toolCall.function.name,
             callId: toolCall.id,
           });
-          const payload = boundaryContext.run(
-            "createNonStreamToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+          const payload = appendOpenAiUsage(
+            boundaryContext.run(
+              "createNonStreamToolCallResponse",
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            ),
+            extractCompletionFromStream(stdout).usage,
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1425,9 +1686,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             name: toolCall.function.name,
             callId: toolCall.id,
           });
-          const payload = boundaryContext.run(
-            "createNonStreamBridgeToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+          const payload = appendOpenAiUsage(
+            boundaryContext.run(
+              "createNonStreamBridgeToolCallResponse",
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            ),
+            extractCompletionFromStream(stdout).usage,
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1447,8 +1711,8 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             code: exitCode,
             failureTextHash: hashForLog(errSource),
           });
-          const parsed = parseAgentError(errSource);
-          const userError = formatErrorForUser(parsed);
+          const parsed = parseAgentError(errSource, { kiloSubagents });
+          const userError = formatErrorForUser(parsed, { kiloSubagents });
           log.error("cursor-cli failed", {
             type: parsed.type,
             failureTextHash: hashForLog(parsed.message),
@@ -1464,7 +1728,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
 
         const payload = createChatCompletionResponse(
           model,
-          completion.assistantText || stdout || stderr,
+          finalizeProxyAssistantText(completion.assistantText || stdout || stderr, tools),
           completion.reasoningText || undefined,
           completion.usage,
         );
@@ -1476,7 +1740,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
 
       // Streaming.
       const encoder = new TextEncoder();
-      const id = `cursor-acp-${Date.now()}`;
+      const id = `cursor-kilo-${Date.now()}`;
       const created = Math.floor(Date.now() / 1000);
       const perf = reqPerf;
       const toolMapper = new ToolMapper();
@@ -1492,6 +1756,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           let firstSseWritten = false;
           let sawSuccessfulStreamOutput = false;
           let usage: OpenAiUsage | undefined;
+          let toolCallFinishPending = false;
           const enqueueSse = (payload: string) => {
             if (!firstSseWritten) {
               perf.mark("first-sse-write");
@@ -1506,7 +1771,32 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             const bridgeDetector = bridgeJsonEnabled
               ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
               : null;
+            let usageDrainTimer: ReturnType<typeof setTimeout> | undefined;
+            const clearUsageDrainTimer = () => {
+              if (usageDrainTimer !== undefined) {
+                clearTimeout(usageDrainTimer);
+                usageDrainTimer = undefined;
+              }
+            };
+            const finalizeOpenAiStream = () => {
+              if (streamTerminated) return;
+              clearUsageDrainTimer();
+              for (const payload of formatStreamUsageAndDoneSse(id, created, model, usage, {
+                finishReason: toolCallFinishPending ? "tool_calls" : "stop",
+              })) {
+                enqueueSse(payload);
+              }
+              streamTerminated = true;
+              try {
+                child.kill();
+              } catch {
+                // ignore
+              }
+            };
             const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
+              if (streamTerminated || toolCallFinishPending) {
+                return;
+              }
               log.debug("Intercepted OpenCode tool call (stream)", {
                 name: toolCall.function.name,
                 callId: toolCall.id,
@@ -1519,12 +1809,25 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               for (const chunk of streamChunks) {
                 enqueueSse(`data: ${JSON.stringify(chunk)}\n\n`);
               }
-              enqueueSse(formatSseDone());
-              streamTerminated = true;
-              try {
-                child.kill();
-              } catch {
-                // ignore
+              toolCallFinishPending = true;
+              if (isUsageDrainDisabled()) {
+                try {
+                  child.kill();
+                } catch {
+                  // ignore
+                }
+                return;
+              }
+              const drainTimeoutMs = readUsageDrainTimeoutMs();
+              if (drainTimeoutMs > 0) {
+                usageDrainTimer = setTimeout(() => {
+                  if (!streamTerminated && toolCallFinishPending) {
+                    log.debug("Usage drain timed out after tool intercept", {
+                      drainTimeoutMs,
+                    });
+                    finalizeOpenAiStream();
+                  }
+                }, drainTimeoutMs);
               }
             };
             const emitBridgeEvent = (event: StreamJsonEvent) => {
@@ -1537,7 +1840,9 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               }
             };
             const emitBridgeText = (text: string) => {
-              emitBridgeEvent(createAssistantTextEvent(text));
+              emitBridgeEvent(createAssistantTextEvent(
+                finalizeProxyAssistantText(text, tools),
+              ));
             };
             const flushBridgeText = () => {
               const text = bridgeDetector?.flush() ?? "";
@@ -1545,27 +1850,13 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 emitBridgeText(text);
               }
             };
-            const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
-              if (!bridgeDetector || !isAssistantText(event)) {
-                return false;
-              }
-              if (isThinking(event)) {
-                emitBridgeEvent(createAssistantThinkingEvent(event));
-              }
-              const decision = bridgeDetector.push(event);
-              if (decision.action === "tool_call") {
-                emitToolCallAndTerminate(decision.toolCall);
-                return true;
-              }
-              if (decision.action === "buffer") {
-                return true;
-              }
-              if (decision.text !== undefined) {
-                emitBridgeText(decision.text);
-                return true;
-              }
-              return false;
-            };
+            const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean =>
+              handleBridgeJsonAssistantEvent(
+                bridgeDetector,
+                event,
+                emitBridgeText,
+                emitToolCallAndTerminate,
+              );
             const emitTerminalAssistantErrorAndTerminate = (message: string) => {
               if (streamTerminated) {
                 return;
@@ -1593,6 +1884,25 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 if (streamTerminated) break;
                 const event = parseStreamJsonLine(line);
                 if (!event) {
+                  continue;
+                }
+                if (toolCallFinishPending) {
+                  if (isResult(event)) {
+                    usage = extractOpenAiUsageFromResult(event) ?? usage;
+                    if (isSuccessfulResultEvent(event)) {
+                      sawSuccessfulStreamOutput = true;
+                    }
+                    finalizeOpenAiStream();
+                    break;
+                  }
+                  captureResumeChatIdFromEvent(
+                    event,
+                    sessionResumeKey,
+                    model,
+                    workspaceDirectory,
+                    sessionResumeRecordContentPrefix,
+                    sessionResumeToolFingerprint,
+                  );
                   continue;
                 }
                 captureResumeChatIdFromEvent(
@@ -1688,6 +1998,25 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               if (!event) {
                 continue;
               }
+              if (toolCallFinishPending) {
+                if (isResult(event)) {
+                  usage = extractOpenAiUsageFromResult(event) ?? usage;
+                  if (isSuccessfulResultEvent(event)) {
+                    sawSuccessfulStreamOutput = true;
+                  }
+                  finalizeOpenAiStream();
+                  break;
+                }
+                captureResumeChatIdFromEvent(
+                  event,
+                  sessionResumeKey,
+                  model,
+                  workspaceDirectory,
+                  sessionResumeRecordContentPrefix,
+                  sessionResumeToolFingerprint,
+                );
+                continue;
+              }
               captureResumeChatIdFromEvent(
                 event,
                 sessionResumeKey,
@@ -1764,6 +2093,10 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 enqueueSse(sse);
               }
             }
+            if (toolCallFinishPending && !streamTerminated) {
+              finalizeOpenAiStream();
+              return;
+            }
             if (streamTerminated) {
               return;
             }
@@ -1787,8 +2120,8 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                   code: exitCode,
                   failureTextHash: hashForLog(errSource),
                 });
-                const parsed = parseAgentError(errSource);
-                const msg = formatErrorForUser(parsed);
+                const parsed = parseAgentError(errSource, { kiloSubagents });
+                const msg = formatErrorForUser(parsed, { kiloSubagents });
                 log.error("cursor-cli streaming failed", {
                   type: parsed.type,
                   code: exitCode,
@@ -1823,11 +2156,9 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
 
             const doneChunk = createChatCompletionChunk(id, created, model, "", true);
             enqueueSse(`data: ${JSON.stringify(doneChunk)}\n\n`);
-            if (usage) {
-              const usageChunk = createChatCompletionUsageChunk(id, created, model, usage);
-              enqueueSse(`data: ${JSON.stringify(usageChunk)}\n\n`);
+            for (const payload of formatStreamUsageAndDoneSse(id, created, model, usage)) {
+              enqueueSse(payload);
             }
-            enqueueSse(formatSseDone());
           } finally {
             perf.mark("request:done");
             perf.summarize();
@@ -1925,27 +2256,51 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const messages: Array<any> = Array.isArray(bodyData?.messages) ? bodyData.messages : [];
       const stream = bodyData?.stream === true;
       const tools = Array.isArray(bodyData?.tools) ? bodyData.tools : [];
-      const allowedToolNames = extractAllowedToolNames(tools);
+      const kiloSubagents = proxyKiloSubagents(tools);
+      rememberMcpCatalogFromTools(tools);
+      const allowedToolNames = buildProxyAllowedToolNames(tools);
       const bridgeJsonEnabled = isBridgeJsonEnabled();
       const toolSchemaMap = buildToolSchemaMap(tools);
       const toolLoopGuard = createToolLoopGuard(messages, TOOL_LOOP_MAX_REPEAT);
       const boundaryContext = createBoundaryRuntimeContext("node-handler");
 
-      const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
-        boundary.resolveRuntimeModel(bodyData?.model, bodyData?.cursorModel),
-      );
+      const model = resolveRequestModel(bodyData as Record<string, unknown>);
+      await ensureStoredAuthLoaded();
       const authHeaderNode = req.headers["authorization"] as string | undefined;
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const backend = resolveBackendForRequest(sdkApiKeyNode);
+      log.debug("Selected runtime backend", {
+        backend,
+        credentialKind: storedCredential?.kind,
+        hasSdkKey: Boolean(sdkApiKeyNode),
+        model,
+      });
       reqPerf.mark("backend-resolved");
+
+      const kiloSessionId = readKiloSessionIdFromHeaders(req.headers);
+
+      if (backend === "cursor-agent" && oauthRequiresCursorAgent(storedCredential) && !isCursorAgentAvailable()) {
+        const message = `cursor-kilo error: ${describeCredentialRequirement(storedCredential)}`;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(createChatCompletionResponse(model, message)));
+        return;
+      }
+
       const resolvedPrompt = resolvePromptForBackend({
         backend,
         messages,
         tools,
         model,
         workspaceDirectory,
+        kiloSessionId,
+        forceFreshCursorSession: kiloSessionId
+          ? consumeCompactionInvalidation(kiloSessionId)
+          : false,
       });
-      const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
+      if (kiloSessionId && resolvedPrompt.sessionKey) {
+        registerKiloSessionKey(kiloSessionId, resolvedPrompt.sessionKey);
+      }
+      const prompt = applyProxyBridgeJsonPrompt(resolvedPrompt.prompt, tools, allowedToolNames);
       const {
         resumeChatId,
         sessionKey: sessionResumeKey,
@@ -2030,7 +2385,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             model,
           );
           const meta = {
-            id: `cursor-acp-${Date.now()}`,
+            id: `cursor-kilo-${Date.now()}`,
             created: Math.floor(Date.now() / 1000),
             model,
           };
@@ -2055,9 +2410,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               name: toolCall.function.name,
               callId: toolCall.id,
             });
-            const payload = boundaryContext.run(
-              "createNonStreamToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            const payload = appendOpenAiUsage(
+              boundaryContext.run(
+                "createNonStreamToolCallResponse",
+                (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              ),
+              extractCompletionFromStream(stdout).usage,
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -2074,9 +2432,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               name: toolCall.function.name,
               callId: toolCall.id,
             });
-            const payload = boundaryContext.run(
-              "createNonStreamBridgeToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            const payload = appendOpenAiUsage(
+              boundaryContext.run(
+                "createNonStreamBridgeToolCallResponse",
+                (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              ),
+              extractCompletionFromStream(stdout).usage,
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -2097,8 +2458,8 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               spawnError: spawnErrorText != null,
               failureTextHash: hashForLog(errSource),
             });
-            const parsed = parseAgentError(errSource);
-            const userError = formatErrorForUser(parsed);
+            const parsed = parseAgentError(errSource, { kiloSubagents });
+            const userError = formatErrorForUser(parsed, { kiloSubagents });
             log.error("cursor-cli failed", {
               type: parsed.type,
               failureTextHash: hashForLog(parsed.message),
@@ -2113,7 +2474,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
 
           const response = createChatCompletionResponse(
             model,
-            completion.assistantText || stdout || stderr,
+            finalizeProxyAssistantText(completion.assistantText || stdout || stderr, tools),
             completion.reasoningText || undefined,
             completion.usage,
           );
@@ -2131,7 +2492,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         });
         res.flushHeaders();
 
-        const id = `cursor-acp-${Date.now()}`;
+        const id = `cursor-kilo-${Date.now()}`;
         const created = Math.floor(Date.now() / 1000);
         const perf = reqPerf;
         perf.mark("child-dispatched");
@@ -2151,6 +2512,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         let firstSseWritten = false;
         let sawSuccessfulStreamOutput = false;
         let usage: OpenAiUsage | undefined;
+        let toolCallFinishPending = false;
         const writeSse = (payload: string) => {
           if (!firstSseWritten) {
             perf.mark("first-sse-write");
@@ -2167,16 +2529,41 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           }
           const errSource = String(error?.message || error);
           log.error("Failed to spawn cursor-agent (stream)", { errorHash: hashForLog(errSource), model });
-          const parsed = parseAgentError(errSource);
-          const msg = formatErrorForUser(parsed);
+          const parsed = parseAgentError(errSource, { kiloSubagents });
+          const msg = formatErrorForUser(parsed, { kiloSubagents });
           const errChunk = createChatCompletionChunk(id, created, model, msg, true);
           writeSse(`data: ${JSON.stringify(errChunk)}\n\n`);
           writeSse(formatSseDone());
           streamTerminated = true;
           res.end();
         });
-        const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
+        let usageDrainTimer: ReturnType<typeof setTimeout> | undefined;
+        const clearUsageDrainTimer = () => {
+          if (usageDrainTimer !== undefined) {
+            clearTimeout(usageDrainTimer);
+            usageDrainTimer = undefined;
+          }
+        };
+        const finalizeOpenAiStream = () => {
           if (streamTerminated || res.writableEnded) {
+            return;
+          }
+          clearUsageDrainTimer();
+          for (const payload of formatStreamUsageAndDoneSse(id, created, model, usage, {
+            finishReason: toolCallFinishPending ? "tool_calls" : "stop",
+          })) {
+            writeSse(payload);
+          }
+          streamTerminated = true;
+          res.end();
+          try {
+            child.kill();
+          } catch {
+            // ignore
+          }
+        };
+        const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
+          if (streamTerminated || res.writableEnded || toolCallFinishPending) {
             return;
           }
           log.debug("Intercepted OpenCode tool call (stream)", {
@@ -2191,13 +2578,25 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           for (const chunk of streamChunks) {
             writeSse(`data: ${JSON.stringify(chunk)}\n\n`);
           }
-          writeSse(formatSseDone());
-          streamTerminated = true;
-          res.end();
-          try {
-            child.kill();
-          } catch {
-            // ignore
+          toolCallFinishPending = true;
+          if (isUsageDrainDisabled()) {
+            try {
+              child.kill();
+            } catch {
+              // ignore
+            }
+            return;
+          }
+          const drainTimeoutMs = readUsageDrainTimeoutMs();
+          if (drainTimeoutMs > 0) {
+            usageDrainTimer = setTimeout(() => {
+              if (!streamTerminated && !res.writableEnded && toolCallFinishPending) {
+                log.debug("Usage drain timed out after tool intercept", {
+                  drainTimeoutMs,
+                });
+                finalizeOpenAiStream();
+              }
+            }, drainTimeoutMs);
           }
         };
         const emitTerminalAssistantErrorAndTerminate = (message: string) => {
@@ -2225,7 +2624,9 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           }
         };
         const emitBridgeText = (text: string) => {
-          emitBridgeEvent(createAssistantTextEvent(text));
+          emitBridgeEvent(createAssistantTextEvent(
+            finalizeProxyAssistantText(text, tools),
+          ));
         };
         const flushBridgeText = () => {
           const text = bridgeDetector?.flush() ?? "";
@@ -2233,27 +2634,13 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             emitBridgeText(text);
           }
         };
-        const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean => {
-          if (!bridgeDetector || !isAssistantText(event)) {
-            return false;
-          }
-          if (isThinking(event)) {
-            emitBridgeEvent(createAssistantThinkingEvent(event));
-          }
-          const decision = bridgeDetector.push(event);
-          if (decision.action === "tool_call") {
-            emitToolCallAndTerminate(decision.toolCall);
-            return true;
-          }
-          if (decision.action === "buffer") {
-            return true;
-          }
-          if (decision.text !== undefined) {
-            emitBridgeText(decision.text);
-            return true;
-          }
-          return false;
-        };
+        const handleBridgeAssistantEvent = (event: StreamJsonEvent): boolean =>
+          handleBridgeJsonAssistantEvent(
+            bridgeDetector,
+            event,
+            emitBridgeText,
+            emitToolCallAndTerminate,
+          );
 
         const chunkQueue: Buffer[] = [];
         let draining = false;
@@ -2266,6 +2653,25 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             if (streamTerminated || res.writableEnded) break;
             const event = parseStreamJsonLine(line);
             if (!event) continue;
+            if (toolCallFinishPending) {
+              if (isResult(event)) {
+                usage = extractOpenAiUsageFromResult(event) ?? usage;
+                if (isSuccessfulResultEvent(event)) {
+                  sawSuccessfulStreamOutput = true;
+                }
+                finalizeOpenAiStream();
+                break;
+              }
+              captureResumeChatIdFromEvent(
+                event,
+                sessionResumeKey,
+                model,
+                workspaceDirectory,
+                sessionResumeRecordContentPrefix,
+                sessionResumeToolFingerprint,
+              );
+              continue;
+            }
             captureResumeChatIdFromEvent(
               event,
               sessionResumeKey,
@@ -2387,8 +2793,8 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                     code: childExitCode,
                     failureTextHash: hashForLog(errSource),
                   });
-                  const parsed = parseAgentError(errSource);
-                  const msg = formatErrorForUser(parsed);
+                  const parsed = parseAgentError(errSource, { kiloSubagents });
+                  const msg = formatErrorForUser(parsed, { kiloSubagents });
                   const errChunk = createChatCompletionChunk(id, created, model, msg, true);
                   writeSse(`data: ${JSON.stringify(errChunk)}\n\n`);
                   writeSse(formatSseDone());
@@ -2414,6 +2820,11 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 await toastService.showErrorSummary(passThroughSummary.errors);
               }
 
+              if (toolCallFinishPending) {
+                finalizeOpenAiStream();
+                return;
+              }
+
               const doneChunk = {
                 id,
                 object: "chat.completion.chunk",
@@ -2422,11 +2833,9 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
               };
               writeSse(`data: ${JSON.stringify(doneChunk)}\n\n`);
-              if (usage) {
-                const usageChunk = createChatCompletionUsageChunk(id, created, model, usage);
-                writeSse(`data: ${JSON.stringify(usageChunk)}\n\n`);
+              for (const payload of formatStreamUsageAndDoneSse(id, created, model, usage)) {
+                writeSse(payload);
               }
-              writeSse(formatSseDone());
               streamTerminated = true;
               res.end();
             }
@@ -2785,10 +3194,11 @@ export function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: s
 }
 
 /**
- * OpenCode plugin for Cursor Agent
+ * Kilo Code plugin for Cursor Agent (fork-compatible with OpenCode plugin API)
  */
 export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, serverUrl }: PluginInput) => {
   const workspaceDirectory = resolveWorkspaceDirectory(worktree, directory);
+  const runtimeModelCatalog = loadRuntimeModelCatalog(workspaceDirectory);
   log.debug("Plugin initializing", {
     directory,
     worktree,
@@ -2797,15 +3207,15 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     serverUrl: serverUrl?.toString(),
   });
   if (!TOOL_LOOP_MODE_VALID) {
-    log.warn("Invalid CURSOR_ACP_TOOL_LOOP_MODE; defaulting to opencode", { value: TOOL_LOOP_MODE_RAW });
+    log.warn("Invalid CURSOR_KILO_TOOL_LOOP_MODE; defaulting to opencode", { value: TOOL_LOOP_MODE_RAW });
   }
   if (!PROVIDER_BOUNDARY_MODE_VALID) {
-    log.warn("Invalid CURSOR_ACP_PROVIDER_BOUNDARY; defaulting to v1", {
+    log.warn("Invalid CURSOR_KILO_PROVIDER_BOUNDARY; defaulting to v1", {
       value: PROVIDER_BOUNDARY_MODE_RAW,
     });
   }
   if (!TOOL_LOOP_MAX_REPEAT_VALID) {
-    log.warn("Invalid CURSOR_ACP_TOOL_LOOP_MAX_REPEAT; defaulting to 3", {
+    log.warn("Invalid CURSOR_KILO_TOOL_LOOP_MAX_REPEAT; defaulting to 3", {
       value: TOOL_LOOP_MAX_REPEAT_RAW,
     });
   }
@@ -2820,19 +3230,38 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     toolLoopMaxRepeat: TOOL_LOOP_MAX_REPEAT,
   });
   await ensurePluginDirectory();
+  await ensureStoredAuthLoaded();
+  if (storedCredential?.kind === "sdk-api-key") {
+    log.info("Loaded Cursor API key credentials", { backendHint: "sdk" });
+  } else if (storedCredential?.kind === "oauth-jwt") {
+    log.info("Loaded Cursor OAuth credentials", {
+      backendHint: isCursorAgentAvailable() ? "cursor-agent" : "cursor-agent-required",
+    });
+  } else if (storedApiKey) {
+    log.info("Loaded Cursor credentials from Kilo auth store", { backendHint: "sdk" });
+  } else {
+    log.warn("No Cursor credentials in Kilo auth store; run `kilo auth login --provider cursor`");
+  }
 
   // Auto-refresh model list from cursor-agent (non-blocking, fire-and-forget)
   autoRefreshModels().catch(() => {});
 
-  // MCP tool bridge: connect to MCP servers and register their tools.
-  // We await init so tools are available before the plugin returns its tool hook.
+  // Direct MCP bridge (stdio from kilo.jsonc). Default ON; CURSOR_KILO_DIRECT_MCP=false to disable.
   const mcpManager = new McpClientManager();
   let mcpToolEntries: Record<string, any> = {};
   let mcpToolDefs: any[] = [];
   let mcpToolSummaries: McpToolSummary[] = [];
-  const mcpEnabled = process.env.CURSOR_ACP_MCP_BRIDGE !== "false"; // default ON
+  const directMcpEnabled = isDirectMcpEnabled();
 
-  if (mcpEnabled) {
+  if (!directMcpEnabled) {
+    syncKiloPassthroughBridgeCliConfig(workspaceDirectory);
+  } else {
+    // Keep native cursor-agent MCP denied so GetDynamicTools/CallDynamicTool
+    // cannot hit Cursor's empty catalog ("MCP server does not exist").
+    ensureNativeMcpDenied(workspaceDirectory);
+  }
+
+  if (directMcpEnabled) {
     try {
       const configs = readMcpConfigs();
       if (configs.length === 0) {
@@ -2851,12 +3280,13 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           mcpToolSummaries = tools.map((t) => ({
             serverName: t.serverName,
             toolName: t.name,
-            callName: namespaceMcpTool(t.serverName, t.name),
+            callName: namespaceMcpToolKiloNative(t.serverName, t.name),
             description: t.description,
             params: t.inputSchema
               ? Object.keys((t.inputSchema as any).properties ?? {})
               : undefined,
           }));
+          rememberMcpCatalogFromTools(mcpToolDefs);
           log.info("MCP bridge: registered tools", {
             servers: mcpManager.connectedServers.length,
             tools: Object.keys(mcpToolEntries).length,
@@ -2872,7 +3302,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   toastService.setClient(client);
 
   // Tools (skills) discovery/execution wiring
-  const toolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS !== "false"; // default ON
+  const toolsEnabled = process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS !== "false"; // default ON
   const legacyProxyToolPathsEnabled = toolsEnabled && TOOL_LOOP_MODE === "proxy-exec";
   if (toolsEnabled && TOOL_LOOP_MODE === "opencode") {
     log.debug("OpenCode mode active; skipping legacy SDK/MCP discovery and proxy-side tool execution");
@@ -2882,7 +3312,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   // FORWARD_TOOL_CALLS is only used when TOOL_LOOP_MODE=proxy-exec.
   // Build a client with serverUrl so SDK tool.list works even if the injected client isn't fully configured.
   const serverClient = legacyProxyToolPathsEnabled
-    ? createOpencodeClient({ baseUrl: serverUrl.toString(), directory: workspaceDirectory })
+    ? createKiloClient({ baseUrl: serverUrl.toString(), directory: workspaceDirectory })
     : null;
   const discovery = legacyProxyToolPathsEnabled ? new OpenCodeToolDiscovery(serverClient ?? client) : null;
 
@@ -2890,7 +3320,7 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   const localRegistry = new CoreRegistry();
   registerDefaultTools(localRegistry);
 
-  const timeoutMs = Number(process.env.CURSOR_ACP_TOOL_TIMEOUT_MS || 30000);
+  const timeoutMs = Number(process.env.CURSOR_KILO_TOOL_TIMEOUT_MS || 30000);
   const localExec = new LocalExecutor(localRegistry);
   const sdkExec = legacyProxyToolPathsEnabled ? new SdkExecutor(serverClient ?? client, timeoutMs) : null;
   const mcpExec = legacyProxyToolPathsEnabled ? new McpExecutor(serverClient ?? client, timeoutMs) : null;
@@ -2912,6 +3342,23 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     : null;
   let lastToolNames: string[] = [];
   let lastToolMap: Array<{ id: string; name: string }> = [];
+  let lastKiloSubagents: KiloSubagentSummary[] = [];
+
+  const resolveChatParamToolSnapshot = createChatParamToolSnapshotResolver(client, {
+    applyBaseTools: (tools) => applyCursorWriteToolContract(tools) as any[],
+    getAppendTools: () => mcpToolDefs,
+    onFingerprintChange: resetPromptToolSchemaCacheOnFingerprintChange,
+  });
+
+  async function finalizeChatParamTools(tools: unknown): Promise<any[]> {
+    try {
+      const snapshot = await resolveChatParamToolSnapshot.resolve(tools);
+      return snapshot.tools;
+    } catch (err) {
+      log.debug("Kilo native MCP tool snapshot failed", { error: String(err) });
+      return Array.isArray(tools) ? applyCursorWriteToolContract(tools as any[]) as any[] : [];
+    }
+  }
 
   async function refreshTools() {
     toolsByName.clear();
@@ -2984,39 +3431,27 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
     return toolEntries;
   }
 
-  const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory, router);
+  const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory, router, runtimeModelCatalog);
   log.debug("Proxy server started", { baseURL: proxyBaseURL });
 
   // Build tool hook entries from local registry
   const toolHookEntries = buildToolHookEntries(localRegistry, workspaceDirectory);
 
   return {
-    tool: { ...toolHookEntries, ...mcpToolEntries },
+    tool: { ...toolHookEntries, ...mcpToolEntries, ...buildKiloMcpDiscoveryToolEntries(client) },
     auth: {
       provider: CURSOR_PROVIDER_ID,
+      methods: buildCursorAuthMethods(CURSOR_PROVIDER_ID),
       async loader(getAuth: () => Promise<Auth>) {
-        // Load API key from OpenCode auth store and cache it.
-        // Never throw: a missing/unreadable auth entry must not break plugin load.
-        try {
-          const auth = await getAuth();
-          if (auth?.type === "api" && auth.key) {
-            storedApiKey = auth.key;
-            log.debug("Stored API key from auth loader");
-          }
-        } catch (err) {
-          log.debug("No stored auth available", { error: String(err) });
-        }
+        cachedGetAuth = getAuth;
+        await ensureStoredAuthLoaded();
         return {};
       },
-      methods: [
-        {
-          type: "api" as const,
-          label: "Cursor API Key (cursor.com/settings)",
-        },
-      ],
     },
 
     async "chat.params"(input: any, output: any) {
+      await ensureStoredAuthLoaded();
+
       const boundaryContext = createBoundaryRuntimeContext("chat.params");
 
       const providerMatch = boundaryContext.run("matchesProvider", (boundary) =>
@@ -3026,14 +3461,36 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
         return;
       }
 
-      boundaryContext.run("applyChatParamDefaults", (boundary) =>
+      boundaryContext.run("applyChatParamDefaults", (boundary) => {
+        const sdkKey = resolveSdkApiKey({ env: process.env, storedApiKey });
         boundary.applyChatParamDefaults(
           output,
           proxyBaseURL,
           CURSOR_PROXY_DEFAULT_BASE_URL,
-          "cursor-agent",
-        ),
+          sdkKey ?? "cursor-agent",
+        );
+      });
+
+      const chatParamsModel = resolveChatParamsModelRef(input);
+      const wireModel = resolveChatParamsWireModel(
+        runtimeModelCatalog,
+        chatParamsModel,
+        output.options ?? {},
       );
+      if (wireModel) {
+        output.options = output.options ?? {};
+        output.options.cursorModel = wireModel;
+        log.debug("Resolved cursor wire model from variant/reasoning", {
+          configModel: chatParamsModel.modelID,
+          variant: chatParamsModel.variant,
+          wireModel,
+        });
+      }
+
+      if (typeof input.sessionID === "string" && input.sessionID) {
+        trackKiloSession(input.sessionID);
+        reaffirmKiloSessionMapping(input.sessionID);
+      }
 
       // Tool definitions handling:
       // - proxy-exec mode: provider injects tool definitions directly.
@@ -3050,34 +3507,54 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           );
 
           if (resolved.action === "override" || resolved.action === "fallback") {
-            output.options.tools = applyCursorWriteToolContract(resolved.tools);
+            output.options.tools = await finalizeChatParamTools(resolved.tools);
           } else if (resolved.action === "preserve") {
             const count = Array.isArray(existingTools) ? existingTools.length : 0;
-            output.options.tools = applyCursorWriteToolContract(existingTools);
-            log.debug("Using OpenCode-provided tools from chat.params", { count });
+            output.options.tools = await finalizeChatParamTools(existingTools);
+            log.debug("Using Kilo-provided tools from chat.params", { count });
+          }
+
+          if (Array.isArray(output.options.tools)) {
+            lastToolNames = output.options.tools
+              .map((t: any) => t?.function?.name)
+              .filter((name: unknown): name is string => typeof name === "string" && name.length > 0);
+            lastKiloSubagents = extractKiloSubagentsFromTools(output.options.tools);
+            rememberMcpCatalogFromTools(output.options.tools);
           }
         } catch (err) {
           log.debug("Failed to refresh tools", { error: String(err) });
         }
       }
 
-      // Append MCP bridge tool definitions so the model can call them
-      if (mcpToolDefs.length > 0) {
-        const beforeTools = Array.isArray(output.options.tools) ? output.options.tools : [];
-        if (Array.isArray(output.options.tools)) {
-          output.options.tools = [...output.options.tools, ...mcpToolDefs];
-        } else {
-          output.options.tools = mcpToolDefs;
-        }
-        const afterTools = Array.isArray(output.options.tools) ? output.options.tools : [];
-        log.debug("Injected MCP tool definitions into chat.params", {
-          injectedCount: mcpToolDefs.length,
-          beforeCount: beforeTools.length,
-          afterCount: afterTools.length,
-          mcpNames: mcpToolDefs.slice(0, 10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
-          tailNames: afterTools.slice(-10).map((t: any) => t?.function?.name ?? t?.name ?? "unknown"),
-        });
+    },
+
+    async "chat.headers"(input: any, output: { headers: Record<string, string> }) {
+      const boundaryContext = createBoundaryRuntimeContext("chat.headers");
+      const providerMatch = boundaryContext.run("matchesProvider", (boundary) =>
+        boundary.matchesProvider(input.model),
+      );
+      if (!providerMatch || typeof input.sessionID !== "string" || !input.sessionID) {
+        return;
       }
+      output.headers = output.headers ?? {};
+      output.headers["X-Kilo-Session-ID"] = input.sessionID;
+    },
+
+    async "experimental.compaction.autocontinue"(input: any) {
+      if (!isSessionResumeEnabled()) {
+        return;
+      }
+      const boundaryContext = createBoundaryRuntimeContext("experimental.compaction.autocontinue");
+      const providerMatch = boundaryContext.run("matchesProvider", (boundary) =>
+        boundary.matchesProvider(input.model),
+      );
+      if (!providerMatch || typeof input.sessionID !== "string" || !input.sessionID) {
+        return;
+      }
+      clearResumeForKiloSession(input.sessionID);
+      log.info("Reset cursor resume after Kilo compaction", {
+        sessionIdHash: hashForLog(input.sessionID),
+      });
     },
 
     async "experimental.chat.system.transform"(input: any, output: { system: string[] }) {
@@ -3090,9 +3567,8 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
         return;
       }
       const systemMessage = buildAvailableToolsSystemMessage(
-        lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries,
+        lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries, lastKiloSubagents,
       );
-      if (!systemMessage) return;
       output.system = output.system || [];
       output.system.push(systemMessage);
     },

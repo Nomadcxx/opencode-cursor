@@ -14,8 +14,8 @@ describe("provider boundary", () => {
   });
 
   it("keeps legacy and v1 resolveChatParamTools behavior identical", () => {
-    const legacy = createProviderBoundary("legacy", "cursor-acp");
-    const v1 = createProviderBoundary("v1", "cursor-acp");
+    const legacy = createProviderBoundary("legacy", "cursor-kilo");
+    const v1 = createProviderBoundary("v1", "cursor-kilo");
 
     const cases: Array<{
       mode: ToolLoopMode;
@@ -37,7 +37,7 @@ describe("provider boundary", () => {
   });
 
   it("computes loop flags based on tool loop mode and env toggles", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
 
     expect(boundary.computeToolLoopFlags("opencode", true, true)).toEqual({
       proxyExecuteToolCalls: false,
@@ -59,43 +59,43 @@ describe("provider boundary", () => {
   });
 
   it("normalizes provider-prefixed model names", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
-    expect(boundary.normalizeRuntimeModel("cursor-acp/auto")).toBe("auto");
-    expect(boundary.normalizeRuntimeModel("cursor-acp/gpt-5.3-codex")).toBe("gpt-5.3-codex");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
+    expect(boundary.normalizeRuntimeModel("cursor-kilo/auto")).toBe("auto");
+    expect(boundary.normalizeRuntimeModel("cursor-kilo/gpt-5.3-codex")).toBe("gpt-5.3-codex");
     expect(boundary.normalizeRuntimeModel("auto")).toBe("auto");
     expect(boundary.normalizeRuntimeModel(undefined)).toBe("auto");
     expect(boundary.normalizeRuntimeModel("   ")).toBe("auto");
   });
 
   it("prefers merged cursorModel when resolving runtime models", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
 
     expect(
-      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "gpt-5.3-codex-high"),
+      boundary.resolveRuntimeModel("cursor-kilo/gpt-5.3-codex", "gpt-5.3-codex-high"),
     ).toBe("gpt-5.3-codex-high");
     expect(
-      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "cursor-acp/gpt-5.3-codex-high-fast"),
+      boundary.resolveRuntimeModel("cursor-kilo/gpt-5.3-codex", "cursor-kilo/gpt-5.3-codex-high-fast"),
     ).toBe("gpt-5.3-codex-high-fast");
     expect(
-      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", "   "),
+      boundary.resolveRuntimeModel("cursor-kilo/gpt-5.3-codex", "   "),
     ).toBe("gpt-5.3-codex");
     expect(
-      boundary.resolveRuntimeModel("cursor-acp/gpt-5.3-codex", undefined),
+      boundary.resolveRuntimeModel("cursor-kilo/gpt-5.3-codex", undefined),
     ).toBe("gpt-5.3-codex");
     expect(boundary.resolveRuntimeModel(undefined, undefined)).toBe("auto");
   });
 
   it("matches provider across providerID/providerId/provider keys", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
-    expect(boundary.matchesProvider({ providerID: "cursor-acp" })).toBe(true);
-    expect(boundary.matchesProvider({ providerId: "cursor-acp" })).toBe(true);
-    expect(boundary.matchesProvider({ provider: "cursor-acp" })).toBe(true);
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
+    expect(boundary.matchesProvider({ providerID: "cursor-kilo" })).toBe(true);
+    expect(boundary.matchesProvider({ providerId: "cursor-kilo" })).toBe(true);
+    expect(boundary.matchesProvider({ provider: "cursor-kilo" })).toBe(true);
     expect(boundary.matchesProvider({ providerID: "other" })).toBe(false);
     expect(boundary.matchesProvider(undefined)).toBe(false);
   });
 
   it("applies chat param defaults without clobbering existing api key", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
     const output: any = { options: { apiKey: "existing-key" } };
     boundary.applyChatParamDefaults(output, "http://127.0.0.1:32124/v1", "http://fallback/v1", "cursor-agent");
     expect(output.options.baseURL).toBe("http://127.0.0.1:32124/v1");
@@ -103,7 +103,7 @@ describe("provider boundary", () => {
   });
 
   it("extracts tool calls only for opencode mode and returns formatted responses", () => {
-    const boundary = createProviderBoundary("v1", "cursor-acp");
+    const boundary = createProviderBoundary("v1", "cursor-kilo");
     const event: any = {
       type: "tool_call",
       call_id: "c1",

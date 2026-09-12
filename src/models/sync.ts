@@ -16,10 +16,12 @@ import { listModelsViaRunner } from "../client/sdk-child.js";
 import { discoverModelsFromCursorAgent } from "../cli/model-discovery.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
+import { mergeKiloModelCatalog } from "./kilo-catalog.js";
+import { discoverModelsAuthenticated } from "./discover-with-auth.js";
 import { mergeCursorModelEntries } from "./variants.js";
 
 const log = createLogger("model-sync");
-const PROVIDER_ID = "cursor-acp";
+const PROVIDER_ID = "cursor";
 
 type AutoRefreshMode = "disabled" | "direct" | "compact";
 type ModelConfigEntry = { name: string };
@@ -36,11 +38,23 @@ export type DiscoveredModel = {
 
 export async function discoverModelsForRefresh(
   deps: {
+    discoverAuthenticated?: () => Promise<DiscoveredModel[]>;
     discoverFromCursorAgent?: () => DiscoveredModel[];
     resolveApiKey?: () => string | undefined;
     discoverViaSdk?: (apiKey: string) => Promise<DiscoveredModel[]>;
   } = {},
 ): Promise<DiscoveredModel[]> {
+  if (deps.discoverAuthenticated) {
+    return deps.discoverAuthenticated();
+  }
+
+  try {
+    const result = await discoverModelsAuthenticated();
+    return result.models;
+  } catch {
+    // fall through to legacy path
+  }
+
   try {
     return (deps.discoverFromCursorAgent ?? discoverModelsFromCursorAgent)();
   } catch (agentError) {
@@ -129,11 +143,18 @@ function yieldForFireAndForget(): Promise<void> {
   return Promise.resolve();
 }
 
+function envUsesKiloCatalog(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.CURSOR_KILO_MODEL_CATALOG?.trim().toLowerCase()
+    ?? env.CURSOR_KILO_MODEL_FORMAT?.trim().toLowerCase();
+  return raw !== "legacy" && raw !== "opencursor";
+}
+
 function getAutoRefreshMode(env: NodeJS.ProcessEnv): AutoRefreshMode {
-  const raw = env.CURSOR_ACP_MODEL_AUTO_REFRESH?.trim().toLowerCase();
-  if (raw === "false") return "disabled";
-  if (raw === "compact") return "compact";
-  return "direct";
+  const raw = env.CURSOR_KILO_MODEL_AUTO_REFRESH?.trim().toLowerCase()
+    ?? env.CURSOR_ACP_MODEL_AUTO_REFRESH?.trim().toLowerCase();
+  if (raw === "false" || raw === "direct") return raw === "false" ? "disabled" : "direct";
+  // Default for Kilo: compact grouped catalog (cursor/model + variants)
+  return "compact";
 }
 
 /**
@@ -161,7 +182,7 @@ export async function autoRefreshModels(
   try {
     const refreshMode = getAutoRefreshMode(resolvedDeps.env);
     if (refreshMode === "disabled") {
-      resolvedDeps.log.debug("Model auto-refresh disabled by CURSOR_ACP_MODEL_AUTO_REFRESH");
+      resolvedDeps.log.debug("Model auto-refresh disabled by CURSOR_KILO_MODEL_AUTO_REFRESH");
       return;
     }
 
@@ -195,12 +216,29 @@ export async function autoRefreshModels(
       return;
     }
 
-    if (refreshMode === "compact") {
+    if (refreshMode === "compact" || refreshMode === "direct") {
+      const useKiloCatalog = refreshMode === "compact" || envUsesKiloCatalog(resolvedDeps.env);
+      if (useKiloCatalog) {
+        const result = mergeKiloModelCatalog(existingModels, discovered, refreshMode === "compact");
+        if (modelsEqual(existingModels, result.models)) {
+          resolvedDeps.log.debug("Model auto-refresh: catalog up to date");
+          return;
+        }
+        provider.models = result.models;
+        resolvedDeps.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+        resolvedDeps.log.info("Model auto-refresh: synced Kilo catalog", {
+          synced: result.syncedCount,
+          removed: result.removedCount,
+          total: Object.keys(result.models).length,
+        });
+        return;
+      }
+
       const representedModelIds = collectRepresentedModelIds(existingModels);
       const missingModels = discovered.filter(model => !representedModelIds.has(model.id));
       const result = mergeCursorModelEntries(existingModels, discovered, {
         variants: true,
-        compact: true,
+        compact: refreshMode === "compact",
       });
 
       if (

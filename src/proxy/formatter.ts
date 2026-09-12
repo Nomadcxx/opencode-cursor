@@ -17,10 +17,10 @@ export function createChatCompletionResponse(
     }>;
     usage?: OpenAiUsage;
   } = {
-    id: `cursor-acp-${Date.now()}`,
+    id: `cursor-kilo-${Date.now()}`,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model: `cursor-acp/${model}`,
+    model: `cursor-kilo/${model}`,
     choices: [
       {
         index: 0,
@@ -48,7 +48,7 @@ export function createChatCompletionChunk(
     id,
     object: "chat.completion.chunk",
     created,
-    model: `cursor-acp/${model}`,
+    model: `cursor-kilo/${model}`,
     choices: [
       {
         index: 0,

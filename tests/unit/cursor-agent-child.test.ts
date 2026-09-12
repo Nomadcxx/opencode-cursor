@@ -9,8 +9,8 @@ import {
 describe("cursor-agent-child", () => {
   afterEach(() => {
     _resetCursorAgentPoolForTests();
-    delete process.env.CURSOR_ACP_AGENT_POOL;
-    delete process.env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH;
+    delete process.env.CURSOR_KILO_AGENT_POOL;
+    delete process.env.CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH;
   });
 
   it("is disabled by default", () => {
@@ -25,7 +25,7 @@ describe("cursor-agent-child", () => {
     ["0", false],
     ["false", false],
   ])("isAgentPoolEnabled(%p) === %p", (value, expected) => {
-    process.env.CURSOR_ACP_AGENT_POOL = value;
+    process.env.CURSOR_KILO_AGENT_POOL = value;
     expect(isAgentPoolEnabled()).toBe(expected);
   });
 
@@ -47,7 +47,7 @@ describe("cursor-agent-child", () => {
   });
 
   it("resolveCursorAgentRunnerPath honors env override", () => {
-    process.env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH = "/custom/runner.mjs";
+    process.env.CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH = "/custom/runner.mjs";
     const path = resolveCursorAgentRunnerPath(
       "/pkg/src/client/cursor-agent-child.ts",
       (candidate) => candidate === "/custom/runner.mjs",

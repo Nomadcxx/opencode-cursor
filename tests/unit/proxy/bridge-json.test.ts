@@ -255,12 +255,12 @@ describe("proxy/bridge-json", () => {
     });
     const disabled = applyBridgeJsonPrompt("USER: update demo.txt", {
       allowedToolNames: new Set(["write"]),
-      env: { CURSOR_ACP_BRIDGE_JSON: "0" },
+      env: { CURSOR_KILO_BRIDGE_JSON: "0" },
     });
 
     expect(prompt).toContain("opencode bridge mode");
     expect(disabled).toBe("USER: update demo.txt");
-    expect(isBridgeJsonEnabled({ CURSOR_ACP_BRIDGE_JSON: "false" })).toBe(false);
+    expect(isBridgeJsonEnabled({ CURSOR_KILO_BRIDGE_JSON: "false" })).toBe(false);
   });
 
   it("adds task bridge instructions only when task is offered", () => {
@@ -269,6 +269,9 @@ describe("proxy/bridge-json", () => {
     const taskPrompt = applyBridgeJsonPrompt(basePrompt, {
       allowedToolNames: new Set(["task"]),
       env: {},
+      kiloSubagents: [
+        { name: "adversarial", description: "Red-team reviewer" },
+      ],
     });
     const readPrompt = applyBridgeJsonPrompt(basePrompt, {
       allowedToolNames: new Set(["read"]),
@@ -276,11 +279,15 @@ describe("proxy/bridge-json", () => {
     });
     const disabled = applyBridgeJsonPrompt(basePrompt, {
       allowedToolNames: new Set(["task"]),
-      env: { CURSOR_ACP_BRIDGE_JSON: "0" },
+      env: { CURSOR_KILO_BRIDGE_JSON: "0" },
     });
 
     expect(taskPrompt).toContain("Do not invoke Cursor's built-in Task tool");
     expect(taskPrompt).toContain('"name":"task"');
+    expect(taskPrompt).toContain("Never use subagentType");
+    expect(taskPrompt).toContain('{ custom: "name" }');
+    expect(taskPrompt).toContain("Allowed Kilo subagent_type values:");
+    expect(taskPrompt).toContain("- adversarial: Red-team reviewer");
     expect(taskPrompt).toContain("overrides the earlier generic");
     expect(taskPrompt.indexOf("standard OpenAI")).toBeLessThan(
       taskPrompt.indexOf("overrides the earlier generic"),

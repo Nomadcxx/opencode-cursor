@@ -57,7 +57,7 @@ export function extractEventJson(line: string): string {
  * Resolve the Node binary path from PATH or environment override.
  */
 function resolveNodeBinary(): string {
-  return process.env.CURSOR_ACP_NODE_BIN || "node";
+  return process.env.CURSOR_KILO_NODE_BIN || "node";
 }
 
 /**
@@ -67,14 +67,14 @@ function resolveNodeBinary(): string {
 export function resolveRunnerPath(
   currentFile: string = fileURLToPath(import.meta.url),
   checkExists: (path: string) => boolean = existsSync,
-  env: Pick<NodeJS.ProcessEnv, "CURSOR_ACP_SDK_RUNNER_PATH"> = process.env,
+  env: Pick<NodeJS.ProcessEnv, "CURSOR_KILO_SDK_RUNNER_PATH"> = process.env,
 ): string {
-  const override = env.CURSOR_ACP_SDK_RUNNER_PATH?.trim();
+  const override = env.CURSOR_KILO_SDK_RUNNER_PATH?.trim();
   if (override) {
     if (checkExists(override)) {
       return override;
     }
-    throw new Error(`CURSOR_ACP_SDK_RUNNER_PATH does not exist: ${override}`);
+    throw new Error(`CURSOR_KILO_SDK_RUNNER_PATH does not exist: ${override}`);
   }
 
   const currentDir = dirname(currentFile);

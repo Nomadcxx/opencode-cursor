@@ -38,7 +38,7 @@ describe("HTTP Proxy Comprehensive Tests", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "cursor-acp/auto",
+          model: "cursor-kilo/auto",
           messages: [{ role: "user", content: "Hello" }]
         })
       });
@@ -52,7 +52,7 @@ describe("HTTP Proxy Comprehensive Tests", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "cursor-acp/auto",
+          model: "cursor-kilo/auto",
           messages: [{ role: "user", content: "Hello" }],
           stream: true
         })
@@ -126,18 +126,18 @@ describe("HTTP Proxy Comprehensive Tests", () => {
     it("should parse OpenAI-formatted requests correctly", async () => {
       const testCases = [
         {
-          model: "cursor-acp/auto",
+          model: "cursor-kilo/auto",
           messages: [{ role: "user", content: "Hello" }]
         },
         {
-          model: "cursor-acp/gpt-5.2",
+          model: "cursor-kilo/gpt-5.2",
           messages: [
             { role: "system", content: "You are helpful" },
             { role: "user", content: "Hi" }
           ]
         },
         {
-          model: "cursor-acp/sonnet-4.5",
+          model: "cursor-kilo/sonnet-4.5",
           messages: [{ role: "user", content: "Test" }],
           stream: true,
           temperature: 0.7

@@ -6,7 +6,7 @@ export interface ParsedRequest {
 }
 
 export function parseOpenAIRequest(body: any): ParsedRequest {
-  const model = body.model?.replace("cursor-acp/", "") || "auto";
+  const model = body.model?.replace("cursor-kilo/", "") || "auto";
   const stream = body.stream === true;
 
   // Convert messages array to prompt string

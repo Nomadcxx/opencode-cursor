@@ -435,6 +435,29 @@ process.stdin.on("end", () => {
         message: { role: "assistant", content: [{ type: "text", text: "42}" }] },
       },
     ];
+  } else if (scenario === "tool-read-with-usage") {
+    events = [
+      {
+        type: "tool_call",
+        call_id: "c1",
+        tool_call: {
+          readToolCall: {
+            args: { path: "foo.txt" },
+          },
+        },
+      },
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        usage: {
+          inputTokens: 1000,
+          outputTokens: 12,
+          cacheReadTokens: 240,
+          cacheWriteTokens: 0,
+        },
+      },
+    ];
   } else {
     events = [
       {
@@ -531,14 +554,14 @@ describe("OpenCode-owned tool loop integration", () => {
 
   beforeAll(async () => {
     originalPath = process.env.PATH || "";
-    originalToolLoopMode = process.env.CURSOR_ACP_TOOL_LOOP_MODE;
-    originalToolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS;
-    originalReuseExistingProxy = process.env.CURSOR_ACP_REUSE_EXISTING_PROXY;
-    originalProviderBoundary = process.env.CURSOR_ACP_PROVIDER_BOUNDARY;
-    originalToolLoopMaxRepeat = process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
-    originalTiming = process.env.CURSOR_ACP_TIMING;
-    originalLogDir = process.env.CURSOR_ACP_LOG_DIR;
-    originalLogConsole = process.env.CURSOR_ACP_LOG_CONSOLE;
+    originalToolLoopMode = process.env.CURSOR_KILO_TOOL_LOOP_MODE;
+    originalToolsEnabled = process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS;
+    originalReuseExistingProxy = process.env.CURSOR_KILO_REUSE_EXISTING_PROXY;
+    originalProviderBoundary = process.env.CURSOR_KILO_PROVIDER_BOUNDARY;
+    originalToolLoopMaxRepeat = process.env.CURSOR_KILO_TOOL_LOOP_MAX_REPEAT;
+    originalTiming = process.env.CURSOR_KILO_TIMING;
+    originalLogDir = process.env.CURSOR_KILO_LOG_DIR;
+    originalLogConsole = process.env.CURSOR_KILO_LOG_CONSOLE;
     mockDir = mkdtempSync(join(tmpdir(), "cursor-agent-mock-"));
     promptFile = join(mockDir, "prompt.txt");
     argsFile = join(mockDir, "args.json");
@@ -549,14 +572,14 @@ describe("OpenCode-owned tool loop integration", () => {
     chmodSync(mockCursorPath, 0o755);
 
     process.env.PATH = `${mockDir}:${originalPath}`;
-    process.env.CURSOR_ACP_TOOL_LOOP_MODE = "opencode";
-    process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS = "true";
-    process.env.CURSOR_ACP_REUSE_EXISTING_PROXY = "false";
-    process.env.CURSOR_ACP_PROVIDER_BOUNDARY = "v1";
-    process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT = "1";
-    process.env.CURSOR_ACP_TIMING = "1";
-    process.env.CURSOR_ACP_LOG_DIR = logDir;
-    process.env.CURSOR_ACP_LOG_CONSOLE = "0";
+    process.env.CURSOR_KILO_TOOL_LOOP_MODE = "opencode";
+    process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS = "true";
+    process.env.CURSOR_KILO_REUSE_EXISTING_PROXY = "false";
+    process.env.CURSOR_KILO_PROVIDER_BOUNDARY = "v1";
+    process.env.CURSOR_KILO_TOOL_LOOP_MAX_REPEAT = "1";
+    process.env.CURSOR_KILO_TIMING = "1";
+    process.env.CURSOR_KILO_LOG_DIR = logDir;
+    process.env.CURSOR_KILO_LOG_CONSOLE = "0";
     process.env.MOCK_CURSOR_PROMPT_FILE = "";
     process.env.MOCK_CURSOR_ARGS_FILE = "";
     process.env.MOCK_CURSOR_SCENARIO = "assistant-text";
@@ -581,7 +604,7 @@ describe("OpenCode-owned tool loop integration", () => {
     const output: any = { options: {} };
     await hooks["chat.params"](
       {
-        model: { providerID: "cursor-acp" },
+        model: { providerID: "cursor-kilo" },
       },
       output,
     );
@@ -591,44 +614,44 @@ describe("OpenCode-owned tool loop integration", () => {
   afterAll(async () => {
     process.env.PATH = originalPath;
     if (originalToolLoopMode === undefined) {
-      delete process.env.CURSOR_ACP_TOOL_LOOP_MODE;
+      delete process.env.CURSOR_KILO_TOOL_LOOP_MODE;
     } else {
-      process.env.CURSOR_ACP_TOOL_LOOP_MODE = originalToolLoopMode;
+      process.env.CURSOR_KILO_TOOL_LOOP_MODE = originalToolLoopMode;
     }
     if (originalToolsEnabled === undefined) {
-      delete process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS;
+      delete process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS;
     } else {
-      process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS = originalToolsEnabled;
+      process.env.CURSOR_KILO_ENABLE_OPENCODE_TOOLS = originalToolsEnabled;
     }
     if (originalReuseExistingProxy === undefined) {
-      delete process.env.CURSOR_ACP_REUSE_EXISTING_PROXY;
+      delete process.env.CURSOR_KILO_REUSE_EXISTING_PROXY;
     } else {
-      process.env.CURSOR_ACP_REUSE_EXISTING_PROXY = originalReuseExistingProxy;
+      process.env.CURSOR_KILO_REUSE_EXISTING_PROXY = originalReuseExistingProxy;
     }
     if (originalProviderBoundary === undefined) {
-      delete process.env.CURSOR_ACP_PROVIDER_BOUNDARY;
+      delete process.env.CURSOR_KILO_PROVIDER_BOUNDARY;
     } else {
-      process.env.CURSOR_ACP_PROVIDER_BOUNDARY = originalProviderBoundary;
+      process.env.CURSOR_KILO_PROVIDER_BOUNDARY = originalProviderBoundary;
     }
     if (originalToolLoopMaxRepeat === undefined) {
-      delete process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT;
+      delete process.env.CURSOR_KILO_TOOL_LOOP_MAX_REPEAT;
     } else {
-      process.env.CURSOR_ACP_TOOL_LOOP_MAX_REPEAT = originalToolLoopMaxRepeat;
+      process.env.CURSOR_KILO_TOOL_LOOP_MAX_REPEAT = originalToolLoopMaxRepeat;
     }
     if (originalTiming === undefined) {
-      delete process.env.CURSOR_ACP_TIMING;
+      delete process.env.CURSOR_KILO_TIMING;
     } else {
-      process.env.CURSOR_ACP_TIMING = originalTiming;
+      process.env.CURSOR_KILO_TIMING = originalTiming;
     }
     if (originalLogDir === undefined) {
-      delete process.env.CURSOR_ACP_LOG_DIR;
+      delete process.env.CURSOR_KILO_LOG_DIR;
     } else {
-      process.env.CURSOR_ACP_LOG_DIR = originalLogDir;
+      process.env.CURSOR_KILO_LOG_DIR = originalLogDir;
     }
     if (originalLogConsole === undefined) {
-      delete process.env.CURSOR_ACP_LOG_CONSOLE;
+      delete process.env.CURSOR_KILO_LOG_CONSOLE;
     } else {
-      process.env.CURSOR_ACP_LOG_CONSOLE = originalLogConsole;
+      process.env.CURSOR_KILO_LOG_CONSOLE = originalLogConsole;
     }
     const { _resetLoggerState } = await import("../../src/utils/logger");
     _resetLoggerState();
@@ -636,6 +659,42 @@ describe("OpenCode-owned tool loop integration", () => {
     delete process.env.MOCK_CURSOR_ARGS_FILE;
     delete process.env.MOCK_CURSOR_SCENARIO;
     rmSync(mockDir, { recursive: true, force: true });
+  });
+
+  it("omits usage chunk when streaming tool_call terminates", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-read-with-usage";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [READ_TOOL],
+      messages: [{ role: "user", content: "Read foo.txt" }],
+    });
+
+    const body = await response.text();
+    const dataLines = parseSseData(body);
+    const chunks = parseJsonChunks(dataLines);
+    const usageChunk = chunks.find((chunk) => chunk.usage?.prompt_tokens != null);
+
+    expect(usageChunk).toBeUndefined();
+    expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
+  });
+
+  it("omits usage on non-streaming tool_calls response", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "tool-read-with-usage";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [READ_TOOL],
+      messages: [{ role: "user", content: "Read foo.txt" }],
+    });
+
+    const json: any = await response.json();
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+    expect(json.usage).toBeUndefined();
   });
 
   it("intercepts streaming tool_call and terminates with tool_calls finish", async () => {
@@ -1190,7 +1249,7 @@ describe("OpenCode-owned tool loop integration", () => {
       .join("");
 
     expect(allContent).toContain("The file contains...");
-    expect(allContent).not.toContain("cursor-acp error");
+    expect(allContent).not.toContain("cursor-kilo error");
     expect(allContent).not.toContain("Cursor usage limit");
     expect(dataLines[dataLines.length - 1]).toBe("[DONE]");
   });
@@ -1201,7 +1260,7 @@ describe("OpenCode-owned tool loop integration", () => {
     process.env.MOCK_CURSOR_ARGS_FILE = argsFile;
 
     const response = await requestCompletion(baseURL, {
-      model: "cursor-acp/auto",
+      model: "cursor-kilo/auto",
       stream: false,
       messages: [{ role: "user", content: "Say hello" }],
     });

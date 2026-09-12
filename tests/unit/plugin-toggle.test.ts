@@ -10,24 +10,24 @@ import {
 } from "../../src/plugin-toggle";
 
 describe("plugin toggle", () => {
-  it("enables plugin when plugin array includes cursor-acp", () => {
-    expect(isCursorPluginEnabledInConfig({ plugin: ["cursor-acp"] })).toBe(true);
+  it("enables plugin when plugin array includes cursor provider", () => {
+    expect(isCursorPluginEnabledInConfig({ plugin: ["cursor"] })).toBe(true);
   });
 
   it("enables plugin when plugin array includes npm package name", () => {
-    expect(isCursorPluginEnabledInConfig({ plugin: ["@rama_nigg/open-cursor"] })).toBe(true);
+    expect(isCursorPluginEnabledInConfig({ plugin: ["kilo-cursor-plugin"] })).toBe(true);
   });
 
   it("enables plugin when plugin array includes npm package name with version", () => {
-    expect(isCursorPluginEnabledInConfig({ plugin: ["@rama_nigg/open-cursor@2.3.2"] })).toBe(true);
+    expect(isCursorPluginEnabledInConfig({ plugin: ["kilo-cursor-plugin@1.0.0"] })).toBe(true);
   });
 
-  it("disables plugin when plugin array excludes cursor-acp", () => {
+  it("disables plugin when plugin array excludes cursor-kilo", () => {
     expect(isCursorPluginEnabledInConfig({ plugin: ["other-plugin"] })).toBe(false);
   });
 
   it("keeps legacy behavior when plugin array is missing", () => {
-    expect(isCursorPluginEnabledInConfig({ provider: { "cursor-acp": {} } })).toBe(true);
+    expect(isCursorPluginEnabledInConfig({ provider: { cursor: {} } })).toBe(true);
     expect(isCursorPluginEnabledInConfig({ provider: {} })).toBe(true);
   });
 
@@ -41,7 +41,7 @@ describe("plugin toggle", () => {
     expect(path).toBe(customConfig);
   });
 
-  it("disables when config file exists and plugin array excludes cursor-acp", () => {
+  it("disables when config file exists and plugin array excludes cursor-kilo", () => {
     const dir = mkdtempSync(join(tmpdir(), "cursor-toggle-"));
     const configPath = join(dir, "opencode.json");
 
@@ -69,13 +69,13 @@ describe("plugin toggle", () => {
     }
   });
 
-  it("enables plugin via provider detection even when plugin array does not contain cursor-acp", () => {
-    // Provider detection fires before plugin array check — cursor-acp in provider overrides a restrictive plugin array
-    expect(isCursorPluginEnabledInConfig({ provider: { "cursor-acp": {} }, plugin: ["other-plugin"] })).toBe(true);
+  it("enables plugin via provider detection even when plugin array does not contain cursor-kilo", () => {
+    // Provider detection fires before plugin array check — cursor-kilo in provider overrides a restrictive plugin array
+    expect(isCursorPluginEnabledInConfig({ provider: { "cursor-kilo": {} }, plugin: ["other-plugin"] })).toBe(true);
   });
 
   it("enables plugin via fallthrough when provider has only other providers (no plugin array)", () => {
-    // Fallthrough — no plugin array, no cursor-acp in provider, returns true by default
+    // Fallthrough — no plugin array, no cursor-kilo in provider, returns true by default
     expect(isCursorPluginEnabledInConfig({ provider: { "other-provider": {} } })).toBe(true);
   });
 });

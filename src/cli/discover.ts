@@ -32,18 +32,18 @@ async function main() {
 
   const existingConfig = JSON.parse(readFileSync(configPath, "utf-8"));
 
-  // Update cursor-acp provider models
-  if (existingConfig.provider?.["cursor-acp"]) {
+  // Update cursor-kilo provider models
+  if (existingConfig.provider?.["cursor-kilo"]) {
     const formatted = Object.fromEntries(models.map((model) => [model.id, { name: model.name }]));
-    existingConfig.provider["cursor-acp"].models = {
-      ...existingConfig.provider["cursor-acp"].models,
+    existingConfig.provider["cursor-kilo"].models = {
+      ...existingConfig.provider["cursor-kilo"].models,
       ...formatted
     };
 
     writeFileSync(configPath, JSON.stringify(existingConfig, null, 2));
     console.log(`Updated ${configPath}`);
   } else {
-    console.error("cursor-acp provider not found in config");
+    console.error("cursor-kilo provider not found in config");
     process.exit(1);
   }
 

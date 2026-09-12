@@ -21,7 +21,7 @@ export interface PerfSummary {
 }
 
 function isTimingLogEnabled(): boolean {
-  const value = process.env.CURSOR_ACP_TIMING?.toLowerCase();
+  const value = process.env.CURSOR_KILO_TIMING?.toLowerCase();
   return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 

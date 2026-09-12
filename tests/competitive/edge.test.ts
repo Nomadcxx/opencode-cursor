@@ -45,8 +45,8 @@ describe("Competitive Edge Analysis", () => {
       const proxyProvider = createCursorProvider({ mode: 'proxy', proxyConfig: { port: 32140 } });
       const directProvider = createCursorProvider({ mode: 'direct' });
 
-      expect(proxyProvider.id).toBe("cursor-acp");
-      expect(directProvider.id).toBe("cursor-acp");
+      expect(proxyProvider.id).toBe("cursor-kilo");
+      expect(directProvider.id).toBe("cursor-kilo");
 
       // Proxy provider should have init method
       expect(proxyProvider.init).toBeDefined();
@@ -65,7 +65,7 @@ describe("Competitive Edge Analysis", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "cursor-acp/auto",
+          model: "cursor-kilo/auto",
           messages: [{ role: "user", content: "Hello" }]
         })
       });
@@ -180,7 +180,7 @@ describe("Competitive Edge Analysis", () => {
 
       expect(packageJson.scripts.discover).toBeDefined();
       expect(packageJson.bin).toBeDefined();
-      expect(packageJson.bin["open-cursor"]).toBeDefined();
+      expect(packageJson.bin["kilo-cursor-plugin"]).toBeDefined();
       expect(packageJson.bin["cursor-discover"]).toBeDefined();
     });
   });

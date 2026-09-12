@@ -13,7 +13,7 @@ function createDeps(overrides: MockDeps = {}) {
   const readFileSync = vi.fn(() =>
     JSON.stringify({
       provider: {
-        "cursor-acp": {
+        "cursor-kilo": {
           models: {
             auto: { name: "Auto" },
           },
@@ -105,7 +105,7 @@ describe("models/sync", () => {
       readFileSync: vi.fn(() =>
         JSON.stringify({
           provider: {
-            "cursor-acp": {
+            "cursor-kilo": {
               models: {
                 auto: { name: "Auto" },
                 "custom-model": { name: "Custom" },
@@ -126,7 +126,7 @@ describe("models/sync", () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1);
     const [, writtenConfig] = writeFileSync.mock.calls[0];
     const parsed = JSON.parse(writtenConfig as string);
-    expect(parsed.provider["cursor-acp"].models).toEqual({
+    expect(parsed.provider["cursor-kilo"].models).toEqual({
       auto: { name: "Auto" },
       "custom-model": { name: "Custom" },
       "gpt-5.4-high": { name: "GPT-5.4 High" },
@@ -139,12 +139,12 @@ describe("models/sync", () => {
       env: {
         ...process.env,
         OPENCODE_CONFIG: "/tmp/opencode.json",
-        CURSOR_ACP_MODEL_AUTO_REFRESH: "direct",
+        CURSOR_KILO_MODEL_AUTO_REFRESH: "direct",
       },
       readFileSync: vi.fn(() =>
         JSON.stringify({
           provider: {
-            "cursor-acp": {
+            "cursor-kilo": {
               models: {
                 auto: { name: "Auto" },
                 "custom-model": { name: "Custom" },
@@ -164,7 +164,7 @@ describe("models/sync", () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1);
     const [, writtenConfig] = writeFileSync.mock.calls[0];
     const parsed = JSON.parse(writtenConfig as string);
-    expect(parsed.provider["cursor-acp"].models).toEqual({
+    expect(parsed.provider["cursor-kilo"].models).toEqual({
       auto: { name: "Auto" },
       "custom-model": { name: "Custom" },
       "gpt-5.4-high": { name: "GPT-5.4 High" },
@@ -176,7 +176,7 @@ describe("models/sync", () => {
       readFileSync: vi.fn(() =>
         JSON.stringify({
           providers: {
-            "cursor-acp": {
+            "cursor-kilo": {
               models: {
                 auto: { name: "Auto" },
               },
@@ -195,7 +195,7 @@ describe("models/sync", () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1);
     const [, writtenConfig] = writeFileSync.mock.calls[0];
     const parsed = JSON.parse(writtenConfig as string);
-    expect(parsed.providers["cursor-acp"].models["cursor-grok-4.6-high"]).toEqual({
+    expect(parsed.providers["cursor-kilo"].models["cursor-grok-4.6-high"]).toEqual({
       name: "Cursor Grok 4.6",
     });
     expect(parsed.provider).toBeUndefined();
@@ -206,7 +206,7 @@ describe("models/sync", () => {
       env: {
         ...process.env,
         OPENCODE_CONFIG: "/tmp/opencode.json",
-        CURSOR_ACP_MODEL_AUTO_REFRESH: "false",
+        CURSOR_KILO_MODEL_AUTO_REFRESH: "false",
       },
     });
 
@@ -222,12 +222,12 @@ describe("models/sync", () => {
       env: {
         ...process.env,
         OPENCODE_CONFIG: "/tmp/opencode.json",
-        CURSOR_ACP_MODEL_AUTO_REFRESH: "compact",
+        CURSOR_KILO_MODEL_AUTO_REFRESH: "compact",
       },
       readFileSync: vi.fn(() =>
         JSON.stringify({
           provider: {
-            "cursor-acp": {
+            "cursor-kilo": {
               models: {
                 auto: { name: "Auto" },
                 "custom-model": { name: "Custom" },
@@ -251,7 +251,7 @@ describe("models/sync", () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1);
     const [, writtenConfig] = writeFileSync.mock.calls[0];
     const parsed = JSON.parse(writtenConfig as string);
-    expect(parsed.provider["cursor-acp"].models).toMatchObject({
+    expect(parsed.provider["cursor-kilo"].models).toMatchObject({
       auto: { name: "Auto" },
       "custom-model": { name: "Custom" },
       "gpt-5.4": {
@@ -263,8 +263,8 @@ describe("models/sync", () => {
         },
       },
     });
-    expect(parsed.provider["cursor-acp"].models["gpt-5.4-low"]).toBeUndefined();
-    expect(parsed.provider["cursor-acp"].models["gpt-5.4-high"]).toBeUndefined();
+    expect(parsed.provider["cursor-kilo"].models["gpt-5.4-low"]).toBeUndefined();
+    expect(parsed.provider["cursor-kilo"].models["gpt-5.4-high"]).toBeUndefined();
   });
 
   it("writes compact refresh updates even when no model ids are added or removed", async () => {
@@ -272,12 +272,12 @@ describe("models/sync", () => {
       env: {
         ...process.env,
         OPENCODE_CONFIG: "/tmp/opencode.json",
-        CURSOR_ACP_MODEL_AUTO_REFRESH: "compact",
+        CURSOR_KILO_MODEL_AUTO_REFRESH: "compact",
       },
       readFileSync: vi.fn(() =>
         JSON.stringify({
           provider: {
-            "cursor-acp": {
+            "cursor-kilo": {
               models: {
                 "gpt-5.4": {
                   name: "Old GPT-5.4",
@@ -304,7 +304,7 @@ describe("models/sync", () => {
     expect(writeFileSync).toHaveBeenCalledTimes(1);
     const [, writtenConfig] = writeFileSync.mock.calls[0];
     const parsed = JSON.parse(writtenConfig as string);
-    expect(parsed.provider["cursor-acp"].models["gpt-5.4"].name).toBe("GPT-5.4");
+    expect(parsed.provider["cursor-kilo"].models["gpt-5.4"].name).toBe("GPT-5.4");
   });
 
   it("returns silently when the config file is missing", async () => {

@@ -25,7 +25,7 @@ export class ModelDiscoveryService {
       return this.cache.models;
     }
 
-    const backendPreference = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference;
+    const backendPreference = parseCursorBackendPreference(process.env.CURSOR_KILO_BACKEND).preference;
     const queryOrder = backendPreference === "sdk"
       ? ["sdk"]
       : backendPreference === "cursor-agent"

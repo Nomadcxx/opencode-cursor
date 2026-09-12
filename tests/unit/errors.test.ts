@@ -34,6 +34,20 @@ describe("parseAgentError", () => {
     expect(err.recoverable).toBe(false);
   });
 
+  it("classifies cursor native task misuse as recoverable with Kilo retry guidance", () => {
+    const err = parseAgentError("Unknown agent type: custom", {
+      kiloSubagents: [{ name: "adversarial", description: "Red-team reviewer" }],
+    });
+    expect(err.type).toBe("cursor_native_task");
+    expect(err.recoverable).toBe(true);
+    const formatted = formatErrorForUser(err, {
+      kiloSubagents: [{ name: "adversarial", description: "Red-team reviewer" }],
+    });
+    expect(formatted).toContain("Kilo's task tool");
+    expect(formatted).toContain("- adversarial: Red-team reviewer");
+    expect(formatted).not.toContain("cursor-kilo error:");
+  });
+
   it("classifies unknown timeout errors as recoverable", () => {
     const err = parseAgentError("request timeout after 30s");
     expect(err.type).toBe("unknown");
@@ -62,6 +76,14 @@ describe("parseAgentError", () => {
   });
 
   it("extracts model details when present", () => {
+    const err = parseAgentError(
+      "Cannot use this model: grok-4.6-medium. Available models: auto, claude-3.5-sonnet, gpt-4o",
+    );
+    expect(err.details.requested).toBe("grok-4.6-medium");
+    expect(err.details.available).toBeDefined();
+  });
+
+  it("extracts model details without version truncation", () => {
     const err = parseAgentError(
       "Cannot use this model: gpt-5. Available models: auto, claude-3.5-sonnet, gpt-4o",
     );
@@ -118,7 +140,7 @@ describe("formatErrorForUser", () => {
   it("formats basic error", () => {
     const err = parseAgentError("not logged in");
     const msg = formatErrorForUser(err);
-    expect(msg).toContain("cursor-acp error");
+    expect(msg).toContain("cursor-kilo error");
     expect(msg).toContain("Not authenticated");
     expect(msg).toContain("Suggestion:");
   });

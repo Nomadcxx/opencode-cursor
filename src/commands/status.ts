@@ -29,7 +29,7 @@ export function checkAuthStatus(): AuthStatus {
   return {
     authenticated: false,
     authFilePath,
-    message: `✗ Cursor: Not authenticated\n  Run: opencode auth login cursor-acp`,
+    message: `✗ Cursor: Not authenticated\n  Run: opencode auth login cursor-kilo`,
   };
 }
 

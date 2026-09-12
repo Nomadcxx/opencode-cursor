@@ -66,7 +66,7 @@ describe("provider backend compatibility", () => {
     ).toBeUndefined();
   });
 
-  it("prefers cursor-agent in auto mode and only falls back to SDK when a real key exists", () => {
+  it("prefers SDK in auto mode when Kilo auth provided a real token", () => {
     expect(selectInitialBackend("auto")).toBe("cursor-agent");
     expect(selectInitialBackend("cursor-agent")).toBe("cursor-agent");
     expect(selectInitialBackend("sdk")).toBe("sdk");
@@ -77,14 +77,14 @@ describe("provider backend compatibility", () => {
     expect(shouldFallbackToSdk("sdk", "cursor_123")).toBe(false);
   });
 
-  it("uses SDK in auto mode only when cursor-agent is unavailable and SDK auth is real", () => {
+  it("uses SDK in auto mode when OAuth/API auth exists, otherwise cursor-agent", () => {
     expect(
       selectBackendForRequest({
         preference: "auto",
         cursorAgentAvailable: true,
         sdkApiKey: "cursor_123",
       }),
-    ).toBe("cursor-agent");
+    ).toBe("sdk");
 
     expect(
       selectBackendForRequest({
@@ -97,8 +97,24 @@ describe("provider backend compatibility", () => {
     expect(
       selectBackendForRequest({
         preference: "auto",
+        cursorAgentAvailable: true,
+        sdkApiKey: undefined,
+      }),
+    ).toBe("cursor-agent");
+
+    expect(
+      selectBackendForRequest({
+        preference: "auto",
         cursorAgentAvailable: false,
         sdkApiKey: "cursor-agent",
+      }),
+    ).toBe("sdk");
+
+    expect(
+      selectBackendForRequest({
+        preference: "cursor-agent",
+        cursorAgentAvailable: true,
+        sdkApiKey: "cursor_123",
       }),
     ).toBe("cursor-agent");
 

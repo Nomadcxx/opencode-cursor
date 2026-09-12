@@ -2,8 +2,8 @@ import type { OpenAiToolCall } from "../proxy/tool-loop.js";
 
 type JsonRecord = Record<string, unknown>;
 
-const EDIT_COMPAT_REPAIR_ENABLED = process.env.CURSOR_ACP_EDIT_COMPAT_REPAIR !== "false";
-const QUESTION_COMPAT_REPAIR_ENABLED = process.env.CURSOR_ACP_QUESTION_COMPAT_REPAIR !== "false";
+const EDIT_COMPAT_REPAIR_ENABLED = process.env.CURSOR_KILO_EDIT_COMPAT_REPAIR !== "false";
+const QUESTION_COMPAT_REPAIR_ENABLED = process.env.CURSOR_KILO_QUESTION_COMPAT_REPAIR !== "false";
 
 // OpenCode's `question` tool caps option labels and the per-question header at
 // 30 characters (see opencode question schema). Cursor-style AskQuestion

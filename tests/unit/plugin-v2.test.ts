@@ -3,20 +3,20 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const configHome = mkdtempSync(join(tmpdir(), "open-cursor-v2-"));
+const configHome = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-v2-"));
 const previousEnv = {
   XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
   OPENCODE_CONFIG: process.env.OPENCODE_CONFIG,
-  CURSOR_ACP_MCP_BRIDGE: process.env.CURSOR_ACP_MCP_BRIDGE,
-  CURSOR_ACP_MODEL_AUTO_REFRESH: process.env.CURSOR_ACP_MODEL_AUTO_REFRESH,
-  CURSOR_ACP_REUSE_EXISTING_PROXY: process.env.CURSOR_ACP_REUSE_EXISTING_PROXY,
+  CURSOR_KILO_MCP_BRIDGE: process.env.CURSOR_KILO_MCP_BRIDGE,
+  CURSOR_KILO_MODEL_AUTO_REFRESH: process.env.CURSOR_KILO_MODEL_AUTO_REFRESH,
+  CURSOR_KILO_REUSE_EXISTING_PROXY: process.env.CURSOR_KILO_REUSE_EXISTING_PROXY,
 };
 
 process.env.XDG_CONFIG_HOME = configHome;
 process.env.OPENCODE_CONFIG = join(configHome, "missing.json");
-process.env.CURSOR_ACP_MCP_BRIDGE = "false";
-process.env.CURSOR_ACP_MODEL_AUTO_REFRESH = "false";
-process.env.CURSOR_ACP_REUSE_EXISTING_PROXY = "false";
+process.env.CURSOR_KILO_MCP_BRIDGE = "false";
+process.env.CURSOR_KILO_MODEL_AUTO_REFRESH = "false";
+process.env.CURSOR_KILO_REUSE_EXISTING_PROXY = "false";
 
 const pluginModule = await import("../../src/plugin.js") as typeof import("../../src/plugin.js") & {
   getStoredApiKey?: () => string | undefined;
@@ -37,7 +37,7 @@ function createContext() {
   let activeConnectionCalls = 0;
   let credential: any = { type: "key", key: "cursor-key" };
   const provider: Record<string, any> = {
-    id: "cursor-acp",
+    id: "cursor-kilo",
     name: "Old Cursor",
     package: "@ai-sdk/openai-compatible",
     settings: { baseURL: "http://127.0.0.1:9/v1", keep: true },
@@ -49,7 +49,7 @@ function createContext() {
         callback({
           provider: {
             update: (id: string, update: (value: any) => void) => {
-              expect(id).toBe("cursor-acp");
+              expect(id).toBe("cursor-kilo");
               update(provider);
             },
           },
@@ -123,7 +123,7 @@ describe("opencode V2 adapter", () => {
     const fixture = createContext();
     await createV2Setup()(fixture.context);
     const event = {
-      model: { providerID: "cursor-acp" },
+      model: { providerID: "cursor-kilo" },
       request: new Request("http://127.0.0.1:9/v1/chat/completions", {
         method: "POST",
         body: "probe",
@@ -172,7 +172,7 @@ describe("opencode V2 adapter", () => {
     const fixture = createContext();
     await createV2Setup()(fixture.context);
     const event = {
-      model: { providerID: "cursor-acp" },
+      model: { providerID: "cursor-kilo" },
       system: [],
       tools: {},
     };
@@ -190,7 +190,7 @@ describe("opencode V2 adapter", () => {
     const fixture = createContext();
     await createV2Setup()(fixture.context);
     const event: any = {
-      model: { providerID: "cursor-acp" },
+      model: { providerID: "cursor-kilo" },
       system: [],
       tools: undefined,
     };

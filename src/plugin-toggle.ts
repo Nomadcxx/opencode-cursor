@@ -1,57 +1,31 @@
 import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join, resolve } from "path";
+import {
+  isKiloPluginEnabledInConfig,
+  KILO_PROVIDER_ID,
+  matchesPlugin,
+  parseConfigJson,
+  resolveKiloConfigPath,
+} from "./kilo/platform.js";
 
-const CURSOR_PROVIDER_ID = "cursor-acp";
-const NPM_PACKAGE_NAME = "@rama_nigg/open-cursor";
+export {
+  KILO_PROVIDER_ID as CURSOR_PROVIDER_ID,
+  matchesPlugin,
+  resolveKiloConfigPath,
+};
 
-function matchesPlugin(entry: string): boolean {
-  if (entry === CURSOR_PROVIDER_ID) return true;
-  if (entry === NPM_PACKAGE_NAME) return true;
-  if (entry.startsWith(`${NPM_PACKAGE_NAME}@`)) return true;
-  return false;
-}
-
-type EnvLike = Record<string, string | undefined>;
-
-export function resolveOpenCodeConfigPath(env: EnvLike = process.env): string {
-  if (env.OPENCODE_CONFIG && env.OPENCODE_CONFIG.length > 0) {
-    return resolve(env.OPENCODE_CONFIG);
-  }
-
-  const configHome = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.length > 0
-    ? env.XDG_CONFIG_HOME
-    : join(homedir(), ".config");
-
-  return join(configHome, "opencode", "opencode.json");
-}
+/** @deprecated Use resolveKiloConfigPath */
+export const resolveOpenCodeConfigPath = resolveKiloConfigPath;
 
 export function isCursorPluginEnabledInConfig(config: unknown): boolean {
-  if (!config || typeof config !== "object") {
-    return true;
-  }
-
-  const configObject = config as { plugin?: unknown; provider?: unknown };
-
-  if (configObject.provider && typeof configObject.provider === "object") {
-    if (CURSOR_PROVIDER_ID in (configObject.provider as Record<string, unknown>)) {
-      return true;
-    }
-  }
-
-  if (Array.isArray(configObject.plugin)) {
-    return configObject.plugin.some((entry) => matchesPlugin(entry));
-  }
-
-  return true;
+  return isKiloPluginEnabledInConfig(config);
 }
 
-export function shouldEnableCursorPlugin(env: EnvLike = process.env): {
+export function shouldEnableCursorPlugin(env: Record<string, string | undefined> = process.env): {
   enabled: boolean;
   configPath: string;
   reason: string;
 } {
-  const configPath = resolveOpenCodeConfigPath(env);
+  const configPath = resolveKiloConfigPath(env);
 
   if (!existsSync(configPath)) {
     return {
@@ -63,8 +37,15 @@ export function shouldEnableCursorPlugin(env: EnvLike = process.env): {
 
   try {
     const raw = readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(raw);
-    const enabled = isCursorPluginEnabledInConfig(parsed);
+    const parsed = parseConfigJson(raw);
+    if (!parsed) {
+      return {
+        enabled: true,
+        configPath,
+        reason: "config_unreadable_or_invalid",
+      };
+    }
+    const enabled = isKiloPluginEnabledInConfig(parsed);
 
     return {
       enabled,

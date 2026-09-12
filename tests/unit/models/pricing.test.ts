@@ -23,6 +23,33 @@ describe("models/pricing", () => {
       cache_read: 0.35,
       cache_write: 1.5,
     });
+    expect(getCursorModelCost("composer-2.5")).toEqual({
+      input: 0.5,
+      output: 2.5,
+      cache_read: 0.2,
+      cache_write: 0,
+    });
+    expect(getCursorModelCost("composer-2.5-fast")).toEqual({
+      input: 3,
+      output: 15,
+      cache_read: 0.5,
+      cache_write: 0,
+    });
+  });
+
+  it("prices cursor-branded Grok models after stripping the cursor- prefix", () => {
+    expect(getCursorModelCost("cursor-grok-4.6-medium")).toEqual({
+      input: 2,
+      output: 6,
+      cache_read: 0.5,
+      cache_write: 0,
+    });
+    expect(getCursorModelCost("cursor-grok-4.6-high-fast")).toEqual({
+      input: 4,
+      output: 12,
+      cache_read: 1,
+      cache_write: 0,
+    });
   });
 
   it("maps Cursor model variants to their official family costs", () => {

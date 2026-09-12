@@ -87,13 +87,13 @@ describe("sdk-child runner path resolution", () => {
   });
 
   it("uses an explicit fake runner path for SDK chat and model-list smoke", async () => {
-    const originalRunnerPath = process.env.CURSOR_ACP_SDK_RUNNER_PATH;
-    const dir = mkdtempSync(join(tmpdir(), "open-cursor-fake-runner-"));
+    const originalRunnerPath = process.env.CURSOR_KILO_SDK_RUNNER_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "kilo-cursor-plugin-fake-runner-"));
     const runnerPath = join(dir, "fake-runner.mjs");
     writeFileSync(runnerPath, FAKE_RUNNER, "utf8");
     chmodSync(runnerPath, 0o755);
 
-    process.env.CURSOR_ACP_SDK_RUNNER_PATH = runnerPath;
+    process.env.CURSOR_KILO_SDK_RUNNER_PATH = runnerPath;
 
     try {
       const child = createSdkNodeChild({
@@ -116,9 +116,9 @@ describe("sdk-child runner path resolution", () => {
     } finally {
       stopSdkRunner();
       if (originalRunnerPath === undefined) {
-        delete process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+        delete process.env.CURSOR_KILO_SDK_RUNNER_PATH;
       } else {
-        process.env.CURSOR_ACP_SDK_RUNNER_PATH = originalRunnerPath;
+        process.env.CURSOR_KILO_SDK_RUNNER_PATH = originalRunnerPath;
       }
       rmSync(dir, { recursive: true, force: true });
     }

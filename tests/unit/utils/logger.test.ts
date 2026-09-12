@@ -37,9 +37,9 @@ describe("logger", () => {
     vi.clearAllMocks();
     _resetLoggerState();
     process.env = { ...originalEnv };
-    delete process.env.CURSOR_ACP_LOG_LEVEL;
-    delete process.env.CURSOR_ACP_LOG_SILENT;
-    delete process.env.CURSOR_ACP_LOG_CONSOLE;
+    delete process.env.CURSOR_KILO_LOG_LEVEL;
+    delete process.env.CURSOR_KILO_LOG_SILENT;
+    delete process.env.CURSOR_KILO_LOG_CONSOLE;
     mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
   });
 
@@ -72,31 +72,31 @@ describe("logger", () => {
         { flags: "a" },
       );
       expect(mockWrite).toHaveBeenCalledWith(
-        expect.stringMatching(/\[cursor-acp:test\] INFO\s+test message/),
+        expect.stringMatching(/\[cursor-kilo:test\] INFO\s+test message/),
       );
       expect(consoleSpy).not.toHaveBeenCalled();
       consoleSpy.mockRestore();
     });
 
-    it("honors CURSOR_ACP_LOG_DIR for verification and sandboxed runs", () => {
-      process.env.CURSOR_ACP_LOG_DIR = "/tmp/open-cursor-logs";
+    it("honors CURSOR_KILO_LOG_DIR for verification and sandboxed runs", () => {
+      process.env.CURSOR_KILO_LOG_DIR = "/tmp/kilo-cursor-plugin-logs";
       mockedFs.existsSync.mockReturnValue(false);
 
       const log = createLogger("test");
       log.info("test message");
 
       expect(mockedFs.mkdirSync).toHaveBeenCalledWith(
-        "/tmp/open-cursor-logs",
+        "/tmp/kilo-cursor-plugin-logs",
         { recursive: true },
       );
       expect(mockedFs.createWriteStream).toHaveBeenCalledWith(
-        "/tmp/open-cursor-logs/plugin.log",
+        "/tmp/kilo-cursor-plugin-logs/plugin.log",
         { flags: "a" },
       );
     });
 
-    it("writes to console only when CURSOR_ACP_LOG_CONSOLE=1", () => {
-      process.env.CURSOR_ACP_LOG_CONSOLE = "1";
+    it("writes to console only when CURSOR_KILO_LOG_CONSOLE=1", () => {
+      process.env.CURSOR_KILO_LOG_CONSOLE = "1";
       mockedFs.existsSync.mockReturnValue(true);
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -104,7 +104,7 @@ describe("logger", () => {
       log.info("test message");
 
       expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringMatching(/\[cursor-acp:test\] INFO\s+test message/),
+        expect.stringMatching(/\[cursor-kilo:test\] INFO\s+test message/),
       );
       consoleSpy.mockRestore();
     });
@@ -122,8 +122,8 @@ describe("logger", () => {
       );
     });
 
-    it("respects CURSOR_ACP_LOG_SILENT", () => {
-      process.env.CURSOR_ACP_LOG_SILENT = "1";
+    it("respects CURSOR_KILO_LOG_SILENT", () => {
+      process.env.CURSOR_KILO_LOG_SILENT = "1";
       mockedFs.existsSync.mockReturnValue(true);
 
       const log = createLogger("test");
@@ -154,15 +154,15 @@ describe("logger", () => {
     });
 
     it("returns true when log level is debug", () => {
-      process.env.CURSOR_ACP_LOG_LEVEL = "debug";
+      process.env.CURSOR_KILO_LOG_LEVEL = "debug";
       _resetLoggerState();
       const log = createLogger("test");
       expect(log.isDebugEnabled()).toBe(true);
     });
 
     it("returns false when silent", () => {
-      process.env.CURSOR_ACP_LOG_LEVEL = "debug";
-      process.env.CURSOR_ACP_LOG_SILENT = "1";
+      process.env.CURSOR_KILO_LOG_LEVEL = "debug";
+      process.env.CURSOR_KILO_LOG_SILENT = "1";
       _resetLoggerState();
       const log = createLogger("test");
       expect(log.isDebugEnabled()).toBe(false);

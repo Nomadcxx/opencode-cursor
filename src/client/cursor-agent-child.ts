@@ -23,12 +23,12 @@ const DEFAULT_MAX_POOL_ENTRIES = 16;
 const DEFAULT_IDLE_MS = 15 * 60 * 1000;
 
 export function isAgentPoolEnabled(): boolean {
-  const value = process.env.CURSOR_ACP_AGENT_POOL?.toLowerCase();
+  const value = process.env.CURSOR_KILO_AGENT_POOL?.toLowerCase();
   return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 
 export function parseAgentPoolIdleMs(): number {
-  const value = process.env.CURSOR_ACP_AGENT_POOL_IDLE_MS?.trim();
+  const value = process.env.CURSOR_KILO_AGENT_POOL_IDLE_MS?.trim();
   if (value == null || value === "") return DEFAULT_IDLE_MS;
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_IDLE_MS;
@@ -43,14 +43,14 @@ export function buildAgentPoolKey(workspace: string, model: string): string {
 export function resolveCursorAgentRunnerPath(
   currentFile: string = fileURLToPath(import.meta.url),
   checkExists: (path: string) => boolean = existsSync,
-  env: Pick<NodeJS.ProcessEnv, "CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH"> = process.env,
+  env: Pick<NodeJS.ProcessEnv, "CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH"> = process.env,
 ): string {
-  const override = env.CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH?.trim();
+  const override = env.CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH?.trim();
   if (override) {
     if (checkExists(override)) {
       return override;
     }
-    throw new Error(`CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH does not exist: ${override}`);
+    throw new Error(`CURSOR_KILO_CURSOR_AGENT_RUNNER_PATH does not exist: ${override}`);
   }
 
   const currentDir = dirname(currentFile);
@@ -69,7 +69,7 @@ export function resolveCursorAgentRunnerPath(
 }
 
 function resolveNodeBinary(): string {
-  return process.env.CURSOR_ACP_NODE_BIN || "node";
+  return process.env.CURSOR_KILO_NODE_BIN || "node";
 }
 
 function generateRequestId(): string {
