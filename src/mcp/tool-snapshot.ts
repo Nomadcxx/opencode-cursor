@@ -1,11 +1,13 @@
 import { buildToolFingerprint, _resetToolSchemaCache } from "../proxy/prompt-builder.js";
 import { createLogger } from "../utils/logger.js";
-import { getDynamicToolsDefinition } from "./dynamic-catalog.js";
+import { getDynamicToolsDefinition, rememberCoreToolsFromTools, rememberMcpCatalogFromTools, rememberMcpServers } from "./dynamic-catalog.js";
 import {
+  discoverKiloNativeCoreToolDefs,
   discoverKiloNativeMcpToolDefs,
   extractFunctionToolNames,
   mergeToolDefinitionsByName,
   preferCanonicalMcpNames,
+  splitKiloMcpToolName,
   stripVisibleMcpPrefixTools,
 } from "./kilo-bridge.js";
 
@@ -13,6 +15,26 @@ const log = createLogger("mcp:tool-snapshot");
 
 const ENV_FALSE = new Set(["0", "false", "off", "no", "disabled"]);
 const PENDING_MCP_STATUSES = new Set(["connecting", "pending", "starting"]);
+const INACTIVE_MCP_STATUSES = new Set(["disabled", "failed", "error", "disconnected"]);
+
+function extractMcpServerNames(status: unknown): string[] {
+  if (!status || typeof status !== "object") {
+    return [];
+  }
+  const servers = (status as { data?: unknown }).data ?? status;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
+    return [];
+  }
+  const names: string[] = [];
+  for (const [name, entry] of Object.entries(servers as Record<string, any>)) {
+    const state = String(entry?.status ?? entry?.state ?? "").toLowerCase();
+    if (INACTIVE_MCP_STATUSES.has(state)) {
+      continue;
+    }
+    names.push(name);
+  }
+  return names;
+}
 
 export type McpDiscoveryOptions = {
   maxWaitMs?: number;
@@ -85,6 +107,7 @@ export function fingerprintMcpToolNames(tools: Array<any>): string {
 export async function hasPendingMcpServers(client: any): Promise<boolean> {
   try {
     const status = client?.mcp?.status ? await client.mcp.status({ query: {} }) : null;
+    rememberMcpServers(extractMcpServerNames(status));
     const servers = status?.data;
     if (!servers || typeof servers !== "object") {
       return false;
@@ -144,11 +167,13 @@ export async function discoverKiloNativeMcpToolDefsSettled(
 
 function buildFinalizedTools(
   baseTools: Array<any>,
+  coreTools: Array<any>,
   mcpTools: Array<any>,
   appendTools: Array<any>,
 ): Array<any> {
   const canonicalMcpNames = extractFunctionToolNames(mcpTools);
-  let merged = mergeToolDefinitionsByName(baseTools, mcpTools);
+  let merged = mergeToolDefinitionsByName(baseTools, coreTools);
+  merged = mergeToolDefinitionsByName(merged, mcpTools);
   if (appendTools.length > 0) {
     merged = mergeToolDefinitionsByName(merged, appendTools);
   }
@@ -182,7 +207,16 @@ export function createChatParamToolSnapshotResolver(
       mcpTools = await discoverKiloNativeMcpToolDefs(client);
     }
 
-    const finalized = buildFinalizedTools(baseTools, mcpTools, appendTools);
+    const coreTools = await discoverKiloNativeCoreToolDefs(client, extractFunctionToolNames(baseTools));
+    const finalized = buildFinalizedTools(baseTools, coreTools, mcpTools, appendTools);
+    rememberMcpCatalogFromTools(mcpTools);
+    rememberMcpCatalogFromTools(finalized);
+    rememberCoreToolsFromTools(finalized);
+    rememberMcpServers(
+      extractFunctionToolNames(mcpTools)
+        .map((name) => splitKiloMcpToolName(name)?.server)
+        .filter((server): server is string => Boolean(server)),
+    );
     const fingerprint = buildToolFingerprint(finalized);
 
     if (!pending && cache?.fingerprint === fingerprint) {
@@ -208,6 +242,7 @@ export function createChatParamToolSnapshotResolver(
         pending,
         toolCount: finalized.length,
         mcpToolCount: mcpTools.length,
+        coreToolCount: coreTools.length,
         previous: previous.slice(0, 24),
         next: fingerprint.slice(0, 24),
       });

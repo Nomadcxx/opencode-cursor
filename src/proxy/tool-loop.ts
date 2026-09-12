@@ -2,13 +2,22 @@ import type { StreamJsonToolCallEvent } from "../streaming/types.js";
 import {
   isCursorMcpMetaTool,
   isCursorNativeMcpDiscoveryTool,
+  isKiloMcpCatalogToolName,
+  isKiloNativeCoreToolName,
+  mcpCatalogAliasKey,
+  normalizeKiloCoreToolArgs,
   remapBareMcpToolCall,
   resolveMcpToolName,
+  splitKiloMcpToolName,
 } from "../mcp/kilo-bridge.js";
 import {
   GET_DYNAMIC_TOOLS_NAME,
+  getRememberedCoreTools,
+  getRememberedMcpCatalog,
   isCallDynamicToolName,
   isGetDynamicToolsName,
+  mcpServerIsRemembered,
+  parseCallDynamicToolArgs,
   resolveCallDynamicToolToKiloName,
   shouldPassthroughCursorDynamicTool,
 } from "../mcp/dynamic-catalog.js";
@@ -170,6 +179,10 @@ export function extractOpenAiToolCall(
     }
     const remappedDynamic = resolveCallDynamicToolToKiloName(args, allowedToolNames);
     if (remappedDynamic) {
+      log.debug("Remapped native dynamic MCP call to Kilo name", {
+        from: name,
+        to: remappedDynamic.name,
+      });
       const callId = event.call_id || (event as any).tool_call_id || "call_unknown";
       return {
         action: "intercept",
@@ -178,7 +191,11 @@ export function extractOpenAiToolCall(
           type: "function",
           function: {
             name: remappedDynamic.name,
-            arguments: toOpenAiArguments(remappedDynamic.args),
+            arguments: toOpenAiArguments(
+              isKiloNativeCoreToolName(remappedDynamic.name)
+                ? normalizeKiloCoreToolArgs(remappedDynamic.name, remappedDynamic.args)
+                : remappedDynamic.args,
+            ),
           },
         },
       };
@@ -258,7 +275,11 @@ export function extractOpenAiToolCall(
         type: "function",
         function: {
           name: resolvedName,
-          arguments: toOpenAiArguments(args),
+          arguments: toOpenAiArguments(
+            isKiloNativeCoreToolName(resolvedName)
+              ? normalizeKiloCoreToolArgs(resolvedName, args)
+              : args,
+          ),
         },
       },
     };
@@ -347,11 +368,18 @@ function extractToolNameAndArgs(event: StreamJsonToolCallEvent): {
   const entries = Object.entries(event.tool_call || {});
   if (entries.length > 0) {
     const [rawName, payload] = entries[0];
-    if (!name) {
-      name = normalizeToolName(rawName);
-    }
     const payloadRecord = isRecord(payload) ? payload : null;
-    args = payloadRecord?.args;
+    const unwrapped = unwrapToolCallPayload(rawName, payloadRecord);
+
+    if (!name) {
+      name = unwrapped.name;
+    } else {
+      name = normalizeToolName(name);
+      if (isWrapperToolName(name) && unwrapped.name) {
+        name = unwrapped.name;
+      }
+    }
+    args = unwrapped.args;
 
     // Cursor native tool_use events carry arguments under `input` instead of `args`.
     if (args === undefined && payloadRecord && isRecord(payloadRecord.input)) {
@@ -372,11 +400,159 @@ function extractToolNameAndArgs(event: StreamJsonToolCallEvent): {
     }
   }
 
+  if (args === undefined) {
+    const topLevel = event as { args?: unknown; arguments?: unknown; input?: unknown };
+    args = firstDefined(topLevel.args, topLevel.arguments, topLevel.input);
+  }
+
+  args = coerceToolArgs(args);
+
   if (name) {
     name = normalizeToolName(name);
   }
 
+  const envelope = unwrapDynamicEnvelope(name, args);
+  name = envelope.name;
+  args = envelope.args;
+
+  if (!name || isWrapperToolName(name)) {
+    const inferred = inferDynamicToolName(args);
+    if (inferred) {
+      name = inferred;
+    }
+  }
+
   return { name, args, skipped: false };
+}
+
+function unwrapToolCallPayload(
+  rawName: string,
+  payload: Record<string, unknown> | null,
+): { name: string | null; args: unknown } {
+  const normalizedRaw = normalizeToolName(rawName);
+  if (isWrapperToolName(normalizedRaw) && payload) {
+    const fn = isRecord(payload.function) ? payload.function : payload;
+    const nestedName = pickFirstString(fn.name, payload.name, payload.toolName);
+    const nestedArgs = firstDefined(
+      fn.arguments,
+      fn.args,
+      fn.input,
+      payload.arguments,
+      payload.args,
+      payload.input,
+    );
+    return {
+      name: nestedName ?? normalizedRaw,
+      args: nestedArgs,
+    };
+  }
+
+  let args: unknown = payload?.args;
+  if (args === undefined && payload && isRecord(payload.input)) {
+    args = payload.input;
+  }
+  return { name: normalizedRaw, args };
+}
+
+function isWrapperToolName(name: string): boolean {
+  const key = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return key === "function" || key === "unknown" || key === "unknowntool";
+}
+
+function unwrapDynamicEnvelope(
+  currentName: string | null,
+  args: unknown,
+): { name: string | null; args: unknown } {
+  if (!isRecord(args)) {
+    return { name: currentName, args };
+  }
+
+  const nestedName = pickFirstString(args.name);
+  if (
+    !nestedName
+    || !(
+      isGetDynamicToolsName(nestedName)
+      || isCallDynamicToolName(nestedName)
+      || isCursorNativeMcpDiscoveryTool(nestedName)
+    )
+  ) {
+    return { name: currentName, args };
+  }
+
+  const { name: _nested, ...rest } = args;
+  if (isCallDynamicToolName(nestedName) && parseCallDynamicToolArgs(rest)) {
+    return { name: nestedName, args: rest };
+  }
+
+  const inner = firstDefined(rest.arguments, rest.args, rest.input);
+  return {
+    name: nestedName,
+    args: inner === undefined ? rest : coerceToolArgs(inner),
+  };
+}
+
+function inferDynamicToolName(args: unknown): string | null {
+  const parsed = parseCallDynamicToolArgs(args);
+  if (parsed?.toolName) {
+    return "CallDynamicTool";
+  }
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return null;
+  }
+  const record = args as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length === 0) {
+    return null;
+  }
+  const catalogKeys = new Set([
+    "namespace",
+    "toolname",
+    "tool",
+    "pattern",
+    "provideridentifier",
+    "server",
+  ]);
+  if (!keys.every((key) => catalogKeys.has(key.toLowerCase()))) {
+    return null;
+  }
+  return "GetDynamicTools";
+}
+
+function coerceToolArgs(args: unknown): unknown {
+  if (typeof args !== "string") {
+    return args;
+  }
+  const trimmed = args.trim();
+  if (!trimmed) {
+    return args;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") {
+      return parsed;
+    }
+  } catch {
+    return args;
+  }
+  return args;
+}
+
+function pickFirstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function firstDefined<T>(...values: T[]): T | undefined {
+  for (const value of values) {
+    if (value !== undefined) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function normalizeToolName(raw: string): string {
@@ -405,14 +581,82 @@ function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): st
   }
 
   const aliasedCanonical = TOOL_NAME_ALIASES.get(normalizedName);
-  if (!aliasedCanonical) {
-    return null;
+  if (aliasedCanonical) {
+    const canonicalNormalized = normalizeAliasKey(aliasedCanonical);
+    for (const allowedName of allowedToolNames) {
+      if (normalizeAliasKey(allowedName) === canonicalNormalized) {
+        return allowedName;
+      }
+    }
   }
 
-  const canonicalNormalized = normalizeAliasKey(aliasedCanonical);
+  const rememberedMatch = resolveRememberedMcpToolName(name, allowedToolNames);
+  if (rememberedMatch) {
+    return rememberedMatch;
+  }
+
+  const coreMatch = resolveRememberedCoreToolName(name);
+  if (coreMatch) {
+    return coreMatch;
+  }
+
+  return null;
+}
+
+function resolveRememberedCoreToolName(name: string): string | null {
+  const aliased = TOOL_NAME_ALIASES.get(normalizeAliasKey(name)) ?? name;
+  const candidates = [aliased, name];
+  for (const candidate of candidates) {
+    const key = candidate.trim().toLowerCase();
+    if (key === "skill" || key === "skill_mcp") {
+      return key;
+    }
+  }
+  const want = normalizeAliasKey(aliased);
+  for (const core of getRememberedCoreTools()) {
+    const coreKey = core.trim().toLowerCase();
+    if ((coreKey === "skill" || coreKey === "skill_mcp") && normalizeAliasKey(core) === want) {
+      return core;
+    }
+  }
+  return null;
+}
+
+function resolveRememberedMcpToolName(
+  name: string,
+  allowedToolNames: Set<string>,
+): string | null {
+  const key = mcpCatalogAliasKey(name);
+  for (const entry of getRememberedMcpCatalog()) {
+    if (mcpCatalogAliasKey(entry.name) === key) {
+      return entry.name;
+    }
+  }
+
+  if (!isKiloMcpCatalogToolName(name)) {
+    return null;
+  }
+  const split = splitKiloMcpToolName(name);
+  if (!split) {
+    return null;
+  }
+  const serverKey = mcpCatalogAliasKey(split.server);
+
+  if (mcpServerIsRemembered(split.server)) {
+    return name;
+  }
+
+  for (const entry of getRememberedMcpCatalog()) {
+    const rememberedSplit = splitKiloMcpToolName(entry.name);
+    if (rememberedSplit && mcpCatalogAliasKey(rememberedSplit.server) === serverKey) {
+      return name;
+    }
+  }
+
   for (const allowedName of allowedToolNames) {
-    if (normalizeAliasKey(allowedName) === canonicalNormalized) {
-      return allowedName;
+    const allowedSplit = splitKiloMcpToolName(allowedName);
+    if (allowedSplit && mcpCatalogAliasKey(allowedSplit.server) === serverKey) {
+      return name;
     }
   }
 

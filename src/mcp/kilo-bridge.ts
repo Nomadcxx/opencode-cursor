@@ -5,6 +5,7 @@
  * Kilo exposes the same tools as `<server>_<tool>` (e.g. context7_resolve-library-id).
  * The proxy only maps names on the way back — no separate MCP client or reload.
  */
+import { namespaceMcpToolKilo, namespaceMcpToolKiloNative } from "../kilo/platform.js";
 import { namespaceMcpTool } from "./tool-bridge.js";
 
 const KILO_NATIVE_UNDERSCORE_TOOLS = new Set([
@@ -25,7 +26,8 @@ const KILO_NATIVE_CATALOG_SERVERS = new Set([
 
 /** Split a Kilo MCP function name into server + tool segments. */
 export function splitKiloMcpToolName(name: string): { server: string; toolName: string } | null {
-  if (!/^[a-zA-Z0-9]+_[a-zA-Z0-9_.-]+$/.test(name)) {
+  // Server ids may include hyphens (`browser-harness_browser_list_tabs`).
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*_[a-zA-Z0-9_.-]+$/.test(name)) {
     return null;
   }
   if (name.startsWith("oc_") || name.startsWith("mcp__")) {
@@ -57,67 +59,343 @@ export function isKiloMcpCatalogToolName(name: string): boolean {
   return !KILO_NATIVE_CATALOG_SERVERS.has(split.server.toLowerCase());
 }
 
+/** Kilo tools often missing from cursor provider chat.params — backfill via tool.list/ids. */
+export const KILO_CORE_BRIDGE_TOOLS = [
+  "skill",
+  "skill_mcp",
+  "plan",
+  "question",
+  "task",
+  "todowrite",
+  "todoread",
+  "list_mcp_resources",
+  "read_mcp_resource",
+  "list_mcp_resource_templates",
+  "call_omo_agent",
+] as const;
+
+const KILO_CORE_BRIDGE_TOOL_SET = new Set<string>(KILO_CORE_BRIDGE_TOOLS);
+
+/** Static schemas when client.tool.list/ids omit core tools (common on cursor provider). */
+export const KILO_CORE_BRIDGE_TOOL_FALLBACKS: Record<
+  (typeof KILO_CORE_BRIDGE_TOOLS)[number],
+  { description: string; parameters: Record<string, unknown> }
+> = {
+  skill: {
+    description:
+      "Load an Agent Skill by id. Use ids from available_skills in context; returns SKILL.md instructions.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Skill id from available_skills (e.g. superpowers/brainstorming)",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  skill_mcp: {
+    description: "Invoke an MCP tool bundled with an Agent Skill.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Skill id" },
+        tool: { type: "string", description: "MCP tool name within the skill" },
+        arguments: { type: "object", description: "Tool arguments" },
+      },
+    },
+  },
+  plan: {
+    description: "Create or update a structured plan.",
+    parameters: { type: "object", properties: {} },
+  },
+  question: {
+    description: "Ask the user a structured question.",
+    parameters: { type: "object", properties: {} },
+  },
+  task: {
+    description: "Delegate work to a Kilo subagent.",
+    parameters: { type: "object", properties: {} },
+  },
+  todowrite: {
+    description: "Update the session todo list.",
+    parameters: { type: "object", properties: {} },
+  },
+  todoread: {
+    description: "Read the session todo list.",
+    parameters: { type: "object", properties: {} },
+  },
+  list_mcp_resources: {
+    description: "List MCP resources.",
+    parameters: { type: "object", properties: {} },
+  },
+  read_mcp_resource: {
+    description: "Read an MCP resource.",
+    parameters: { type: "object", properties: {} },
+  },
+  list_mcp_resource_templates: {
+    description: "List MCP resource templates.",
+    parameters: { type: "object", properties: {} },
+  },
+  call_omo_agent: {
+    description: "Call an OMO subagent.",
+    parameters: { type: "object", properties: {} },
+  },
+};
+
+/**
+ * Kilo-native tools that are not MCP server_tool names (skill, plan, skill_mcp, …).
+ * Used to backfill chat.params when the cursor provider omits them.
+ */
+export function isKiloNativeCoreToolName(name: string): boolean {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.startsWith("mcp__") || trimmed.startsWith("oc_")) {
+    return false;
+  }
+  return KILO_CORE_BRIDGE_TOOL_SET.has(trimmed.toLowerCase());
+}
+
+function coreToolFallback(
+  name: string,
+): (typeof KILO_CORE_BRIDGE_TOOL_FALLBACKS)[(typeof KILO_CORE_BRIDGE_TOOLS)[number]] | undefined {
+  const key = name.trim().toLowerCase();
+  if (!KILO_CORE_BRIDGE_TOOL_SET.has(key)) {
+    return undefined;
+  }
+  return KILO_CORE_BRIDGE_TOOL_FALLBACKS[key as (typeof KILO_CORE_BRIDGE_TOOLS)[number]];
+}
+
+/** Fill empty list/ids schemas with the static fallback (cursor provider often omits parameters). */
+export function enrichKiloCoreToolDef(def: Record<string, any> | null): Record<string, any> | null {
+  const name = def?.function?.name;
+  if (!def || typeof name !== "string") {
+    return def;
+  }
+  const fallback = coreToolFallback(name);
+  if (!fallback) {
+    return def;
+  }
+  const params = def.function.parameters;
+  const properties = params && typeof params === "object" ? (params as { properties?: unknown }).properties : undefined;
+  const emptyParams = !properties || typeof properties !== "object" || Object.keys(properties as object).length === 0;
+  const desc = typeof def.function.description === "string" ? def.function.description.trim() : "";
+  const weakDesc = !desc || desc === `Kilo tool ${name}`;
+  return {
+    type: "function",
+    function: {
+      name,
+      description: weakDesc ? fallback.description : desc,
+      parameters: emptyParams ? fallback.parameters : params,
+    },
+  };
+}
+
+export function buildKiloCoreBridgeToolFallbacks(existingToolNames: Iterable<string> = []): Array<any> {
+  const existing = new Set(
+    [...existingToolNames]
+      .filter((name) => typeof name === "string" && name.length > 0)
+      .map((name) => name.toLowerCase()),
+  );
+  const defs: Array<any> = [];
+  for (const name of KILO_CORE_BRIDGE_TOOLS) {
+    if (existing.has(name)) {
+      continue;
+    }
+    const fallback = KILO_CORE_BRIDGE_TOOL_FALLBACKS[name];
+    defs.push({
+      type: "function",
+      function: {
+        name,
+        description: fallback.description,
+        parameters: fallback.parameters,
+      },
+    });
+  }
+  return defs;
+}
+
+/** How Composer must load Agent Skills. `arguments.name` is required. */
+export const KILO_SKILL_CALL_DYNAMIC_EXAMPLE =
+  "skill({ name: \"<id-from-available_skills>\" })";
+
+export const KILO_SKILL_CALL_DYNAMIC_FALLBACK =
+  "CallDynamicTool({ namespace: \"kilo\", toolName: \"skill\", arguments: { name: \"<id-from-available_skills>\" } })";
+
+const SKILL_ID_RESERVED = new Set([
+  "skill",
+  "skillmcp",
+  "kilo",
+  "mcp",
+  "cursor",
+  "getdynamictools",
+  "getmcptools",
+  "calldynamictool",
+  "callmcptool",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function isUsableSkillId(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+  const key = value.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  return key.length > 0 && !SKILL_ID_RESERVED.has(key);
+}
+
+function skillIdFromRecord(record: Record<string, unknown>): string | undefined {
+  const candidates = [
+    record.name,
+    record.skill,
+    record.id,
+    record.skillName,
+    record.skill_name,
+    record.skillId,
+    record.skill_id,
+    record.identifier,
+    record.toolName,
+    record.tool,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && isUsableSkillId(candidate)) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
+/** Map alias fields (`skill`, `toolName`, `id`) onto the native `name` argument. */
+export function normalizeKiloCoreToolArgs(name: string, args: unknown): unknown {
+  if (name.trim().toLowerCase() !== "skill") {
+    return args;
+  }
+  if (typeof args === "string" && isUsableSkillId(args)) {
+    return { name: args.trim() };
+  }
+  if (!isRecord(args)) {
+    return args ?? {};
+  }
+  const fromName = skillIdFromRecord(args);
+  if (!fromName) {
+    return args;
+  }
+  return { ...args, name: fromName };
+}
+
+/** Lines for GetDynamicTools — core tools ride CallDynamicTool, not Cursor natives. */
+export function formatKiloCoreToolsCatalogLines(
+  registeredNames: Iterable<string> = [],
+  query?: { namespace?: string; toolName?: string },
+): string[] {
+  const ns = String(query?.namespace ?? "").trim().toLowerCase();
+  if (ns && ns !== "kilo" && ns !== "mcp" && ns !== "cursor") {
+    return [];
+  }
+  const registered = new Set(
+    [...registeredNames]
+      .filter((name) => typeof name === "string" && isKiloNativeCoreToolName(name))
+      .map((name) => name.toLowerCase()),
+  );
+  let names: Array<(typeof KILO_CORE_BRIDGE_TOOLS)[number]> = registered.size > 0
+    ? KILO_CORE_BRIDGE_TOOLS.filter((name) => registered.has(name))
+    : ["skill", "skill_mcp"];
+  const toolFilter = String(query?.toolName ?? "").trim();
+  if (toolFilter) {
+    const want = mcpCatalogAliasKey(toolFilter);
+    names = names.filter((name) => mcpCatalogAliasKey(name) === want);
+  }
+  if (names.length === 0) {
+    return [];
+  }
+  return [
+    "",
+    "Kilo core tools — not native Cursor tools. Load them with CallDynamicTool (namespace \"kilo\"):",
+    ...names.map((name) => {
+      const fallback = KILO_CORE_BRIDGE_TOOL_FALLBACKS[name];
+      const summary = fallback.description.split(".")[0]?.trim() ?? name;
+      return `- ${name} — ${summary}`;
+    }),
+    `Agent Skills: ${KILO_SKILL_CALL_DYNAMIC_EXAMPLE} — the name argument is required.`,
+    `Fallback if skill is not callable: ${KILO_SKILL_CALL_DYNAMIC_FALLBACK}.`,
+    "Never call skill() with empty arguments. Prefer skill({ name }) over Read on SKILL.md paths.",
+  ];
+}
+
 export function mcpCatalogAliasKey(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-/** Map cursor-agent MCP names back to the Kilo tool name from the request allowlist. */
-export function resolveMcpToolName(name: string, allowedToolNames: Set<string>): string | null {
+function normalizeToolAliasKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** Prefer the name Kilo executes: no mcp__ prefix, keep hyphens (`query-docs`). */
+export function pickPreferredKiloToolName(matches: string[]): string {
+  const unique = [...new Set(matches.filter((name) => name.length > 0))];
+  const kilo = unique.filter((name) => !name.startsWith("mcp__"));
+  const pool = kilo.length > 0 ? kilo : unique;
+  const hyphenated = pool.filter((name) => name.includes("-"));
+  return hyphenated[0] ?? pool[0] ?? matches[0]!;
+}
+
+export function groupKiloMcpCatalogByServer(names: string[]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const name of names) {
+    if (!isKiloMcpCatalogToolName(name) || name.startsWith("mcp__")) {
+      continue;
+    }
+    const split = splitKiloMcpToolName(name);
+    if (!split) {
+      continue;
+    }
+    const list = grouped.get(split.server) ?? [];
+    list.push(name);
+    grouped.set(split.server, list);
+  }
+  return grouped;
+}
+
+function expandMcpToolNameCandidates(name: string): string[] {
+  const candidates = [name];
   if (!name.startsWith("mcp__")) {
-    return allowedToolNames.has(name) ? name : null;
+    return candidates;
   }
 
   const rest = name.slice("mcp__".length);
   const parts = rest.split("__");
-  const candidates: string[] = [];
-
   if (parts.length >= 2) {
+    const server = parts[0]!;
+    const tool = parts.slice(1).join("__");
     candidates.push(parts.join("_"));
     candidates.push(parts.join("."));
+    candidates.push(namespaceMcpToolKilo(server, tool));
+    candidates.push(namespaceMcpToolKiloNative(server, tool));
+    candidates.push(`${server}_${tool}`);
     candidates.push(parts[parts.length - 1]!);
   }
   candidates.push(rest);
-
-  const normalizedAllowed = new Map<string, string>();
-  for (const allowed of allowedToolNames) {
-    normalizedAllowed.set(normalizeToolAliasKey(allowed), allowed);
-  }
-
-  for (const candidate of candidates) {
-    if (allowedToolNames.has(candidate) && !candidate.startsWith("mcp__")) {
-      return candidate;
-    }
-  }
-
-  for (const candidate of candidates) {
-    const match = normalizedAllowed.get(normalizeToolAliasKey(candidate));
-    if (match && !match.startsWith("mcp__")) {
-      return match;
-    }
-  }
-
-  if (allowedToolNames.has(name)) {
-    return name;
-  }
-
-  for (const candidate of candidates) {
-    if (allowedToolNames.has(candidate)) {
-      return candidate;
-    }
-  }
-
-  for (const candidate of candidates) {
-    const match = normalizedAllowed.get(normalizeToolAliasKey(candidate));
-    if (match) {
-      return match;
-    }
-  }
-
-  return null;
+  return candidates;
 }
 
-function normalizeToolAliasKey(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Map cursor-agent MCP names back to the Kilo tool name from the request allowlist. */
+export function resolveMcpToolName(name: string, allowedToolNames: Set<string>): string | null {
+  const candidates = expandMcpToolNameCandidates(name);
+  const candidateKeys = new Set(candidates.map(normalizeToolAliasKey));
+
+  const matches: string[] = [];
+  for (const allowed of allowedToolNames) {
+    if (candidates.includes(allowed) || candidateKeys.has(normalizeToolAliasKey(allowed))) {
+      matches.push(allowed);
+    }
+  }
+
+  if (matches.length === 0) {
+    return null;
+  }
+  return pickPreferredKiloToolName(matches);
 }
 
 export function extractFunctionToolNames(tools: Array<any>): string[] {
@@ -187,10 +465,12 @@ export function buildProxyAllowedToolNames(tools: Array<any>): Set<string> {
   const names = new Set(extractFunctionToolNames(tools));
   names.add("GetDynamicTools");
 
-  for (const name of names) {
+  for (const name of [...names]) {
     const split = splitKiloMcpToolName(name);
     if (split) {
       names.add(namespaceMcpTool(split.server, split.toolName));
+      names.add(namespaceMcpToolKilo(split.server, split.toolName));
+      names.add(namespaceMcpToolKiloNative(split.server, split.toolName));
     }
   }
 
@@ -250,51 +530,228 @@ export function mergeToolDefinitionsByName(base: Array<any>, extra: Array<any>):
   return merged;
 }
 
-/** Pull native Kilo MCP tool defs (context7_*, etc.) from the running Kilo server. */
-export async function discoverKiloNativeMcpToolDefs(client: any): Promise<Array<any>> {
-  try {
-    const mcpList = client?.mcp?.tool?.list ? await client.mcp.tool.list() : null;
-    const tools = mcpList?.data?.tools;
-    if (!Array.isArray(tools) || tools.length === 0) {
-      return [];
-    }
-
-    return tools
-      .map((tool: any) => {
-        const name = String(tool.name || tool.id || "").trim();
-        if (!name) {
-          return null;
-        }
-        return {
-          type: "function",
-          function: {
-            name,
-            description: String(tool.description || `Kilo MCP tool ${name}`),
-            parameters: tool.parameters
-              ?? tool.inputSchema
-              ?? { type: "object", properties: {} },
-          },
-        };
-      })
-      .filter(Boolean);
-  } catch {
+/** Normalize Kilo MCP list payloads (`data.tools`, `data`, or a raw array). */
+export function unwrapKiloToolListPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+  if (!raw || typeof raw !== "object") {
     return [];
+  }
+  const rec = raw as Record<string, unknown>;
+  if (Array.isArray(rec.tools)) {
+    return rec.tools;
+  }
+  if (Array.isArray(rec.data)) {
+    return rec.data;
+  }
+  if (rec.data && typeof rec.data === "object") {
+    const nested = rec.data as Record<string, unknown>;
+    if (Array.isArray(nested.tools)) {
+      return nested.tools;
+    }
+    if (Array.isArray(nested.ids)) {
+      return nested.ids;
+    }
+  }
+  if (Array.isArray(rec.ids)) {
+    return rec.ids;
+  }
+  return [];
+}
+
+/** Convert a Kilo tool id/record into an OpenAI function def for the MCP catalog. */
+export function kiloMcpToolRecordToDef(tool: unknown): Record<string, any> | null {
+  if (typeof tool === "string") {
+    return nameToMcpFunctionDef(tool);
+  }
+  if (!tool || typeof tool !== "object") {
+    return null;
+  }
+  const rec = tool as Record<string, unknown>;
+  const rawName = String(rec.name ?? rec.id ?? "").trim();
+  const server = String(rec.server ?? rec.serverName ?? rec.provider ?? "").trim();
+  let name = rawName;
+  if (server && rawName) {
+    const split = splitKiloMcpToolName(rawName);
+    const alreadyPrefixed = Boolean(
+      split && mcpCatalogAliasKey(split.server) === mcpCatalogAliasKey(server),
+    );
+    if (!alreadyPrefixed) {
+      name = namespaceMcpToolKiloNative(server, rawName);
+    }
+  }
+  return nameToMcpFunctionDef(
+    name,
+    String(rec.description ?? ""),
+    rec.parameters ?? rec.inputSchema,
+  );
+}
+
+function nameToCoreFunctionDef(
+  name: string,
+  description = "",
+  parameters?: unknown,
+): Record<string, any> | null {
+  const trimmed = name.trim();
+  if (!trimmed || !isKiloNativeCoreToolName(trimmed)) {
+    return null;
+  }
+  return {
+    type: "function",
+    function: {
+      name: trimmed,
+      description: description.trim() || `Kilo tool ${trimmed}`,
+      parameters: parameters && typeof parameters === "object"
+        ? parameters
+        : { type: "object", properties: {} },
+    },
+  };
+}
+
+/** Convert a Kilo tool id/record into an OpenAI function def for native core tools. */
+export function kiloCoreToolRecordToDef(tool: unknown): Record<string, any> | null {
+  if (typeof tool === "string") {
+    return nameToCoreFunctionDef(tool);
+  }
+  if (!tool || typeof tool !== "object") {
+    return null;
+  }
+  const rec = tool as Record<string, unknown>;
+  const name = String(rec.name ?? rec.id ?? "").trim();
+  return nameToCoreFunctionDef(
+    name,
+    String(rec.description ?? ""),
+    rec.parameters ?? rec.inputSchema,
+  );
+}
+
+function nameToMcpFunctionDef(
+  name: string,
+  description = "",
+  parameters?: unknown,
+): Record<string, any> | null {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.startsWith("mcp__") || !isKiloMcpCatalogToolName(trimmed)) {
+    return null;
+  }
+  return {
+    type: "function",
+    function: {
+      name: trimmed,
+      description: description.trim() || `Kilo MCP tool ${trimmed}`,
+      parameters: parameters && typeof parameters === "object"
+        ? parameters
+        : { type: "object", properties: {} },
+    },
+  };
+}
+
+async function callClientList(fn: unknown): Promise<unknown> {
+  if (typeof fn !== "function") {
+    return null;
+  }
+  try {
+    return await fn({ query: {} });
+  } catch {
+    try {
+      return await fn();
+    } catch {
+      return null;
+    }
   }
 }
 
-export function buildKiloMcpAliasHint(toolNames: string[]): string | null {
-  const lines = [...new Set(toolNames.filter((name) => isKiloMcpToolName(name) && !name.startsWith("mcp__")))]
-    .sort()
-    .map((clientName) => `  - ${clientName}`);
+/**
+ * Pull native Kilo core tool defs (skill, skill_mcp, plan, …) that the cursor
+ * provider may omit from chat.params even when `<available_skills>` is injected.
+ */
+export async function discoverKiloNativeCoreToolDefs(
+  client: any,
+  existingToolNames: Iterable<string> = [],
+): Promise<Array<any>> {
+  const collected: Array<any> = [];
+  const seen = new Set<string>();
 
-  if (lines.length === 0) {
+  const ingest = (raw: unknown) => {
+    for (const item of unwrapKiloToolListPayload(raw)) {
+      const def = kiloCoreToolRecordToDef(item);
+      const name = def?.function?.name;
+      if (!def || typeof name !== "string" || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      collected.push(enrichKiloCoreToolDef(def) ?? def);
+    }
+  };
+
+  ingest(await callClientList(client?.tool?.list));
+  ingest(await callClientList(client?.tool?.ids));
+
+  const mergedNames = new Set([
+    ...existingToolNames,
+    ...collected.map((tool) => tool?.function?.name).filter((name): name is string => typeof name === "string"),
+  ]);
+  for (const fallback of buildKiloCoreBridgeToolFallbacks(mergedNames)) {
+    const name = fallback?.function?.name;
+    if (typeof name !== "string" || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    collected.push(fallback);
+  }
+
+  return collected;
+}
+
+/**
+ * Pull native Kilo MCP tool defs (context7_*, openviking_*, browser-harness_*).
+ *
+ * `client.mcp.tool.list()` is not on the public Kilo SDK. Dynamically registered
+ * plugin/MCP tools (OpenViking, browser-harness) are listed by `client.tool.ids()`.
+ */
+export async function discoverKiloNativeMcpToolDefs(client: any): Promise<Array<any>> {
+  const collected: Array<any> = [];
+  const seen = new Set<string>();
+
+  const ingest = (raw: unknown) => {
+    for (const item of unwrapKiloToolListPayload(raw)) {
+      const def = kiloMcpToolRecordToDef(item);
+      const name = def?.function?.name;
+      if (!def || typeof name !== "string" || seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      collected.push(def);
+    }
+  };
+
+  ingest(await callClientList(client?.mcp?.tool?.list));
+  ingest(await callClientList(client?.tool?.ids));
+
+  return collected;
+}
+
+export function buildKiloMcpAliasHint(toolNames: string[]): string | null {
+  const mcpNames = [...new Set(
+    toolNames.filter((name) => isKiloMcpCatalogToolName(name) && !name.startsWith("mcp__")),
+  )].sort();
+
+  if (mcpNames.length === 0) {
     return null;
   }
 
+  const grouped = groupKiloMcpCatalogByServer(mcpNames);
+  const namespaceLines = [...grouped.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([server, names]) => `  - ${server}: ${names.join(", ")}`);
+
   return [
-    "Kilo MCP tools (executed by Kilo). Invoke by the Kilo name exactly — no mcp__ prefix.",
-    "GetDynamicTools lists this same catalog. Native Cursor tools stay in namespace \"cursor\".",
-    ...lines,
+    "Available dynamic tool namespaces (Kilo MCP — not only namespace \"cursor\"):",
+    ...namespaceLines,
+    "GetDynamicTools() with no arguments lists these namespaces. Invoke each tool by its exact Kilo name — no mcp__ prefix.",
+    "CallDynamicTool { namespace: \"<server>\", toolName, arguments } remaps to that Kilo name.",
+    "Namespace \"cursor\" is only CreateGoal, GenerateImage, UpdateGoal.",
   ].join("\n");
 }
 

@@ -142,6 +142,70 @@ describe("mcp/tool-snapshot", () => {
     expect(second.tools.map((t) => t.function.name).some((name) => name.startsWith("mcp__"))).toBe(false);
   });
 
+  it("merges dynamically registered plugin MCP tools from tool.ids into the snapshot", async () => {
+    const client = {
+      mcp: {
+        status: async () => ({ data: {} }),
+        tool: {},
+      },
+      tool: {
+        ids: async () => ({
+          data: ["read", "openviking_health", "browser-harness_browser_list_tabs"],
+        }),
+      },
+    };
+
+    const resolver = createChatParamToolSnapshotResolver(client, {
+      discovery: { enabled: true, maxWaitMs: 200, pollIntervalMs: 25, stablePolls: 1 },
+    });
+
+    const snapshot = await resolver.resolve([
+      { type: "function", function: { name: "read", description: "read", parameters: {} } },
+    ]);
+    const names = snapshot.tools.map((t) => t.function.name);
+
+    expect(names).toContain("read");
+    expect(names).toContain("openviking_health");
+    expect(names).toContain("browser-harness_browser_list_tabs");
+    expect(names).toContain("GetDynamicTools");
+  });
+
+  it("backfills the skill tool when chat.params omits it", async () => {
+    const client = {
+      mcp: {
+        status: async () => ({ data: {} }),
+        tool: {},
+      },
+      tool: {
+        list: async () => ({ data: [] }),
+        ids: async () => ({ data: ["read"] }),
+      },
+    };
+
+    const resolver = createChatParamToolSnapshotResolver(client, {
+      discovery: { enabled: true, maxWaitMs: 200, pollIntervalMs: 25, stablePolls: 1 },
+    });
+
+    const snapshot = await resolver.resolve([
+      { type: "function", function: { name: "read", description: "read", parameters: {} } },
+    ]);
+    const names = snapshot.tools.map((t) => t.function.name);
+
+    expect(names).toContain("read");
+    expect(names).toContain("skill");
+    expect(names).toContain("skill_mcp");
+    expect(snapshot.tools.find((t) => t.function.name === "skill")?.function.parameters).toEqual({
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description: "Skill id from available_skills (e.g. superpowers/brainstorming)",
+        },
+      },
+      required: ["name"],
+    });
+  });
+
   it("fingerprints MCP tool name lists deterministically", () => {
     expect(
       fingerprintMcpToolNames([

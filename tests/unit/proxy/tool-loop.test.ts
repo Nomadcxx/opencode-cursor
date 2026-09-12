@@ -5,6 +5,7 @@ import {
   extractAllowedToolNames,
   extractOpenAiToolCall,
 } from "../../../src/proxy/tool-loop.js";
+import { rememberMcpCatalogFromTools, rememberMcpServers, resetRememberedMcpCatalog } from "../../../src/mcp/dynamic-catalog.js";
 
 // Helper function to create tool call events
 function createToolCallEvent(toolName: string, args: Record<string, unknown>, callId = "call_test_123") {
@@ -534,6 +535,140 @@ describe("extractOpenAiToolCall with pass-through", () => {
     expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ query: "test" });
   });
 
+  it("should remap CallDynamicTool for hyphenated servers missing from the allowlist", () => {
+    const event = createToolCallEvent("CallDynamicTool", {
+      namespace: "browser-harness",
+      toolName: "browser_list_tabs",
+      arguments: { include_chrome: false },
+    });
+
+    const result = extractOpenAiToolCall(event, new Set(["read", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("browser-harness_browser_list_tabs");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ include_chrome: false });
+  });
+
+  it("remaps CallDynamicTool kilo/skill even when skill is missing from the allowlist", () => {
+    const event = createToolCallEvent("CallDynamicTool", {
+      namespace: "kilo",
+      toolName: "skill",
+      arguments: { name: "bmad-spec" },
+    });
+
+    const result = extractOpenAiToolCall(event, new Set(["read", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("skill");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ name: "bmad-spec" });
+  });
+
+  it("intercepts unknown skill tool calls and forwards them to Kilo", () => {
+    const event = {
+      type: "tool_call",
+      call_id: "call_unknown_skill",
+      name: "skill",
+      tool_call: {
+        unknownToolCall: {
+          args: { name: "bmad-spec" },
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["read"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("skill");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ name: "bmad-spec" });
+  });
+
+  it("fills skill.name when the model passes CallDynamicTool-shaped skill args", () => {
+    const event = {
+      type: "tool_call",
+      call_id: "call_skill_shaped",
+      name: "skill",
+      tool_call: {
+        skill: {
+          args: { namespace: "kilo", toolName: "bmad-spec" },
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["read"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("skill");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({
+      namespace: "kilo",
+      toolName: "bmad-spec",
+      name: "bmad-spec",
+    });
+  });
+
+  it("lifts CallDynamicTool top-level name onto skill arguments", () => {
+    const event = createToolCallEvent("CallDynamicTool", {
+      namespace: "kilo",
+      toolName: "skill",
+      name: "bmad-spec",
+    });
+
+    const result = extractOpenAiToolCall(event, new Set(["read", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("skill");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ name: "bmad-spec" });
+  });
+
+  it("should intercept GetDynamicToolsToolCall events as the Kilo catalog", () => {
+    const event = {
+      type: "tool_call",
+      tool_call: {
+        GetDynamicToolsToolCall: { args: { namespace: "openviking" } },
+      },
+      call_id: "call_gdt",
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["openviking_health", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("GetDynamicTools");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ namespace: "openviking" });
+  });
+
+  it("should intercept a remembered MCP tool even if it is missing from this request allowlist", () => {
+    resetRememberedMcpCatalog();
+    rememberMcpCatalogFromTools([
+      { function: { name: "openviking_search", description: "search" } },
+    ]);
+
+    const event = createToolCallEvent("openviking_health", {});
+    const result = extractOpenAiToolCall(event, new Set(["read", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("openviking_health");
+    resetRememberedMcpCatalog();
+  });
+
+  it("should intercept MCP tools for a server listed by mcp.status even without tool defs", () => {
+    resetRememberedMcpCatalog();
+    rememberMcpServers(["openviking", "browser-harness"]);
+
+    const viking = extractOpenAiToolCall(
+      createToolCallEvent("openviking_health", {}),
+      new Set(["read", "GetDynamicTools"]),
+    );
+    const harness = extractOpenAiToolCall(
+      createToolCallEvent("browser-harness_browser_list_tabs", { include_chrome: false }),
+      new Set(["read", "GetDynamicTools"]),
+    );
+
+    expect(viking.action).toBe("intercept");
+    expect(viking.toolCall?.function.name).toBe("openviking_health");
+    expect(harness.action).toBe("intercept");
+    expect(harness.toolCall?.function.name).toBe("browser-harness_browser_list_tabs");
+    resetRememberedMcpCatalog();
+  });
+
   it("should passthrough CallDynamicTool for the cursor namespace", () => {
     const event = createToolCallEvent("CallDynamicTool", {
       namespace: "cursor",
@@ -545,5 +680,129 @@ describe("extractOpenAiToolCall with pass-through", () => {
 
     expect(result.action).toBe("passthrough");
     expect(result.passthroughName).toBe("CallDynamicTool");
+  });
+
+  it("intercepts GetDynamicTools from tool_call.function (Cursor other-tools envelope)", () => {
+    const event = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_gdt_fn",
+      tool_call: {
+        function: {
+          name: "GetDynamicTools",
+          arguments: JSON.stringify({ namespace: "cursor" }),
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["openviking_search", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("GetDynamicTools");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({ namespace: "cursor" });
+  });
+
+  it("remaps CallDynamicTool from tool_call.function to the Kilo MCP name", () => {
+    const event = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_cdt_fn",
+      tool_call: {
+        function: {
+          name: "CallDynamicTool",
+          arguments: JSON.stringify({
+            namespace: "openviking",
+            toolName: "find",
+            arguments: { query: "openviking health", limit: 3 },
+          }),
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(
+      event,
+      new Set(["openviking_find", "GetDynamicTools"]),
+    );
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("openviking_find");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({
+      query: "openviking health",
+      limit: 3,
+    });
+  });
+
+  it("remaps unknownToolCall CallDynamicTool payloads for hyphenated servers", () => {
+    const event = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_unknown_cdt",
+      tool_call: {
+        unknownToolCall: {
+          args: {
+            namespace: "browser-harness",
+            toolName: "browser_list_tabs",
+            arguments: { include_chrome: false },
+          },
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["read", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("browser-harness_browser_list_tabs");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({
+      include_chrome: false,
+    });
+  });
+
+  it("unwraps CallDynamicTool nested inside unknownToolCall.args.name", () => {
+    const event = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_nested_cdt",
+      tool_call: {
+        unknownToolCall: {
+          args: {
+            name: "CallDynamicTool",
+            arguments: {
+              namespace: "openviking",
+              toolName: "list",
+              arguments: { uri: "viking://user/raphael/memories" },
+            },
+          },
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["openviking_list", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("openviking_list");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({
+      uri: "viking://user/raphael/memories",
+    });
+  });
+
+  it("intercepts GetDynamicTools inferred from unknownToolCall catalog args", () => {
+    const event = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_unknown_gdt",
+      tool_call: {
+        unknownToolCall: {
+          args: { namespace: "openviking" },
+        },
+      },
+    } as any;
+
+    const result = extractOpenAiToolCall(event, new Set(["openviking_health", "GetDynamicTools"]));
+
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("GetDynamicTools");
+    expect(JSON.parse(result.toolCall?.function.arguments ?? "{}")).toEqual({
+      namespace: "openviking",
+    });
   });
 });

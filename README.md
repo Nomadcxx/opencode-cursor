@@ -11,7 +11,7 @@ Reference: [Kilo Plugins](https://kilo.ai/docs/automate/extending/plugins)
 - Connects Cursor subscription models to Kilo via `cursor-agent` or `@cursor/sdk` (API key)
 - **OAuth PKCE** via `kilo auth login --provider cursor` (JWT → cursor-agent; `sk-...` API key → SDK)
 - **Maps native tools**: `glob`, `read`, `websearch`, `bash`, and similar Cursor calls → Kilo tools
-- **MCP catalog on Kilo names**: `GetDynamicTools` / `GetMcpTools` list the same names Kilo executes (`openviking_search`, `context7_query_docs`). No `mcp__` prefix in the visible catalog
+- **MCP catalog on Kilo names**: `GetDynamicTools` / `GetMcpTools` list the same names Kilo executes (`openviking_search`, `context7_query-docs`, `browser-harness_browser_list_tabs`). No `mcp__` prefix in the visible catalog
 - **Hybrid tool snapshot**: polls MCP while servers are pending, then fingerprint-caches `chat.params` so late tools appear without a Kilo reload
 - **Session resume** (cursor-agent, on by default): keyed per Kilo session; Cursor chat is reset after Kilo compaction so context-usage % does not stick
 - **OpenAI-compatible usage** on final responses (omitted on intermediate `tool_calls` chunks)
@@ -96,22 +96,23 @@ Default mode: `CURSOR_KILO_TOOL_LOOP_MODE=opencode` — Kilo owns the tool list;
 
 ## MCP bridge
 
-Two complementary paths. Visible names always match Kilo: `<server>_<tool>` (for example `context7_query_docs`, `openviking_search`).
+Two complementary paths. Visible names always match Kilo: `<server>_<tool>`, keeping hyphens (`context7_query-docs`, `openviking_search`, `browser-harness_browser_list_tabs`).
 
 ### 1. Passthrough (always on)
 
-MCP registered **in Kilo** (panel, plugins such as OpenViking, `client.mcp.tool.list()`):
+MCP registered **in Kilo** (panel, plugins such as OpenViking, `client.mcp.tool.list()` / `client.tool.ids()`):
 
 | Kilo (execution + catalog) | Hidden remap (allowlist only) |
 |----------------------------|-------------------------------|
-| `context7_resolve_library_id` | `mcp__context7__resolve_library_id` |
+| `context7_resolve-library-id` | `mcp__context7__resolve_library_id` |
 
 - `chat.params` merges tools through a **hybrid snapshot** (`src/mcp/tool-snapshot.ts`): poll while MCP servers are `connecting`/`pending`, then reuse a fingerprint cache
-- **`GetDynamicTools`** (and Cursor `GetMcpTools`) returns that catalog. Kilo natives (`agent_manager`, `background_process`, …) and OpenViking `viking_*` wrappers stay on the request/prompt, not in this MCP list
-- Hyphen vs underscore aliases collapse to one canonical name (`context7_query_docs`, not both)
-- If `mcp.tool.list()` is still empty, the catalog is filled from tools already on the proxy wire (plugin MCP such as `openviking_*`)
-- `CallDynamicTool` remaps to the Kilo name unless `namespace` is `"cursor"` (`CreateGoal`, `GenerateImage`, `UpdateGoal`)
-- With passthrough active, the plugin writes `.cursor/cli.json` `deny: ["Mcp(*:*)"]` so cursor-agent does not run its own MCP
+- **`GetDynamicTools`** (and Cursor `GetMcpTools`) returns that catalog, including when Composer queries namespace `"cursor"`. Kilo natives (`agent_manager`, `background_process`, …) and OpenViking `viking_*` wrappers stay on the request/prompt, not in this MCP list
+- Hyphen vs underscore aliases collapse to the hyphenated Kilo name (`context7_query-docs`, not both)
+- If `mcp.tool.list()` is still empty, the catalog is filled from `client.tool.ids()` and tools already on the proxy wire (plugin MCP such as `openviking_*`)
+- **`skill` / `skill_mcp`**: backfilled into `chat.params` and intercepted even as `unknownToolCall`. Call with `skill({ name: "<id>" })` — `name` is required. `CallDynamicTool({ namespace: "kilo", toolName: "skill", arguments: { name } })` is a fallback remap. Listed under **Kilo core tools** in `GetDynamicTools`
+- **`CallDynamicTool`** remaps to the Kilo name, including Composer envelopes (`tool_call.function`, `unknownToolCall`). Namespace `"cursor"` (`CreateGoal`, `GenerateImage`, `UpdateGoal`) still runs natively
+- Native cursor-agent MCP is always denied via `.cursor/cli.json` `deny: ["Mcp(*:*)"]` (Write/Shell/Edit/Delete are denied only when direct MCP is off)
 
 ### 2. Direct MCP (default ON)
 

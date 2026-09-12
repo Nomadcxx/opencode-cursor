@@ -192,16 +192,26 @@ export function isKiloPluginEnabledInConfig(config: unknown): boolean {
   return true;
 }
 
-/** Kilo MCP native naming: {server}_{tool} */
+/** Kilo MCP native naming: {server}_{tool} (non-alphanumerics flattened to `_`). */
 export function namespaceMcpToolKilo(serverName: string, toolName: string): string {
   return `${serverName.replace(/[^a-zA-Z0-9]/g, "_")}_${toolName.replace(/[^a-zA-Z0-9]/g, "_")}`;
+}
+
+/**
+ * Kilo-visible MCP name: keep hyphens that Kilo registers
+ * (`browser-harness_browser_list_tabs`, `context7_query-docs`).
+ */
+export function namespaceMcpToolKiloNative(serverName: string, toolName: string): string {
+  const server = serverName.replace(/[^a-zA-Z0-9-]/g, "_");
+  const tool = toolName.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  return `${server}_${tool}`;
 }
 
 /** Built-in + MCP tool names that should be intercepted and routed to Kilo */
 const INTERCEPTABLE = new Set([
   "read", "write", "edit", "apply_patch", "grep", "glob", "bash", "ls",
   "mkdir", "rm", "stat", "webfetch", "websearch", "question", "task",
-  "todowrite", "todoread", "plan", "skill",
+  "todowrite", "todoread", "plan", "skill", "skill_mcp",
   "list_mcp_resources", "read_mcp_resource", "list_mcp_resource_templates",
 ]);
 
@@ -209,8 +219,8 @@ export function isInterceptableToolName(name: string | undefined): boolean {
   if (!name) return false;
   if (name.startsWith("oc_") || name.startsWith("mcp__")) return true;
   if (INTERCEPTABLE.has(name.toLowerCase())) return true;
-  // Kilo MCP: server_tool (single underscore, not mcp__ prefix)
-  if (/^[a-zA-Z0-9]+_[a-zA-Z0-9_]+$/.test(name) && !name.startsWith("oc_")) return true;
+  // Kilo MCP: {server}_{tool} — server may contain hyphens (browser-harness_*)
+  if (/^[a-zA-Z0-9][a-zA-Z0-9-]*_[a-zA-Z0-9_.-]+$/.test(name) && !name.startsWith("oc_")) return true;
   return false;
 }
 

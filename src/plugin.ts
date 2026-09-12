@@ -75,7 +75,7 @@ import {
   registerKiloSessionKey,
   trackKiloSession,
 } from "./proxy/kilo-session-registry.js";
-import { buildProxyAllowedToolNames } from "./mcp/kilo-bridge.js";
+import { buildProxyAllowedToolNames, KILO_SKILL_CALL_DYNAMIC_FALLBACK } from "./mcp/kilo-bridge.js";
 import {
   type OpenAiToolCall,
 } from "./proxy/tool-loop.js";
@@ -100,8 +100,8 @@ import {
   createChatParamToolSnapshotResolver,
   resetPromptToolSchemaCacheOnFingerprintChange,
 } from "./mcp/tool-snapshot.js";
-import { isDirectMcpEnabled, removePassthroughBridgeCliConfig, syncKiloPassthroughBridgeCliConfig } from "./kilo/cursor-cli-bridge.js";
-import { namespaceMcpToolKilo } from "./kilo/platform.js";
+import { isDirectMcpEnabled, ensureNativeMcpDenied, syncKiloPassthroughBridgeCliConfig } from "./kilo/cursor-cli-bridge.js";
+import { namespaceMcpToolKiloNative } from "./kilo/platform.js";
 import {
   buildMcpToolHookEntries,
   buildMcpToolDefinitions,
@@ -155,13 +155,22 @@ function getMcpToolDefinitionName(mcpToolDefs: any[], index: number): string | u
   return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
+/** Injected into experimental.chat.system.transform for every cursor-provider session. */
+export const KILO_AGENT_SKILL_SYSTEM_INSTRUCTION =
+  "Agent Skills: load SKILL.md with skill({ name: \"<id-from-available_skills>\" }). "
+  + "The name argument is required (example: skill({ name: \"bmad-spec\" })). "
+  + "Do not call skill() with empty arguments. "
+  + "If skill is not in the native tool list, use "
+  + KILO_SKILL_CALL_DYNAMIC_FALLBACK
+  + ". Prefer either over Read on SKILL.md paths.";
+
 export function buildAvailableToolsSystemMessage(
   lastToolNames: string[],
   lastToolMap: Array<{ id: string; name: string }>,
   mcpToolDefs: any[],
   mcpToolSummaries?: McpToolSummary[],
   kiloSubagents: KiloSubagentSummary[] = [],
-): string | null {
+): string {
   const parts: string[] = [];
 
   const kiloSubagentMessage = buildKiloSubagentSystemMessage(kiloSubagents);
@@ -185,7 +194,7 @@ export function buildAvailableToolsSystemMessage(
       ...summary,
       callName: summary.callName
         ?? getMcpToolDefinitionName(mcpToolDefs, index)
-        ?? namespaceMcpToolKilo(summary.serverName, summary.toolName),
+        ?? namespaceMcpToolKiloNative(summary.serverName, summary.toolName),
     }));
 
     const servers = new Map<string, Array<McpToolSummary & { callName: string }>>();
@@ -196,8 +205,8 @@ export function buildAvailableToolsSystemMessage(
     }
 
     const lines: string[] = [
-      "MCP TOOLS — Call these tools by their Kilo name (e.g. openviking_search, context7_query-docs).",
-      "GetDynamicTools lists this same catalog. Do not use mcp__ prefixes.",
+      "MCP TOOLS — Call these tools by their Kilo name (e.g. openviking_search, context7_query-docs, browser-harness_browser_list_tabs).",
+      "GetDynamicTools() with no arguments lists Kilo MCP namespaces — not only namespace \"cursor\". Do not use mcp__ prefixes.",
       "",
     ];
 
@@ -214,7 +223,9 @@ export function buildAvailableToolsSystemMessage(
     parts.push(lines.join("\n"));
   }
 
-  return parts.length > 0 ? parts.join("\n\n") : null;
+  parts.push(KILO_AGENT_SKILL_SYSTEM_INSTRUCTION);
+
+  return parts.join("\n\n");
 }
 
 function applyProxyBridgeJsonPrompt(
@@ -3243,7 +3254,9 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
   if (!directMcpEnabled) {
     syncKiloPassthroughBridgeCliConfig(workspaceDirectory);
   } else {
-    removePassthroughBridgeCliConfig(workspaceDirectory);
+    // Keep native cursor-agent MCP denied so GetDynamicTools/CallDynamicTool
+    // cannot hit Cursor's empty catalog ("MCP server does not exist").
+    ensureNativeMcpDenied(workspaceDirectory);
   }
 
   if (directMcpEnabled) {
@@ -3265,12 +3278,13 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           mcpToolSummaries = tools.map((t) => ({
             serverName: t.serverName,
             toolName: t.name,
-            callName: namespaceMcpToolKilo(t.serverName, t.name),
+            callName: namespaceMcpToolKiloNative(t.serverName, t.name),
             description: t.description,
             params: t.inputSchema
               ? Object.keys((t.inputSchema as any).properties ?? {})
               : undefined,
           }));
+          rememberMcpCatalogFromTools(mcpToolDefs);
           log.info("MCP bridge: registered tools", {
             servers: mcpManager.connectedServers.length,
             tools: Object.keys(mcpToolEntries).length,
@@ -3553,7 +3567,6 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
       const systemMessage = buildAvailableToolsSystemMessage(
         lastToolNames, lastToolMap, mcpToolDefs, mcpToolSummaries, lastKiloSubagents,
       );
-      if (!systemMessage) return;
       output.system = output.system || [];
       output.system.push(systemMessage);
     },

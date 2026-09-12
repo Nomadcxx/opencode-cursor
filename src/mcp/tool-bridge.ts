@@ -1,7 +1,7 @@
 import { tool } from "@kilocode/plugin/tool";
 import { createLogger } from "../utils/logger.js";
 import type { McpClientManager } from "./client-manager.js";
-import { namespaceMcpToolKilo } from "../kilo/platform.js";
+import { namespaceMcpToolKilo, namespaceMcpToolKiloNative } from "../kilo/platform.js";
 
 const log = createLogger("mcp:tool-bridge");
 
@@ -45,12 +45,13 @@ export function buildMcpToolHookEntries(
 
   for (const t of tools) {
     const cursorName = namespaceMcpTool(t.serverName, t.name);
-    const kiloName = namespaceMcpToolKilo(t.serverName, t.name);
+    const kiloSanitized = namespaceMcpToolKilo(t.serverName, t.name);
+    const kiloNative = namespaceMcpToolKiloNative(t.serverName, t.name);
     const zodArgs = mcpSchemaToZod(t.inputSchema, z);
     const execute = makeMcpExecutor(manager, t.serverName, t.name);
     const description = t.description || `MCP tool: ${t.name} (server: ${t.serverName})`;
 
-    for (const hookName of [cursorName, kiloName]) {
+    for (const hookName of [cursorName, kiloSanitized, kiloNative]) {
       if (entries[hookName]) continue;
       entries[hookName] = tool({ description, args: zodArgs, execute });
     }
@@ -72,7 +73,7 @@ export function buildMcpToolDefinitions(tools: DiscoveredMcpTool[]): any[] {
     const description = t.description || `MCP tool: ${t.name} (server: ${t.serverName})`;
     const parameters = t.inputSchema ?? { type: "object", properties: {} };
 
-    const name = namespaceMcpToolKilo(t.serverName, t.name);
+    const name = namespaceMcpToolKiloNative(t.serverName, t.name);
     if (seen.has(name)) continue;
     seen.add(name);
     defs.push({

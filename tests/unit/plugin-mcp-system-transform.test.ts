@@ -96,8 +96,22 @@ describe("Plugin MCP system transform", () => {
     expect(systemMessage).toContain("list_directory");
   });
 
-  it("returns null when no tools at all", () => {
+  it("includes skill invocation guidance when the tool list is empty", () => {
     const result = buildAvailableToolsSystemMessage([], [], []);
-    expect(result).toBeNull();
+    expect(result).toContain('skill({ name: "<id-from-available_skills>" })');
+    expect(result).toContain("name argument is required");
+    expect(result).toContain("available_skills");
+  });
+
+  it("always includes the agent skill invocation instruction", () => {
+    const systemMessage = buildAvailableToolsSystemMessage(
+      ["read", "skill"],
+      [],
+      [],
+    );
+
+    expect(systemMessage).toContain('skill({ name: "<id-from-available_skills>" })');
+    expect(systemMessage).toContain("name argument is required");
+    expect(systemMessage).toContain("available_skills");
   });
 });

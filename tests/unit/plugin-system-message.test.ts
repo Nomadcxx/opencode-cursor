@@ -21,8 +21,10 @@ describe("buildAvailableToolsSystemMessage", () => {
     expect(msg).toContain('{ custom: "name" }');
   });
 
-  it("returns null when no tools or subagents are available", () => {
+  it("includes skill invocation guidance even when no tools are listed yet", () => {
     const msg = buildAvailableToolsSystemMessage([], [], [], []);
-    expect(msg).toBeNull();
+    expect(msg).toContain('skill({ name: "<id-from-available_skills>" })');
+    expect(msg).toContain("name argument is required");
+    expect(msg).toContain("available_skills");
   });
 });

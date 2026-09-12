@@ -42,8 +42,10 @@ describe("mcp/tool-bridge", () => {
     expect(Object.keys(entries)).toEqual([
       "mcp__my_server__search",
       "my_server_search",
+      "my-server_search",
       "mcp__my_server__store",
       "my_server_store",
+      "my-server_store",
     ]);
   });
 
@@ -60,11 +62,12 @@ describe("mcp/tool-bridge", () => {
     expect(Object.keys(entries)).toEqual([
       "mcp__hybrid_memory__memory_search",
       "hybrid_memory_memory_search",
+      "hybrid-memory_memory-search",
     ]);
 
     const defs = buildMcpToolDefinitions(tools as any);
     const names = defs.map((d) => d?.function?.name);
-    expect(names).toEqual(["hybrid_memory_memory_search"]);
+    expect(names).toEqual(["hybrid-memory_memory-search"]);
   });
 
   it("handles tools with no inputSchema", () => {
@@ -84,10 +87,12 @@ describe("mcp/tool-bridge", () => {
     ];
 
     const entries = buildMcpToolHookEntries(tools as any, { callTool: async () => "" } as any);
-    expect(Object.keys(entries)).toHaveLength(4);
+    expect(Object.keys(entries)).toHaveLength(6);
     expect(Object.keys(entries)).toContain("mcp__server_a__search");
     expect(Object.keys(entries)).toContain("server_a_search");
+    expect(Object.keys(entries)).toContain("server-a_search");
     expect(Object.keys(entries)).toContain("mcp__server_b__search");
     expect(Object.keys(entries)).toContain("server_b_search");
+    expect(Object.keys(entries)).toContain("server-b_search");
   });
 });
