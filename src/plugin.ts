@@ -41,6 +41,7 @@ import {
 } from "./kilo/credential.js";
 import { syncOAuthToCursorCliConfig } from "./kilo/cursor-cli-config.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
+import { rewriteMessagesWithAttachments } from "./proxy/attachments.js";
 import {
   applyBridgeJsonPrompt,
   BridgeJsonStreamDetector,
@@ -475,15 +476,16 @@ export function resolvePromptForBackend(input: {
   /** Skip cached --resume after Kilo compaction reset for this turn. */
   forceFreshCursorSession?: boolean;
 }): ResolvedPrompt {
+  const messages = rewriteMessagesWithAttachments(input.messages, input.workspaceDirectory);
   let fullPrompt: string | undefined;
   const getFullPrompt = () =>
-    fullPrompt ??= buildPromptFromMessages(input.messages, input.tools);
+    fullPrompt ??= buildPromptFromMessages(messages, input.tools);
 
   if (input.backend !== "cursor-agent" || !isSessionResumeEnabled()) {
     return { prompt: getFullPrompt(), usedIncremental: false };
   }
 
-  const anchorResult = deriveConversationAnchor(input.messages);
+  const anchorResult = deriveConversationAnchor(messages);
   if (!anchorResult) {
     log.warn("Session resume enabled but no usable conversation anchor; skipping resume", {
       model: input.model,
@@ -492,7 +494,7 @@ export function resolvePromptForBackend(input: {
     return { prompt: getFullPrompt(), usedIncremental: false };
   }
   const { anchor, contentPrefix: anchorContentPrefix } = anchorResult;
-  const resumePrefixes = deriveConversationResumePrefixes(input.messages);
+  const resumePrefixes = deriveConversationResumePrefixes(messages);
   const contentPrefix = resumePrefixes?.lookupContentPrefix ?? anchorContentPrefix;
   const recordContentPrefix = resumePrefixes?.recordContentPrefix ?? contentPrefix;
   const sessionKey = buildSessionKey(
@@ -512,7 +514,7 @@ export function resolvePromptForBackend(input: {
   const resumeChatId = getResumeChatId(sessionKey, contentPrefix, toolFingerprint);
   const resumeChatIdHash = resumeChatId ? sanitizeSessionKey(resumeChatId) : undefined;
   if (!resumeChatId) {
-    const isContinuation = input.messages.some((m: any) => m?.role === "assistant");
+    const isContinuation = messages.some((m: any) => m?.role === "assistant");
     if (isContinuation) {
       log.warn("Session resume enabled but no chatId found for sessionKey; falling back to full prompt", {
         sessionKeyHash,
@@ -521,7 +523,7 @@ export function resolvePromptForBackend(input: {
     return { prompt: getFullPrompt(), sessionKey, usedIncremental: false, contentPrefix, recordContentPrefix, toolFingerprint };
   }
 
-  const incremental = buildIncrementalPrompt(input.messages);
+  const incremental = buildIncrementalPrompt(messages);
   if (incremental) {
     // Guard the debug log behind isDebugEnabled() so getFullPrompt() is not
     // eagerly evaluated on the incremental hot path. JS evaluates call

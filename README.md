@@ -135,6 +135,7 @@ Disable with `CURSOR_KILO_DIRECT_MCP=false` (legacy alias: `CURSOR_KILO_MCP_BRID
 
 - **Resume** (`CURSOR_KILO_SESSION_RESUME`, default on, cursor-agent only): maps a Kilo tab to a Cursor `--resume` chat ID. Isolated per Kilo session ID so two chats in the same workspace do not share Cursor state
 - After **Kilo compaction**, the cached Cursor chat is dropped so the next turn starts a fresh context window (usage % does not carry over)
+- **Pasted images/PDFs** from the Kilo UI are written under `.kilo/cursor-attachments/` and injected as `read` paths (cursor-agent only accepts text stdin)
 - **Usage** is emitted in OpenAI-compatible form on the final assistant response; intermediate `tool_calls` chunks omit usage so Kilo does not double-count tokens
 
 ## Environment variables
