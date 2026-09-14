@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, afterAll, mock } from "bun
 import { existsSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { pollForAuthFile, verifyCursorAuth, getAuthFilePath, getPossibleAuthPaths } from "../../src/auth";
+import {
+  cursorAgentStatusLooksLoggedIn,
+  fileHasCursorCredentials,
+  pollForAuthFile,
+  verifyCursorAuth,
+  getAuthFilePath,
+  getPossibleAuthPaths,
+} from "../../src/auth";
 
 const TEST_TIMEOUT = 10000;
 const ORIGINAL_CURSOR_KILO_HOME_DIR = process.env.CURSOR_KILO_HOME_DIR;
@@ -94,6 +101,14 @@ describe("Auth Module", () => {
       expect(hasAuthJson).toBe(true);
       expect(hasCliConfig).toBe(true);
     });
+
+    it("lists auth.json before cli-config.json in the same directory", () => {
+      const paths = getPossibleAuthPaths();
+      const authIndex = paths.findIndex((path) => path.endsWith("auth.json"));
+      const cliIndex = paths.findIndex((path) => path.endsWith("cli-config.json"));
+      expect(authIndex).toBeGreaterThanOrEqual(0);
+      expect(cliIndex).toBeGreaterThan(authIndex);
+    });
   });
 
   describe("verifyCursorAuth", () => {
@@ -124,13 +139,13 @@ describe("Auth Module", () => {
       if (!existsSync(paths.testAuthDir)) {
         mkdirSync(paths.testAuthDir, { recursive: true });
       }
-      writeFileSync(paths.testConfigAuthFile, JSON.stringify({ token: "test" }));
+      writeFileSync(paths.testConfigAuthFile, JSON.stringify({ accessToken: "test" }));
       
       const result = verifyCursorAuth();
       expect(result).toBe(true);
     });
 
-    it("should return true when cli-config.json exists", () => {
+    it("should return true when legacy cli-config.json contains tokens", () => {
       const paths = authPaths();
       if (!existsSync(paths.testCliConfigDir)) {
         mkdirSync(paths.testCliConfigDir, { recursive: true });
@@ -140,6 +155,16 @@ describe("Auth Module", () => {
       const result = verifyCursorAuth();
       expect(result).toBe(true);
     });
+
+    it("should ignore settings-only cli-config.json without tokens", () => {
+      const paths = authPaths();
+      if (!existsSync(paths.testCliConfigDir)) {
+        mkdirSync(paths.testCliConfigDir, { recursive: true });
+      }
+      writeFileSync(paths.testCursorCliConfigFile, JSON.stringify({ version: 1, editor: { vimMode: false } }));
+      expect(fileHasCursorCredentials(paths.testCursorCliConfigFile)).toBe(false);
+      expect(verifyCursorAuth()).toBe(false);
+    });
   });
 
   describe("pollForAuthFile", () => {
@@ -148,7 +173,7 @@ describe("Auth Module", () => {
       if (!existsSync(paths.testAuthDir)) {
         mkdirSync(paths.testAuthDir, { recursive: true });
       }
-      writeFileSync(paths.testConfigAuthFile, JSON.stringify({ token: "test" }));
+      writeFileSync(paths.testConfigAuthFile, JSON.stringify({ accessToken: "test" }));
 
       const result = await pollForAuthFile(1000, 100);
       expect(result).toBe(true);
@@ -167,7 +192,7 @@ describe("Auth Module", () => {
         if (!existsSync(paths.testAuthDir)) {
           mkdirSync(paths.testAuthDir, { recursive: true });
         }
-        writeFileSync(paths.testConfigAuthFile, JSON.stringify({ token: "test" }));
+        writeFileSync(paths.testConfigAuthFile, JSON.stringify({ accessToken: "test" }));
       }, 300);
 
       const result = await pollPromise;
@@ -204,5 +229,16 @@ describe("Auth Module", () => {
       expect(checkCount).toBeGreaterThanOrEqual(4);
       expect(checkCount).toBeLessThanOrEqual(7);
     }, TEST_TIMEOUT);
+  });
+
+  describe("cursorAgentStatusLooksLoggedIn", () => {
+    it("accepts the CLI success line", () => {
+      expect(cursorAgentStatusLooksLoggedIn("✓ Logged in as user@example.com")).toBe(true);
+    });
+
+    it("rejects unauthenticated status even when exit code would be 0", () => {
+      expect(cursorAgentStatusLooksLoggedIn("Not logged in")).toBe(false);
+      expect(cursorAgentStatusLooksLoggedIn("Partially authenticated (missing refresh token)")).toBe(false);
+    });
   });
 });

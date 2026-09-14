@@ -9,7 +9,7 @@ Reference: [Kilo Plugins](https://kilo.ai/docs/automate/extending/plugins)
 ## What it does
 
 - Connects Cursor subscription models to Kilo via `cursor-agent` or `@cursor/sdk` (API key)
-- **OAuth PKCE** via `kilo auth login --provider cursor` (JWT → cursor-agent; `sk-...` API key → SDK)
+- **OAuth PKCE** via `kilo auth login --provider cursor` (JWT → cursor-agent `auth.json` / `CURSOR_AUTH_TOKEN`; `sk-...` API key → SDK)
 - **Maps native tools**: `glob`, `read`, `websearch`, `bash`, and similar Cursor calls → Kilo tools
 - **MCP catalog on Kilo names**: `GetDynamicTools` / `GetMcpTools` list the same names Kilo executes (`openviking_search`, `context7_query-docs`, `browser-harness_browser_list_tabs`). No `mcp__` prefix in the visible catalog
 - **Hybrid tool snapshot**: polls MCP while servers are pending, then fingerprint-caches `chat.params` so late tools appear without a Kilo reload
@@ -27,8 +27,12 @@ Reference: [Kilo Plugins](https://kilo.ai/docs/automate/extending/plugins)
 ```bash
 curl -fsS https://cursor.com/install | bash
 kilo auth login --provider cursor
-# or: cursor-agent login  /  CURSOR_API_KEY=sk-...
+# or official CLI login (the binary help text says `agent login`):
+cursor-agent login
+# CURSOR_API_KEY=sk-... also works
 ```
+
+`cursor-agent agent login` is **not** the login command: it starts agent mode with the prompt `login`. The CLI binary is internally named `agent`, so `cursor-agent login` and `agent login` are the same.
 
 ## Install
 

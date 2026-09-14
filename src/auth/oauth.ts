@@ -2,8 +2,10 @@
  * Cursor OAuth (PKCE browser login) — adapted from cursor-kilocode-provider.
  * Works alongside cursor-agent auth; tokens can feed the SDK backend path.
  */
+import { execFileSync } from "node:child_process";
 import { createLogger } from "../utils/logger.js";
-import { verifyCursorAuth } from "../auth.js";
+import { cursorAgentStatusLooksLoggedIn, verifyCursorAuth } from "../auth.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
 
 const log = createLogger("auth:oauth");
 
@@ -169,6 +171,19 @@ export async function refreshAccessToken(
   return { accessToken: body.accessToken, refreshToken: body.refreshToken };
 }
 
+function cursorAgentCliIsLoggedIn(): boolean {
+  try {
+    const output = execFileSync(resolveCursorAgentBinary(), ["status"], {
+      encoding: "utf8",
+      timeout: 4000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return cursorAgentStatusLooksLoggedIn(output);
+  } catch {
+    return false;
+  }
+}
+
 /** Build Kilo auth hook methods for Cursor OAuth + API key */
 export function buildCursorAuthMethods(providerId: string) {
   const websiteUrl = process.env.CURSOR_WEBSITE_URL ?? `https://${CURSOR_WEBSITE_HOST}`;
@@ -245,7 +260,7 @@ export function buildCursorAuthMethods(providerId: string) {
       type: "api" as const,
       label: "cursor-agent CLI (run: cursor-agent login)",
       async authorize() {
-        if (verifyCursorAuth()) {
+        if (verifyCursorAuth() || cursorAgentCliIsLoggedIn()) {
           return { type: "success" as const, provider: providerId, key: "cursor-agent" };
         }
         return {

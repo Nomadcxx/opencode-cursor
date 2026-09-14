@@ -96,6 +96,7 @@ async function handleRequest(request) {
     const child = spawn(cmd, args, {
       stdio: ["pipe", "pipe", "pipe"],
       shell,
+      env: process.env,
     });
     currentRequest = id;
     currentChild = child;

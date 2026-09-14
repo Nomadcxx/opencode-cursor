@@ -155,6 +155,7 @@ class CursorAgentPoolRunner {
 
     this.runnerProcess = spawn(nodeBin, [runnerPath], {
       stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
     });
 
     this.runnerProcess.stdout?.on("data", (chunk) => {

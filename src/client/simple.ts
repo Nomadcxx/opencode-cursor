@@ -81,6 +81,7 @@ export class SimpleCursorClient {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: process.platform === 'win32',
+      env: process.env,
     });
 
     if (prompt) {
@@ -193,6 +194,7 @@ export class SimpleCursorClient {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         shell: process.platform === 'win32',
+        env: process.env,
       });
 
       let stdoutBuffer = '';

@@ -1,6 +1,7 @@
 import { execFileSync } from "child_process";
 import { stripAnsi } from "../utils/errors.js";
 import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { envWithCursorAgentAuth, type CursorCredential } from "../kilo/credential.js";
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
 
@@ -37,13 +38,13 @@ export function discoverModelsFromCursorAgent(options?: {
   accessToken?: string;
   apiKey?: string;
 }): DiscoveredModel[] {
-  const env: NodeJS.ProcessEnv = { ...process.env };
+  let credential: CursorCredential | undefined;
   if (options?.accessToken) {
-    env.CURSOR_AUTH_TOKEN = options.accessToken;
+    credential = { kind: "oauth-jwt", accessToken: options.accessToken };
+  } else if (options?.apiKey) {
+    credential = { kind: "sdk-api-key", token: options.apiKey };
   }
-  if (options?.apiKey) {
-    env.CURSOR_API_KEY = options.apiKey;
-  }
+  const env = envWithCursorAgentAuth(process.env, credential);
 
   const raw = execFileSync(resolveCursorAgentBinary(), ["models"], {
     encoding: "utf8",

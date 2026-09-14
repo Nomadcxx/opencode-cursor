@@ -8,7 +8,6 @@ import {
   sdkApiKeyFromCredential,
   type CursorCredential,
 } from "../kilo/credential.js";
-import { syncOAuthToCursorCliConfig } from "../kilo/cursor-cli-config.js";
 import { fetchAvailableModelsFlat, fetchContextLimitIndex } from "./cursor-api-discovery.js";
 import { enrichModelsWithContextLimits } from "./context-limits.js";
 
@@ -24,10 +23,6 @@ async function tryCursorAgent(
 ): Promise<DiscoveredModel[] | undefined> {
   const accessToken = credential?.kind === "oauth-jwt" ? credential.accessToken : undefined;
   const apiKey = credential?.kind === "sdk-api-key" ? credential.token : undefined;
-
-  if (accessToken) {
-    await syncOAuthToCursorCliConfig(accessToken, credential?.kind === "oauth-jwt" ? credential.refreshToken : undefined);
-  }
 
   try {
     const models = discoverModelsFromCursorAgent({ accessToken, apiKey });

@@ -71,9 +71,9 @@ export function selectBackendForRequest(
     return "cursor-agent";
   }
 
-  // Auto: Kilo OAuth/API credentials live in the auth store and feed the SDK
-  // runner. cursor-agent uses its own cli-config.json login, so prefer SDK when
-  // we already have a real token from `kilo auth login cursor`.
+  // Auto: Kilo OAuth/API credentials live in the auth store. cursor-agent is
+  // fed that token via CURSOR_AUTH_TOKEN; prefer SDK when we already have a
+  // real API key from `kilo auth login --provider cursor`.
   if (shouldPreferSdkInAuto(input.preference, input.sdkApiKey)) {
     return "sdk";
   }

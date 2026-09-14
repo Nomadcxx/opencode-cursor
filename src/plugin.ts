@@ -33,13 +33,14 @@ import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure
 import { buildCursorAuthMethods, isExpiringSoon, refreshAccessToken } from "./auth/oauth.js";
 import { readStoredAuth } from "./kilo/auth-store.js";
 import {
+  applyCursorAgentAuthToProcessEnv,
   classifyStoredAuth,
   describeCredentialRequirement,
+  envWithCursorAgentAuth,
   oauthRequiresCursorAgent,
   sdkApiKeyFromCredential,
   type CursorCredential,
 } from "./kilo/credential.js";
-import { syncOAuthToCursorCliConfig } from "./kilo/cursor-cli-config.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
 import { rewriteMessagesWithAttachments } from "./proxy/attachments.js";
 import {
@@ -304,14 +305,15 @@ async function applyAuthRecord(auth: Auth | undefined): Promise<void> {
         // Keep existing access token if refresh fails.
       }
     }
-    await syncOAuthToCursorCliConfig(access, auth.refresh);
-    log.debug("Stored OAuth access token from auth store");
+    applyCursorAgentAuthToProcessEnv(process.env, storedCredential);
+    log.debug("Using Kilo OAuth via CURSOR_AUTH_TOKEN (not ~/.config/cursor/auth.json)");
     return;
   }
 
   if (auth.type === "api" && auth.key) {
     storedCredential = classifyStoredAuth(auth);
     storedApiKey = sdkApiKeyFromCredential(storedCredential);
+    applyCursorAgentAuthToProcessEnv(process.env, storedCredential);
     log.debug("Stored API credential from auth store", { kind: storedCredential?.kind });
   }
 }
@@ -383,7 +385,7 @@ function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeB
     return "cursor-agent";
   }
 
-  // Auto: OAuth JWT → cursor-agent (after cli-config sync). Raw API keys → SDK.
+  // Auto: OAuth JWT → cursor-agent (CURSOR_AUTH_TOKEN from Kilo auth.json). Raw API keys → SDK.
   if (oauthRequiresCursorAgent(storedCredential)) {
     return "cursor-agent";
   }
@@ -744,7 +746,7 @@ function createCursorAgentBunChild(
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: bunAny.Bun.env,
+    env: envWithCursorAgentAuth(bunAny.Bun.env ?? process.env, storedCredential),
   });
 
   child.stdin.write(prompt);
@@ -790,6 +792,7 @@ function createCursorAgentNodeChild(
   const child = spawn(formatShellCommandForPlatform(cmd[0]), cmd.slice(1), {
     stdio: ["pipe", "pipe", "pipe"],
     shell: process.platform === "win32",
+    env: envWithCursorAgentAuth(process.env, storedCredential),
   });
 
   child.stdin.write(prompt);

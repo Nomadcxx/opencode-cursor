@@ -20,7 +20,7 @@ import {
   fallbackModels,
 } from "./model-discovery.js";
 import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "../utils/binary.js";
-import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
+import { cursorAgentStatusLooksLoggedIn, fileHasCursorCredentials, getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
 import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent-child.js";
 import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
@@ -135,12 +135,15 @@ export function checkCursorAgentLogin(): CheckResult {
   try {
     // cursor-agent stores credentials in ~/.cursor-agent or similar
     // Try running a command that requires auth
-    execFileSync(formatShellCommandForPlatform(resolveCursorAgentBinary()), ["models"], {
+    const output = execFileSync(formatShellCommandForPlatform(resolveCursorAgentBinary()), ["status"], {
       encoding: "utf8",
       shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 3000,
+      timeout: 4000,
     });
+    if (!cursorAgentStatusLooksLoggedIn(output)) {
+      throw new Error("not logged in");
+    }
     return { name: "cursor-agent login", passed: true, message: "logged in" };
   } catch {
     return {
@@ -1105,7 +1108,7 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
   const aiSdkInstalled = existsSync(sdkPath);
   const sdkApiKeySource = resolveCliSdkAuthSource(config);
-  const legacyCursorAuthFile = getPossibleAuthPaths().some((authPath) => existsSync(authPath));
+  const legacyCursorAuthFile = getPossibleAuthPaths().some((authPath) => fileHasCursorCredentials(authPath));
 
   let installMethod: "symlink" | "npm-direct" | "none" = "none";
   if (pluginType !== "missing") {

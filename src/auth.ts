@@ -1,6 +1,6 @@
 // src/auth.ts
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir, platform } from "os";
 import { join } from "path";
 import { createLogger } from "./utils/logger";
@@ -47,7 +47,7 @@ export async function pollForAuthFile(
       const elapsed = Date.now() - startTime;
       
       for (const authPath of possiblePaths) {
-        if (existsSync(authPath)) {
+        if (fileHasCursorCredentials(authPath)) {
           log.debug("Auth file detected", { path: authPath });
           resolve(true);
           return;
@@ -83,14 +83,43 @@ export function verifyCursorAuth(): boolean {
 
   const possiblePaths = getPossibleAuthPaths();
   for (const authPath of possiblePaths) {
-    if (existsSync(authPath)) {
+    if (fileHasCursorCredentials(authPath)) {
       log.debug("Auth file found", { path: authPath });
       return true;
     }
   }
 
-  log.debug("No auth found (no CURSOR_API_KEY, no auth file)", { checkedPaths: possiblePaths });
+  log.debug("No auth found (no CURSOR_API_KEY, no credential file)", { checkedPaths: possiblePaths });
   return false;
+}
+
+/** Parse `cursor-agent status` / `whoami` text. Exit code 0 does not mean logged in. */
+export function cursorAgentStatusLooksLoggedIn(output: string): boolean {
+  const text = output.replace(/\u001b\[[0-9;]*m/g, "");
+  if (/not logged in/i.test(text) || /partially authenticated/i.test(text)) {
+    return false;
+  }
+  return /logged in/i.test(text) || /login successful/i.test(text);
+}
+
+/** True when a cursor-agent credential file contains usable tokens. */
+export function fileHasCursorCredentials(authPath: string): boolean {
+  if (!existsSync(authPath)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(authPath, "utf8")) as unknown;
+    if (!parsed || typeof parsed !== "object") {
+      return false;
+    }
+    const record = parsed as Record<string, unknown>;
+    return [record.accessToken, record.refreshToken, record.apiKey].some(
+      (value) => typeof value === "string" && value.trim().length > 0,
+    );
+  } catch {
+    return false;
+  }
 }
 
 export function isUsableSdkApiKey(value: string | undefined | null): value is string {
@@ -123,42 +152,43 @@ export function resolveSdkApiKey(input: ResolveSdkApiKeyInput): string | undefin
 }
 
 /**
- * Returns all possible auth file paths in priority order.
- * Checks both auth.json (legacy) and cli-config.json (current cursor-agent format).
- * - macOS: ~/.cursor/ (primary), ~/.config/cursor/ (fallback)
- * - Linux: ~/.config/cursor/ (XDG), XDG_CONFIG_HOME/cursor/, ~/.cursor/
+ * Returns credential file paths in priority order.
+ * cursor-agent 2026.09+ stores tokens in auth.json (or the OS keychain on macOS).
+ * cli-config.json is CLI settings; older builds sometimes put tokens there too.
+ * - macOS: ~/.cursor/auth.json (primary)
+ * - Linux: ~/.config/cursor/auth.json (XDG)
+ * - Windows: %APPDATA%/Cursor/auth.json
  */
 export function getPossibleAuthPaths(): string[] {
   const home = getHomeDir();
   const paths: string[] = [];
-  const isDarwin = platform() === "darwin";
+  const os = platform();
 
-  const authFiles = ["cli-config.json", "auth.json"];
+  const addDir = (dir: string) => {
+    paths.push(join(dir, "auth.json"));
+    paths.push(join(dir, "cli-config.json"));
+  };
 
-  if (isDarwin) {
-    for (const file of authFiles) {
-      paths.push(join(home, ".cursor", file));
-    }
-    for (const file of authFiles) {
-      paths.push(join(home, ".config", "cursor", file));
-    }
-  } else {
-    for (const file of authFiles) {
-      paths.push(join(home, ".config", "cursor", file));
-    }
-
-    const xdgConfig = process.env.XDG_CONFIG_HOME;
-    if (xdgConfig && xdgConfig !== join(home, ".config")) {
-      for (const file of authFiles) {
-        paths.push(join(xdgConfig, "cursor", file));
-      }
-    }
-
-    for (const file of authFiles) {
-      paths.push(join(home, ".cursor", file));
-    }
+  if (os === "win32") {
+    const appData = process.env.APPDATA || join(home, "AppData", "Roaming");
+    addDir(join(appData, "Cursor"));
+    addDir(join(home, ".cursor"));
+    addDir(join(home, ".config", "cursor"));
+    return paths;
   }
 
+  if (os === "darwin") {
+    addDir(join(home, ".cursor"));
+    addDir(join(home, ".config", "cursor"));
+    return paths;
+  }
+
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join(home, ".config");
+  addDir(join(xdgConfig, "cursor"));
+  if (xdgConfig !== join(home, ".config")) {
+    addDir(join(home, ".config", "cursor"));
+  }
+  addDir(join(home, ".cursor"));
   return paths;
 }
 
@@ -166,10 +196,11 @@ export function getAuthFilePath(): string {
   const possiblePaths = getPossibleAuthPaths();
   
   for (const authPath of possiblePaths) {
-    if (existsSync(authPath)) {
+    if (fileHasCursorCredentials(authPath)) {
       return authPath;
     }
   }
-  
-  return possiblePaths[0];
+
+  const authJson = possiblePaths.find((path) => path.endsWith("auth.json"));
+  return authJson ?? possiblePaths[0];
 }

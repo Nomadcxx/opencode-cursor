@@ -92,7 +92,7 @@ export function parseAgentError(
       message: clean,
       userMessage: "Not authenticated with Cursor",
       details: {},
-      suggestion: "Run: opencode auth login → Other → cursor-kilo, or: cursor-agent login",
+      suggestion: "Run: kilo auth login --provider cursor, or: cursor-agent login",
     };
   }
 
