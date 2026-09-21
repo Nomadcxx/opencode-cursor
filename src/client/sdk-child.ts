@@ -37,6 +37,15 @@ const textEncoder = new TextEncoder();
 const EVENT_KEY = '"event":';
 
 /**
+ * A single model parameter forwarded to the Cursor SDK through the runner.
+ * Structural match for @cursor/sdk `ModelParameterValue` ({ id, value }).
+ */
+export interface SdkModelParam {
+  id: string;
+  value: string;
+}
+
+/**
  * Extract the inner event JSON from a wrapper line like {"id":"...","event":{...}}
  * without re-serializing the parsed object. Falls back to the full line if
  * the format is unexpected.
@@ -214,12 +223,23 @@ class SdkRunnerSingleton {
   /**
    * Send a request to the runner.
    */
-  sendRequest(requestId: string, model: string, cwd: string, prompt: string): void {
+  sendRequest(
+    requestId: string,
+    model: string,
+    cwd: string,
+    prompt: string,
+    params?: SdkModelParam[],
+  ): void {
     if (!this.runnerProcess || !this.runnerProcess.stdin) {
       throw new Error("Runner process not ready");
     }
 
-    const request = { id: requestId, model, cwd, prompt };
+    // Only include `params` when non-empty to stay backward compatible with
+    // older runners that don't know about the field.
+    const request: Record<string, unknown> = { id: requestId, model, cwd, prompt };
+    if (params && params.length > 0) {
+      request.params = params;
+    }
     this.runnerProcess.stdin.write(JSON.stringify(request) + "\n");
   }
 
@@ -332,6 +352,7 @@ export function createSdkBunChild(options: {
   model: string;
   prompt: string;
   cwd: string;
+  params?: SdkModelParam[];
 }): SdkBunChild {
   log.info("creating sdk bun child", {
     model: options.model,
@@ -358,7 +379,7 @@ export function createSdkBunChild(options: {
         log.info(`request ${requestId} registered (bun)`);
 
         // Send the request to the runner
-        singleton.sendRequest(requestId, options.model, options.cwd, options.prompt);
+        singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.params);
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         log.error("Failed to start request (bun)", { error: error.message });
@@ -404,10 +425,11 @@ export class SdkNodeChild extends EventEmitter {
 
   private requestId: string | null = null;
 
-  async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string }) {
+  async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string; params?: SdkModelParam[] }) {
     try {
       log.info("spawning (via singleton) sdk node child", {
         model: options.model,
+        params: options.params,
         cwd: options.cwd,
       });
 
@@ -451,7 +473,7 @@ export class SdkNodeChild extends EventEmitter {
       log.info(`request ${requestId} registered (node)`);
 
       // Send the request to the runner
-      singleton.sendRequest(requestId, options.model, options.cwd, options.prompt);
+      singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.params);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       log.error("Failed to spawn sdk node child", { error: error.message });
@@ -472,6 +494,7 @@ export function createSdkNodeChild(options: {
   model: string;
   prompt: string;
   cwd: string;
+  params?: SdkModelParam[];
 }): SdkNodeChild {
   const child = new SdkNodeChild();
   child.spawn(options).catch((err) => {

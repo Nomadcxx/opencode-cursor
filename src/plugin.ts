@@ -79,7 +79,9 @@ import type { IToolExecutor } from "./tools/core/types.js";
 import {
   createProviderBoundary,
   parseProviderBoundaryMode,
+  resolveRuntimeParams,
   type ProviderBoundary,
+  type RuntimeModelParameter,
   type ToolLoopMode,
   type ToolOptionResolution,
 } from "./provider/boundary.js";
@@ -559,6 +561,7 @@ function createBunChildForBackend(input: {
   prompt: string;
   workspaceDirectory: string;
   resumeChatId?: string;
+  params?: RuntimeModelParameter[];
 }): any {
   if (input.backend === "sdk") {
     if (!input.sdkApiKey) {
@@ -569,6 +572,7 @@ function createBunChildForBackend(input: {
       model: input.model,
       prompt: input.prompt,
       cwd: input.workspaceDirectory,
+      params: input.params,
     });
   }
 
@@ -604,6 +608,7 @@ function createNodeChildForBackend(input: {
   prompt: string;
   workspaceDirectory: string;
   resumeChatId?: string;
+  params?: RuntimeModelParameter[];
 }): any {
   if (input.backend === "sdk") {
     if (!input.sdkApiKey) {
@@ -614,6 +619,7 @@ function createNodeChildForBackend(input: {
       model: input.model,
       prompt: input.prompt,
       cwd: input.workspaceDirectory,
+      params: input.params,
     });
   }
 
@@ -1292,6 +1298,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
         boundary.resolveRuntimeModel(body?.model, body?.cursorModel),
       );
+      const params = resolveRuntimeParams(body?.cursorParams);
       const authHeader = req.headers.get("authorization");
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
       const backend = resolveBackendForRequest(sdkApiKey);
@@ -1346,6 +1353,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         prompt,
         workspaceDirectory,
         resumeChatId,
+        params,
       });
       reqPerf.mark("child-created");
 
@@ -1934,6 +1942,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const model = boundaryContext.run("resolveRuntimeModel", (boundary) =>
         boundary.resolveRuntimeModel(bodyData?.model, bodyData?.cursorModel),
       );
+      const params = resolveRuntimeParams(bodyData?.cursorParams);
       const authHeaderNode = req.headers["authorization"] as string | undefined;
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const backend = resolveBackendForRequest(sdkApiKeyNode);
@@ -1989,6 +1998,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         prompt,
         workspaceDirectory,
         resumeChatId,
+        params,
       });
       reqPerf.mark("child-created");
 

@@ -218,13 +218,31 @@ async function handleListModels(id) {
   }
 }
 
+// ─── Model selection ────────────────────────────────────────────────────────
+
+/**
+ * Build the SDK `model` selection object from a model id and optional params.
+ * Returns `{ id }` when params is absent/empty (default behavior), otherwise
+ * `{ id, params }` forwarding the parameter list to the Cursor SDK.
+ * Exported for unit testing.
+ */
+export function buildModelSelection(model, params) {
+  const modelParams = Array.isArray(params) && params.length > 0
+    ? params.filter((p) => p && typeof p.id === "string" && typeof p.value === "string")
+    : undefined;
+  if (modelParams && modelParams.length > 0) {
+    return { id: model, params: modelParams };
+  }
+  return { id: model };
+}
+
 // ─── Request Handler ────────────────────────────────────────────────────────
 
 /**
  * Handle a single request: execute the prompt and emit wrapped events.
  */
 async function handleRequest(apiKey, request) {
-  const { id, model, cwd, prompt } = request;
+  const { id, model, cwd, prompt, params } = request;
 
   // Validate required fields
   if (!id || !model || !cwd || !prompt) {
@@ -234,7 +252,9 @@ async function handleRequest(apiKey, request) {
     return;
   }
 
-  console.error(`[sdk-runner] Request ${id}: model=${model}, cwd=${cwd}`);
+  console.error(
+    `[sdk-runner] Request ${id}: model=${model}, params=${Array.isArray(params) && params.length > 0 ? JSON.stringify(params) : "none"}, cwd=${cwd}`,
+  );
 
   // NOTE: a fresh Agent is created per request (NOT cached/reused).
   // The proxy sends the full conversation history in every prompt, so reusing
@@ -247,9 +267,10 @@ async function handleRequest(apiKey, request) {
   try {
     // Timing: Agent.create
     const createStart = Date.now();
+    const modelSelection = buildModelSelection(model, params);
     agent = await Agent.create({
       apiKey,
-      model: { id: model },
+      model: modelSelection,
       mode: "agent",
       local: { cwd, settingSources: SETTING_SOURCES },
     });
