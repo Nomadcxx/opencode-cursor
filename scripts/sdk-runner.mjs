@@ -239,10 +239,23 @@ export function buildModelSelection(model, params) {
 // ─── Request Handler ────────────────────────────────────────────────────────
 
 /**
+ * Build the message passed to Agent.send().
+ * With images, returns an SDKUserMessage-shaped object `{ text, images }`.
+ * Without images, returns the plain string — identical behavior to before,
+ * so no-image requests are byte-for-byte unchanged.
+ */
+export function buildUserMessage(prompt, images) {
+  if (Array.isArray(images) && images.length > 0) {
+    return { text: prompt, images };
+  }
+  return prompt;
+}
+
+/**
  * Handle a single request: execute the prompt and emit wrapped events.
  */
 async function handleRequest(apiKey, request) {
-  const { id, model, cwd, prompt, params } = request;
+  const { id, model, cwd, prompt, params, images } = request;
 
   // Validate required fields
   if (!id || !model || !cwd || !prompt) {
@@ -253,7 +266,7 @@ async function handleRequest(apiKey, request) {
   }
 
   console.error(
-    `[sdk-runner] Request ${id}: model=${model}, params=${Array.isArray(params) && params.length > 0 ? JSON.stringify(params) : "none"}, cwd=${cwd}`,
+    `[sdk-runner] Request ${id}: model=${model}, params=${Array.isArray(params) && params.length > 0 ? JSON.stringify(params) : "none"}, images=${Array.isArray(images) && images.length > 0 ? images.length : 0}, cwd=${cwd}`,
   );
 
   // NOTE: a fresh Agent is created per request (NOT cached/reused).
@@ -279,7 +292,8 @@ async function handleRequest(apiKey, request) {
 
     // Timing: agent.send() until first event
     const sendStart = Date.now();
-    const run = await agent.send(prompt);
+    const message = buildUserMessage(prompt, images);
+    const run = await agent.send(message);
 
     let sawFinished = false;
     let eventCount = 0;
