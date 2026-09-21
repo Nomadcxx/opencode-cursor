@@ -30,6 +30,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createLogger } from "../utils/logger.js";
 import { randomBytes } from "node:crypto";
+import type { SdkImageLike } from "../proxy/image-extract.js";
 
 const log = createLogger("sdk-child");
 const textEncoder = new TextEncoder();
@@ -214,12 +215,23 @@ class SdkRunnerSingleton {
   /**
    * Send a request to the runner.
    */
-  sendRequest(requestId: string, model: string, cwd: string, prompt: string): void {
+  sendRequest(
+    requestId: string,
+    model: string,
+    cwd: string,
+    prompt: string,
+    images?: SdkImageLike[],
+  ): void {
     if (!this.runnerProcess || !this.runnerProcess.stdin) {
       throw new Error("Runner process not ready");
     }
 
-    const request = { id: requestId, model, cwd, prompt };
+    const request: Record<string, unknown> = { id: requestId, model, cwd, prompt };
+    // Include images only when present so the request shape stays identical to
+    // today (backward compatible with older runners that ignore the field).
+    if (images && images.length > 0) {
+      request.images = images;
+    }
     this.runnerProcess.stdin.write(JSON.stringify(request) + "\n");
   }
 
@@ -332,10 +344,12 @@ export function createSdkBunChild(options: {
   model: string;
   prompt: string;
   cwd: string;
+  images?: SdkImageLike[];
 }): SdkBunChild {
   log.info("creating sdk bun child", {
     model: options.model,
     cwd: options.cwd,
+    imageCount: options.images?.length ?? 0,
   });
 
   let requestId: string;
@@ -358,7 +372,7 @@ export function createSdkBunChild(options: {
         log.info(`request ${requestId} registered (bun)`);
 
         // Send the request to the runner
-        singleton.sendRequest(requestId, options.model, options.cwd, options.prompt);
+        singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.images);
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         log.error("Failed to start request (bun)", { error: error.message });
@@ -404,11 +418,12 @@ export class SdkNodeChild extends EventEmitter {
 
   private requestId: string | null = null;
 
-  async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string }) {
+  async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string; images?: SdkImageLike[] }) {
     try {
       log.info("spawning (via singleton) sdk node child", {
         model: options.model,
         cwd: options.cwd,
+        imageCount: options.images?.length ?? 0,
       });
 
       // Ensure runner is alive with this apiKey
@@ -451,7 +466,7 @@ export class SdkNodeChild extends EventEmitter {
       log.info(`request ${requestId} registered (node)`);
 
       // Send the request to the runner
-      singleton.sendRequest(requestId, options.model, options.cwd, options.prompt);
+      singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.images);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       log.error("Failed to spawn sdk node child", { error: error.message });
@@ -472,6 +487,7 @@ export function createSdkNodeChild(options: {
   model: string;
   prompt: string;
   cwd: string;
+  images?: SdkImageLike[];
 }): SdkNodeChild {
   const child = new SdkNodeChild();
   child.spawn(options).catch((err) => {

@@ -1,5 +1,22 @@
 import { describe, expect, it } from "bun:test";
-import { sdkMessageToStreamJson } from "../../scripts/sdk-runner.mjs";
+import { buildUserMessage, sdkMessageToStreamJson } from "../../scripts/sdk-runner.mjs";
+
+describe("sdk-runner buildUserMessage", () => {
+  it("returns the plain string when no images are present (identical to today)", () => {
+    expect(buildUserMessage("hello", undefined)).toBe("hello");
+    expect(buildUserMessage("hello", [])).toBe("hello");
+  });
+
+  it("returns a { text, images } object when images are present", () => {
+    const message = buildUserMessage("describe this", [
+      { data: "AAAB", mimeType: "image/png" },
+    ]);
+    expect(message).toEqual({
+      text: "describe this",
+      images: [{ data: "AAAB", mimeType: "image/png" }],
+    });
+  });
+});
 
 describe("sdk-runner MCP remapping", () => {
   it("sanitizes generic SDK mcp tool calls with the same namespace convention as OpenCode MCP tools", () => {
