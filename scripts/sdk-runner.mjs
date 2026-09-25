@@ -221,10 +221,23 @@ async function handleListModels(id) {
 // ─── Request Handler ────────────────────────────────────────────────────────
 
 /**
+ * Build the message passed to Agent.send().
+ * With images, returns an SDKUserMessage-shaped object `{ text, images }`.
+ * Without images, returns the plain string — identical behavior to before,
+ * so no-image requests are byte-for-byte unchanged.
+ */
+export function buildUserMessage(prompt, images) {
+  if (Array.isArray(images) && images.length > 0) {
+    return { text: prompt, images };
+  }
+  return prompt;
+}
+
+/**
  * Handle a single request: execute the prompt and emit wrapped events.
  */
 async function handleRequest(apiKey, request) {
-  const { id, model, cwd, prompt } = request;
+  const { id, model, cwd, prompt, images } = request;
 
   // Validate required fields
   if (!id || !model || !cwd || !prompt) {
@@ -234,7 +247,9 @@ async function handleRequest(apiKey, request) {
     return;
   }
 
-  console.error(`[sdk-runner] Request ${id}: model=${model}, cwd=${cwd}`);
+  console.error(
+    `[sdk-runner] Request ${id}: model=${model}, images=${Array.isArray(images) && images.length > 0 ? images.length : 0}, cwd=${cwd}`,
+  );
 
   // NOTE: a fresh Agent is created per request (NOT cached/reused).
   // The proxy sends the full conversation history in every prompt, so reusing
@@ -258,7 +273,8 @@ async function handleRequest(apiKey, request) {
 
     // Timing: agent.send() until first event
     const sendStart = Date.now();
-    const run = await agent.send(prompt);
+    const message = buildUserMessage(prompt, images);
+    const run = await agent.send(message);
 
     let sawFinished = false;
     let eventCount = 0;
