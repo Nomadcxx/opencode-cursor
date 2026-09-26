@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   createProviderBoundary,
   parseProviderBoundaryMode,
+  resolveRuntimeParams,
   type ToolLoopMode,
 } from "../../src/provider/boundary";
 
@@ -129,5 +130,85 @@ describe("provider boundary", () => {
     const stream = boundary.createStreamToolCallChunks(meta, result.toolCall!);
     expect(stream).toHaveLength(2);
     expect(stream[1].choices[0].finish_reason).toBe("tool_calls");
+  });
+});
+
+describe("resolveRuntimeParams", () => {
+  it("parses comma/space separated k=v strings", () => {
+    expect(resolveRuntimeParams("effort=high")).toEqual([{ id: "effort", value: "high" }]);
+    expect(resolveRuntimeParams("effort=high,fast=true")).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ]);
+    expect(resolveRuntimeParams("effort=low fast=false")).toEqual([
+      { id: "effort", value: "low" },
+      { id: "fast", value: "false" },
+    ]);
+  });
+
+  it("parses a JSON string array", () => {
+    expect(resolveRuntimeParams('[{"id":"effort","value":"high"}]')).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+    expect(resolveRuntimeParams('[{"id":"effort","value":"max"},{"id":"fast","value":"true"}]')).toEqual([
+      { id: "effort", value: "max" },
+      { id: "fast", value: "true" },
+    ]);
+  });
+
+  it("parses an array of {id, value} objects", () => {
+    expect(
+      resolveRuntimeParams([{ id: "effort", value: "high" }, { id: "fast", value: "true" }]),
+    ).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ]);
+  });
+
+  it("parses a plain object", () => {
+    expect(resolveRuntimeParams({ effort: "high", fast: "true" })).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ]);
+  });
+
+  it("trims values and drops empty entries", () => {
+    expect(resolveRuntimeParams(" effort=high, fast=true ")).toEqual([
+      { id: "effort", value: "high" },
+      { id: "fast", value: "true" },
+    ]);
+    expect(resolveRuntimeParams([{ id: " ", value: "x" }, { id: "effort", value: "  " }])).toBeUndefined();
+    expect(resolveRuntimeParams("effort=")).toBeUndefined();
+  });
+
+  it("dedupes by id (last wins)", () => {
+    expect(resolveRuntimeParams("effort=low,effort=high")).toEqual([
+      { id: "effort", value: "high" },
+    ]);
+    expect(
+      resolveRuntimeParams([
+        { id: "effort", value: "low" },
+        { id: "effort", value: "max" },
+      ]),
+    ).toEqual([{ id: "effort", value: "max" }]);
+  });
+
+  it("returns undefined for invalid/empty input and never throws", () => {
+    expect(resolveRuntimeParams(undefined)).toBeUndefined();
+    expect(resolveRuntimeParams(null)).toBeUndefined();
+    expect(resolveRuntimeParams("")).toBeUndefined();
+    expect(resolveRuntimeParams("   ")).toBeUndefined();
+    expect(resolveRuntimeParams(123)).toBeUndefined();
+    expect(resolveRuntimeParams(true)).toBeUndefined();
+    expect(resolveRuntimeParams([])).toBeUndefined();
+    expect(resolveRuntimeParams({})).toBeUndefined();
+    expect(resolveRuntimeParams("not valid")).toBeUndefined();
+    expect(resolveRuntimeParams("=value")).toBeUndefined();
+    expect(resolveRuntimeParams("[not json]")).toBeUndefined();
+    // Non-string values in a plain object are ignored
+    expect(resolveRuntimeParams({ effort: 5 })).toBeUndefined();
+    expect(resolveRuntimeParams({ effort: "high", fast: 1 })).toEqual([
+      { id: "effort", value: "high" },
+    ]);
   });
 });

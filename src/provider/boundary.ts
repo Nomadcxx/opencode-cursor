@@ -10,6 +10,118 @@ export type ToolLoopMode = "opencode" | "proxy-exec" | "off";
 
 export type ProviderBoundaryMode = "legacy" | "v1";
 
+/**
+ * A single model parameter forwarded to the Cursor SDK.
+ * Shape matches @cursor/sdk `ModelParameterValue` ({ id, value }).
+ */
+export interface RuntimeModelParameter {
+  id: string;
+  value: string;
+}
+
+/**
+ * Normalize a `cursorParams` request field into a stable array of
+ * `{ id, value }` pairs accepted by the Cursor SDK `model.params`.
+ *
+ * Accepted forms (all liberal, invalid/empty → undefined):
+ *  - "effort=high" or "effort=high,fast=true" (comma/space separated k=v)
+ *  - JSON string: '[{"id":"effort","value":"high"}]'
+ *  - array of { id, value } objects
+ *  - plain object: { "effort": "high" }
+ *
+ * Only string values are accepted; values are trimmed; empty entries are
+ * dropped; duplicate ids are deduped (last wins). Never throws.
+ */
+export function resolveRuntimeParams(
+  raw: unknown,
+): RuntimeModelParameter[] | undefined {
+  if (raw === undefined || raw === null) {
+    return undefined;
+  }
+
+  let pairs: Array<[string, string]> = [];
+
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+
+    // Try JSON first: '[{"id":"effort","value":"high"}]'
+    if (trimmed.startsWith("[")) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        parsed = undefined;
+      }
+      if (Array.isArray(parsed)) {
+        pairs = parsed
+          .map((entry) => extractSinglePair(entry))
+          .filter((pair): pair is [string, string] => pair !== undefined);
+      } else {
+        return undefined;
+      }
+    } else {
+      // k=v list separated by commas and/or whitespace
+      const tokens = trimmed.split(/[\s,]+/).filter((t) => t.length > 0);
+      pairs = tokens
+        .map((token) => {
+          const eq = token.indexOf("=");
+          if (eq <= 0) {
+            return undefined;
+          }
+          const id = token.slice(0, eq).trim();
+          const value = token.slice(eq + 1).trim();
+          if (id.length === 0 || value.length === 0) {
+            return undefined;
+          }
+          return [id, value] as [string, string];
+        })
+        .filter((pair): pair is [string, string] => pair !== undefined);
+    }
+  } else if (Array.isArray(raw)) {
+    pairs = raw
+      .map((entry) => extractSinglePair(entry))
+      .filter((pair): pair is [string, string] => pair !== undefined);
+  } else if (typeof raw === "object") {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof value === "string" && value.trim().length > 0) {
+        pairs.push([key, value.trim()]);
+      }
+    }
+  }
+
+  if (pairs.length === 0) {
+    return undefined;
+  }
+
+  // Dedupe by id (last wins).
+  const byId = new Map<string, string>();
+  for (const [id, value] of pairs) {
+    byId.set(id, value);
+  }
+
+  const params: RuntimeModelParameter[] = [];
+  for (const [id, value] of byId) {
+    params.push({ id, value });
+  }
+  return params;
+}
+
+function extractSinglePair(entry: unknown): [string, string] | undefined {
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const obj = entry as Record<string, unknown>;
+  const id = typeof obj.id === "string" ? obj.id.trim() : "";
+  const value = typeof obj.value === "string" ? obj.value.trim() : "";
+  if (id.length === 0 || value.length === 0) {
+    return undefined;
+  }
+  return [id, value];
+}
+
 export type ToolOptionResolution = {
   tools: unknown;
   action: "preserve" | "fallback" | "override" | "none";

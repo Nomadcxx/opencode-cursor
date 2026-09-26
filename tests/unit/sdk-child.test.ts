@@ -31,13 +31,15 @@ function handle(line) {
     return;
   }
 
+  const hasParams = Object.prototype.hasOwnProperty.call(request, "params");
+  const echo = hasParams ? "params=" + JSON.stringify(request.params) : "params=ABSENT";
   emit({
     id: request.id,
     event: {
       type: "assistant",
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "fake sdk response" }],
+        content: [{ type: "text", text: echo }],
       },
     },
   });
@@ -95,21 +97,37 @@ describe("sdk-child runner path resolution", () => {
 
     process.env.CURSOR_ACP_SDK_RUNNER_PATH = runnerPath;
 
-    try {
+    async function runChild(params?: Array<{ id: string; value: string }>) {
       const child = createSdkNodeChild({
         apiKey: "cursor_123",
         model: "auto",
         prompt: "hello",
         cwd: dir,
+        params,
       });
-
       const [stdout, exitCode] = await Promise.all([
         streamToString(child.stdout),
         waitForClose(child),
       ]);
+      return { stdout, exitCode };
+    }
 
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain("fake sdk response");
+    try {
+      // No params: the NDJSON request must omit the field entirely (ABSENT).
+      const noParams = await runChild();
+      expect(noParams.exitCode).toBe(0);
+      expect(noParams.stdout).toContain("params=ABSENT");
+
+      // With params: the NDJSON request carries them to the runner. The echo
+      // text is JSON-encoded inside the event, so quotes appear escaped.
+      const withParams = await runChild([
+        { id: "effort", value: "max" },
+        { id: "fast", value: "true" },
+      ]);
+      expect(withParams.exitCode).toBe(0);
+      expect(withParams.stdout).toContain(
+        "params=[{\\\"id\\\":\\\"effort\\\",\\\"value\\\":\\\"max\\\"},{\\\"id\\\":\\\"fast\\\",\\\"value\\\":\\\"true\\\"}]",
+      );
 
       const models = await listModelsViaRunner("cursor_123");
       expect(models).toEqual([{ id: "fake-model", name: "Fake Model" }]);
