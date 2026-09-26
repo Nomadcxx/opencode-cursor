@@ -1,9 +1,13 @@
 /**
- * OpenCode plugin entrypoint (dual V1/V2).
+ * OpenCode plugin entrypoint (OpenCode 1.x + next-era dual export).
  *
  * OpenCode 1.x loads plugins as an async factory function (or an object with a
- * `server` field); OpenCode 2.x expects an object with `id` + `setup`. Exporting
- * both keeps a single package working across both major versions.
+ * `server` field). The `setup` field targets the next-era OpenCode 2 preview
+ * (`ctx.catalog`) via `plugin-v2.ts`.
+ *
+ * Stable OpenCode 2.0 removed `ctx.catalog`. Load the dedicated entry instead:
+ *   `@rama_nigg/open-cursor/plugin/opencode2`
+ * Do not rely on this dual export for stable 2.0.
  *
  * When cursor-acp is removed from the `plugin` array in opencode.json,
  * this entrypoint turns into a no-op so users can disable the plugin

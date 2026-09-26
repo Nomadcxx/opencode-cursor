@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenCode 2.0 stable support:** dedicated `@rama_nigg/open-cursor/plugin/opencode2` entry uses `ctx.provider.transform` + in-memory model inventory (no `opencode.json` dump, no removed `ctx.catalog`). Same local proxy + `@cursor/sdk` backend as OpenCode 1.x. See `docs/opencode-2.md`.
+  - Registers no plugin tools: OpenCode 2.0's permission-checked builtins (`read`, `shell`, `glob`, `grep`, `edit`, `write`, …) are never replaced; Cursor tool calls are forwarded to them (`bash` aliases map to `shell`).
+  - MCP servers come from OpenCode 2.0 itself; tools of servers that do not set `"codemode": true` join the direct catalog so Cursor can call them by name (`mcp__<server>__<tool>` maps to `<server>_<tool>`). The plugin's own MCP bridge is not used on 2.0.
+  - Each Cursor request carries its session's workspace directory (`x-opencode-directory`), so a multi-project daemon runs Cursor in the right project.
+  - Models are rediscovered with the connected Cursor key and again after `/connect` or a credential switch.
+
 ### BREAKING
 
 - **Authentication:** API key authentication now supports three methods with priority: (1) `CURSOR_API_KEY` environment variable, (2) OpenCode auth store (`opencode auth login --provider cursor-acp`), (3) provider options in `opencode.json`. Get your API key from [cursor.com/settings](https://cursor.com/settings). Legacy OAuth flow via `cursor-agent login` is no longer supported.
