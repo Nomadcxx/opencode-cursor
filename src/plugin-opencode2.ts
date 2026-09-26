@@ -8,56 +8,33 @@
  * `@cursor/sdk` backend (OpenCode talks openai-compatible HTTP; it does not
  * own a Connect-RPC LanguageModel factory).
  *
+ * Tools: this entry registers no plugin tools. OpenCode 2.0 ships its own
+ * permission-checked `read` / `shell` / `glob` / `grep` / `edit` / `write` /
+ * `subagent` builtins and connects MCP servers itself; `editor.add` would
+ * replace a host tool of the same name for every provider in the location.
+ * The proxy's default tool loop forwards Cursor tool calls that match the
+ * advertised host catalog and leaves the rest to Cursor.
+ *
  * Load only as: `{ "plugin": ["@rama_nigg/open-cursor/plugin/opencode2"] }`
  * Do not also load the classic root entry under OpenCode 2.0.
  */
+import { resolveSdkApiKey } from "./auth.js";
 import { shouldEnableCursorPlugin } from "./plugin-toggle.js";
 import { createLogger } from "./utils/logger.js";
 import {
   CURSOR_PROVIDER_ID,
-  buildAvailableToolsSystemMessage,
-  buildToolHookEntries,
+  OPENCODE_DIRECTORY_HEADER,
   ensureCursorProxyServer,
-  ensurePluginDirectory,
   setStoredApiKey,
-  buildLocalFallbackTools,
-  TOOL_LOOP_MODE,
 } from "./plugin.js";
-import { readMcpConfigs } from "./mcp/config.js";
-import { McpClientManager } from "./mcp/client-manager.js";
-import {
-  buildMcpToolHookEntries,
-  buildMcpToolDefinitions,
-  namespaceMcpTool,
-} from "./mcp/tool-bridge.js";
 import { discoverModelsForRefresh, type DiscoveredModel } from "./models/sync.js";
 import { ModelDiscoveryService } from "./models/discovery.js";
-import { ToolRegistry as CoreRegistry } from "./tools/core/registry.js";
-import { registerDefaultTools } from "./tools/defaults.js";
-import { ToolRouter } from "./tools/router.js";
-import { SkillLoader } from "./tools/skills/loader.js";
-import { SkillResolver } from "./tools/skills/resolver.js";
-import { LocalExecutor } from "./tools/executors/local.js";
-import { executeWithChain } from "./tools/core/executor.js";
 import { applyCursorProviderInventory, CURSOR_INTEGRATION_ID } from "./opencode2/catalog.js";
 import { applyCursorIntegration, resolveCursorApiKey } from "./opencode2/integration.js";
-import type {
-  Cleanup,
-  ConnectionInfo,
-  Plugin2,
-  PluginContext,
-  SessionHttpRequest,
-  ToolDefinition,
-} from "./opencode2/types.js";
+import { exposeDirectMcpTools, rememberDirectMcpNamespaces } from "./opencode2/mcp-direct.js";
+import type { Cleanup, ConnectionInfo, Plugin2, PluginContext } from "./opencode2/types.js";
 
 const log = createLogger("plugin-opencode2");
-
-const TOOL_OUTPUT_SCHEMA = {
-  type: "object",
-  properties: {
-    content: { type: "string" },
-  },
-} as const;
 
 /** Static picker seed when live discovery has not completed yet. */
 const FALLBACK_MODELS: DiscoveredModel[] = [
@@ -66,49 +43,21 @@ const FALLBACK_MODELS: DiscoveredModel[] = [
   { id: "composer-1.5", name: "Composer 1.5" },
 ];
 
-function routeRequestToProxy(request: Request, baseURL: string): Request {
-  const target = new URL(request.url);
-  const proxy = new URL(baseURL);
-  target.protocol = proxy.protocol;
-  target.host = proxy.host;
-  return new Request(target, request);
-}
+/**
+ * OpenCode's `<mcp_instructions>` tell the model to reach a server through
+ * Code Mode `execute` whenever the server config leaves `codemode` unset.
+ * That sentence reads server config, not the tool option this plugin clears.
+ */
+const DIRECT_MCP_GUIDANCE =
+  "MCP tools that appear in your tool list are called directly by their listed name. " +
+  "Use `execute` only for tools that are not in that list.";
 
-/** Convert a V1-style tool entry into an OpenCode 2.0 direct-catalog tool. */
-function toolFromV1(
-  name: string,
-  entry: any,
-  jsonSchema?: Record<string, unknown>,
-): ToolDefinition {
-  const description = typeof entry?.description === "string" ? entry.description : name;
-  const input =
-    jsonSchema && typeof jsonSchema === "object"
-      ? jsonSchema
-      : { type: "object", properties: {} };
-  const v1Execute =
-    typeof entry?.execute === "function" ? entry.execute : async () => ({ content: "" });
+async function discoverModels(apiKey: string | undefined): Promise<DiscoveredModel[]> {
+  const resolveApiKey = () =>
+    resolveSdkApiKey({ env: process.env, storedApiKey: apiKey });
 
-  return {
-    name,
-    description,
-    input,
-    output: TOOL_OUTPUT_SCHEMA,
-    // Direct catalog so OpenCode / Cursor can call the tool by name.
-    // Code Mode (`codemode: true`) hides tools behind `execute`.
-    options: { codemode: false },
-    async execute(args: any, executeCtx: any) {
-      const result = await v1Execute(args, executeCtx);
-      if (typeof result === "string") {
-        return { content: result };
-      }
-      return result ?? { content: "" };
-    },
-  };
-}
-
-async function discoverModels(): Promise<DiscoveredModel[]> {
   try {
-    const discovered = await discoverModelsForRefresh();
+    const discovered = await discoverModelsForRefresh({ resolveApiKey });
     if (discovered.length > 0) return discovered;
   } catch (err) {
     log.debug("Model discovery via refresh path failed", { error: String(err) });
@@ -116,7 +65,7 @@ async function discoverModels(): Promise<DiscoveredModel[]> {
 
   try {
     const service = new ModelDiscoveryService({ cacheTTL: 0 });
-    const models = await service.discover();
+    const models = await service.discover(resolveApiKey());
     if (models.length > 0) {
       return models.map((model) => ({ id: model.id, name: model.name }));
     }
@@ -125,6 +74,65 @@ async function discoverModels(): Promise<DiscoveredModel[]> {
   }
 
   return FALLBACK_MODELS;
+}
+
+function eventPayload(event: any): any {
+  if (event?.data && typeof event.data === "object") return event.data;
+  if (event?.properties && typeof event.properties === "object") return event.properties;
+  return event;
+}
+
+/** True for credential events that may change the active Cursor key. */
+export function isCursorCredentialEvent(event: any): boolean {
+  if (event?.type !== "credential.switched" && event?.type !== "credential.updated") return false;
+  // `credential.updated` carries no integration id; treat it as a possible change.
+  const integrationID = eventPayload(event)?.integrationID;
+  return !integrationID || integrationID === CURSOR_INTEGRATION_ID;
+}
+
+/** Workspace directory of the session, falling back to the plugin location. */
+async function sessionDirectory(
+  ctx: PluginContext,
+  sessionID: string,
+  fallback: string,
+): Promise<string> {
+  if (typeof ctx.session.get !== "function") return fallback;
+  try {
+    const info = await ctx.session.get({ sessionID });
+    // OpenCode 2.0 `Session.Info` nests it under `location.directory`; accept a
+    // flat `directory` too so a client-shaped response also resolves.
+    return info?.directory || info?.location?.directory || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function subscribeCredentialEvents(
+  ctx: PluginContext,
+  onCredentialChange: () => void,
+): () => void {
+  let stopped = false;
+  let iterator: AsyncIterator<unknown> | undefined;
+  try {
+    const stream = ctx.event?.subscribe() as AsyncIterable<unknown> | undefined;
+    if (!stream || typeof stream[Symbol.asyncIterator] !== "function") return () => {};
+    iterator = stream[Symbol.asyncIterator]();
+    void (async () => {
+      while (!stopped) {
+        const next = await iterator!.next();
+        if (next.done || stopped) break;
+        if (isCursorCredentialEvent(next.value)) onCredentialChange();
+      }
+    })().catch((err) => {
+      log.debug("Event subscription ended", { error: String(err) });
+    });
+  } catch (err) {
+    log.debug("Event subscription unavailable", { error: String(err) });
+  }
+  return () => {
+    stopped = true;
+    void iterator?.return?.()?.catch?.(() => {});
+  };
 }
 
 const plugin: Plugin2 = {
@@ -145,10 +153,11 @@ const plugin: Plugin2 = {
       registrations.push(await p);
     };
 
+    // The plugin host is location-scoped, but one daemon process serves every
+    // location through a single shared proxy. The per-request directory header
+    // below is authoritative; this is the fallback.
     const workspaceDirectory = ctx.location?.directory || process.cwd();
     log.debug("OpenCode 2.0 plugin initializing", { workspaceDirectory });
-
-    await ensurePluginDirectory();
 
     // ── Credentials ─────────────────────────────────────────
     await track(ctx.integration.transform(applyCursorIntegration));
@@ -162,70 +171,8 @@ const plugin: Plugin2 = {
       }
     };
 
-    // ── Proxy + tools (same runtime as classic / next-era V2) ─
-    const mcpManager = new McpClientManager();
-    let mcpToolEntries: Record<string, any> = {};
-    let mcpToolDefs: any[] = [];
-    let mcpToolSummaries: Array<{
-      serverName: string;
-      toolName: string;
-      callName?: string;
-      description?: string;
-      params?: string[];
-    }> = [];
-    const mcpEnabled = process.env.CURSOR_ACP_MCP_BRIDGE !== "false";
-
-    if (mcpEnabled) {
-      try {
-        const configs = readMcpConfigs();
-        if (configs.length > 0) {
-          await Promise.allSettled(configs.map((c) => mcpManager.connectServer(c)));
-          const tools = mcpManager.listTools();
-          if (tools.length > 0) {
-            mcpToolEntries = buildMcpToolHookEntries(tools, mcpManager);
-            mcpToolDefs = buildMcpToolDefinitions(tools);
-            mcpToolSummaries = tools.map((t: any) => ({
-              serverName: t.serverName,
-              toolName: t.name,
-              callName: namespaceMcpTool(t.serverName, t.name),
-              description: t.description,
-              params: t.inputSchema
-                ? Object.keys((t.inputSchema as any).properties ?? {})
-                : undefined,
-            }));
-          }
-        }
-      } catch (err) {
-        log.debug("MCP bridge init failed", { error: String(err) });
-      }
-    }
-
-    const toolsEnabled = process.env.CURSOR_ACP_ENABLE_OPENCODE_TOOLS !== "false";
-    const legacyProxyToolPathsEnabled = toolsEnabled && TOOL_LOOP_MODE === "proxy-exec";
-
-    const localRegistry = new CoreRegistry();
-    registerDefaultTools(localRegistry);
-    const localExec = new LocalExecutor(localRegistry);
-    const executorChain: any[] = [localExec];
-    const toolsByName = new Map<string, any>();
-    const skillLoader = new SkillLoader();
-    let skillResolver: SkillResolver | null = null;
-
-    const router = legacyProxyToolPathsEnabled
-      ? new ToolRouter({
-          execute: (toolId: string, args: any) => executeWithChain(executorChain, toolId, args),
-          toolsByName,
-          resolveName: (name: string) => skillResolver?.resolve(name),
-        })
-      : null;
-
-    const localTools = buildLocalFallbackTools(localRegistry, TOOL_LOOP_MODE);
-    for (const tool of localTools) toolsByName.set(tool.name, tool);
-    skillResolver = new SkillResolver(skillLoader.load(localTools));
-    const lastToolNames = localTools.map((tool) => tool.name);
-    const lastToolMap = localTools.map((tool) => ({ id: tool.id, name: tool.name }));
-
-    const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory, router ?? undefined);
+    // ── Proxy ────────────────────────────────────────────────
+    const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory);
     log.debug("Proxy server started", { baseURL: proxyBaseURL });
 
     // ── Provider inventory (in-memory; no opencode.json dump) ─
@@ -258,82 +205,90 @@ const plugin: Plugin2 = {
     // Seed fallback immediately so the picker is never empty while discovery runs.
     await publishModels(FALLBACK_MODELS);
 
-    // Live discovery is async and talks to cursor-agent / the SDK runner. Tests
-    // set CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY=1 to keep setup deterministic.
-    if (process.env.CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY !== "1") {
-      void (async () => {
-        const discovered = await discoverModels();
-        if (discovered.length === 0) return;
-        await publishModels(discovered);
-      })().catch((err) => {
+    // Discovery runs against the active integration key, so a later /connect
+    // or account switch must rediscover: the prior list may belong to another
+    // account or be the keyless fallback. Generations drop stale results.
+    let discoveryGeneration = 0;
+    const refreshModels = async (): Promise<void> => {
+      const generation = ++discoveryGeneration;
+      const apiKey = await resolveCursorApiKey(ctx.integration);
+      const discovered = await discoverModels(apiKey);
+      if (generation !== discoveryGeneration || discovered.length === 0) return;
+      await publishModels(discovered);
+    };
+    const scheduleModelRefresh = () => {
+      void refreshModels().catch((err) => {
         log.debug("Background model publish failed", { error: String(err) });
       });
-    }
+    };
 
-    // Optional: some hosts still expose http.request. Prefer provider settings
-    // baseURL; rewrite when the hook exists so config overlays cannot pin
-    // traffic to a stale URL. Stable OpenCode 2.0 may omit the hook entirely.
-    try {
+    // Live discovery is async and talks to cursor-agent / the SDK runner. Tests
+    // set CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY=1 to keep setup deterministic.
+    const discoveryEnabled = process.env.CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY !== "1";
+    if (discoveryEnabled) scheduleModelRefresh();
+    const unsubscribe = discoveryEnabled
+      ? subscribeCredentialEvents(ctx, scheduleModelRefresh)
+      : () => {};
+
+    // ── Per-request workspace directory ─────────────────────
+    // Headers set here reach the AI SDK call options and therefore the proxy.
+    // `settings.baseURL` is the route; the AI SDK path uses its own fetch, so
+    // `http.request` hooks would never see these requests.
+    await track(
+      ctx.session.hook(
+        "model.request",
+        async (event) => {
+          if (event.model?.providerID !== CURSOR_PROVIDER_ID) return;
+          const directory = await sessionDirectory(ctx, event.sessionID, workspaceDirectory);
+          event.headers[OPENCODE_DIRECTORY_HEADER] = encodeURIComponent(directory);
+        },
+        { providerID: CURSOR_PROVIDER_ID },
+      ),
+    );
+
+    // ── MCP: direct catalog placement ───────────────────────
+    // Filled by the MCP transform (config is not written) and read whenever
+    // the tool transform replays, including after later MCP discovery.
+    const directMcpNamespaces = new Set<string>();
+    if (ctx.mcp) {
       await track(
-        ctx.session.hook(
-          "http.request",
-          async (event: SessionHttpRequest) => {
-            if (event.model.providerID !== CURSOR_PROVIDER_ID) return;
-            event.request = routeRequestToProxy(event.request, proxyBaseURL);
-          },
-        ),
-      );
-    } catch {
-      // settings.baseURL from provider.transform is the authoritative route.
-    }
-
-    // ── Tools ────────────────────────────────────────────────
-    try {
-      const toolHookEntries = buildToolHookEntries(localRegistry, workspaceDirectory);
-      const allEntries = { ...toolHookEntries, ...mcpToolEntries };
-
-      const schemaByName = new Map<string, Record<string, unknown>>();
-      for (const t of localRegistry.list()) {
-        schemaByName.set(t.name, t.parameters);
-      }
-
-      await track(
-        ctx.tool.transform((tools) => {
-          for (const [name, entry] of Object.entries(allEntries)) {
-            tools.add(toolFromV1(name, entry, schemaByName.get(name)));
-          }
+        ctx.mcp.transform((editor) => {
+          rememberDirectMcpNamespaces(directMcpNamespaces, editor.list());
         }),
       );
-    } catch (err) {
-      log.debug("Tool registration failed", { error: String(err) });
+      await track(
+        ctx.tool.transform((draft) => {
+          exposeDirectMcpTools(draft, directMcpNamespaces);
+        }),
+      );
     }
 
-    // ── Per-turn credential + tool system message ────────────
+    // ── Per-turn credential + MCP guidance ──────────────────
     await track(
-      ctx.session.hook("context", async (event) => {
-        if (event.model?.providerID !== CURSOR_PROVIDER_ID) return;
+      ctx.session.hook(
+        "context",
+        async (event) => {
+          if (event.model?.providerID !== CURSOR_PROVIDER_ID) return;
 
-        try {
-          const key = await resolveCursorApiKey(ctx.integration);
-          setStoredApiKey(key);
-        } catch (err) {
-          setStoredApiKey(undefined);
-          log.debug("Could not resolve Cursor API key", { error: String(err) });
-        }
+          try {
+            const key = await resolveCursorApiKey(ctx.integration);
+            setStoredApiKey(key);
+          } catch (err) {
+            setStoredApiKey(undefined);
+            log.debug("Could not resolve Cursor API key", { error: String(err) });
+          }
 
-        const systemMessage = buildAvailableToolsSystemMessage(
-          lastToolNames,
-          lastToolMap,
-          mcpToolDefs,
-          mcpToolSummaries,
-        );
-        if (systemMessage) {
-          event.system.push({ type: "text", text: systemMessage });
-        }
-      }),
+          if (directMcpNamespaces.size > 0) {
+            event.system.push({ type: "text", text: DIRECT_MCP_GUIDANCE });
+          }
+        },
+        { providerID: CURSOR_PROVIDER_ID },
+      ),
     );
 
     return async () => {
+      unsubscribe();
+      discoveryGeneration++;
       for (const registration of registrations.reverse()) {
         try {
           await registration.dispose();
@@ -341,7 +296,6 @@ const plugin: Plugin2 = {
           // best-effort cleanup
         }
       }
-      await mcpManager.disconnectAll();
       setStoredApiKey(undefined);
     };
   },

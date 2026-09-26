@@ -319,16 +319,32 @@ function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): st
     }
   }
 
-  const aliasedCanonical = TOOL_NAME_ALIASES.get(normalizedName);
-  if (!aliasedCanonical) {
-    return null;
+  // `mcp__<server>__<tool>` (Cursor SDK MCP remap, OpenCode 1.x bridge naming)
+  // → OpenCode 2.0 host MCP naming `<server>_<tool>`.
+  const mcpMatch = /^mcp__(.+?)__(.+)$/.exec(name);
+  if (mcpMatch) {
+    const hostMcpName = normalizeAliasKey(`${mcpMatch[1]}_${mcpMatch[2]}`);
+    for (const allowedName of allowedToolNames) {
+      if (normalizeAliasKey(allowedName) === hostMcpName) {
+        return allowedName;
+      }
+    }
   }
 
-  const canonicalNormalized = normalizeAliasKey(aliasedCanonical);
-  for (const allowedName of allowedToolNames) {
-    if (normalizeAliasKey(allowedName) === canonicalNormalized) {
-      return allowedName;
+  const aliasedCanonical = TOOL_NAME_ALIASES.get(normalizedName);
+  if (aliasedCanonical) {
+    const canonicalNormalized = normalizeAliasKey(aliasedCanonical);
+    for (const allowedName of allowedToolNames) {
+      if (normalizeAliasKey(allowedName) === canonicalNormalized) {
+        return allowedName;
+      }
     }
+  }
+
+  // OpenCode 2.0 renamed the host `bash` tool to `shell` (same `command` /
+  // `workdir` / `timeout` input).
+  if ((aliasedCanonical ?? normalizedName) === "bash" && allowedToolNames.has("shell")) {
+    return "shell";
   }
 
   return null;

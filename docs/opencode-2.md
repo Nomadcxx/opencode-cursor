@@ -44,6 +44,61 @@ open-cursor still speaks openai-compatible HTTP to its local proxy. It does
 **not** own Cursor's Connect-RPC agent protocol — that is a different project
 ([cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider)).
 
+After `/connect` or a credential switch, models are rediscovered with the
+active Cursor key; until then the picker shows a small static fallback list.
+
+## Tools
+
+The OpenCode 2.0 entry registers **no plugin tools**. OpenCode 2.0 ships its
+own permission-checked builtins (`read`, `shell`, `glob`, `grep`, `edit`,
+`write`, `subagent`, …), and a plugin tool with the same name would replace the
+builtin for every provider in that project.
+
+The proxy keeps its default tool loop (`CURSOR_ACP_TOOL_LOOP_MODE=opencode`):
+a Cursor tool call that matches a tool OpenCode advertised is returned to
+OpenCode, which runs it with its own permission checks. Cursor `bash`-style
+calls map onto OpenCode 2.0's `shell`. Calls that match nothing advertised run
+inside Cursor.
+
+## MCP tools
+
+OpenCode 2.0 connects MCP servers itself (`mcp.servers` in `opencode.json`);
+the plugin's own MCP bridge is not used on 2.0. The host puts MCP tools behind
+a single Code Mode `execute` tool unless the server sets `codemode: false`, so
+Cursor could not call them by name.
+
+The plugin leaves server config alone (`codemode` also changes how OpenCode
+connects to remote servers) and moves the tools of every server that does not
+set `"codemode": true` onto the direct catalog. The tool registry is shared by
+every provider in the project; set `"codemode": true` on a server to keep it
+inside `execute`. The `opencode` namespace is never moved.
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "github": { "type": "local", "command": ["github-mcp-server", "stdio"] },
+      "executor": { "type": "local", "command": ["my-executor"], "codemode": true }
+    }
+  }
+}
+```
+
+`github` tools are called by name (for example `github_create_pull_request`);
+`executor` stays inside `execute`. Cursor MCP calls named
+`mcp__<server>__<tool>` are mapped to the matching `<server>_<tool>` host tool.
+OpenCode connects MCP servers asynchronously, so a prompt sent right after
+startup may not see a slow server's tools yet; the next turn does.
+
+## Workspace directory
+
+One OpenCode 2.0 daemon serves every project location through a single local
+proxy. On each Cursor request the plugin sets `x-opencode-directory` (the
+session's `location.directory`, falling back to the plugin location) through
+the `session` `model.request` hook, and the proxy runs Cursor in that
+directory. Without the header (OpenCode 1.x) the proxy uses the directory it
+was started for.
+
 ## Safe transition from next-era / dump-era builds
 
 If you previously used the dual-export root entry against OpenCode 2 **next**
@@ -62,5 +117,7 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 |---|---|
 | No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Load **only** `/plugin/opencode2`. Filter by provider **Cursor** (`time.released` is `0`). |
 | Requests hit a stale proxy port | Restart after plugin reload so `settings.baseURL` matches the live proxy. Remove conflicting `providers.cursor-acp` overlays. |
-| Tools missing from the model | Ensure `CURSOR_ACP_ENABLE_OPENCODE_TOOLS` is not `false`. MCP bridge defaults on (`CURSOR_ACP_MCP_BRIDGE`). |
+| Only Auto / Composer models after `/connect` | Discovery reruns on credential events; restart the daemon if the host did not emit one. |
+| Cursor cannot find an MCP tool | The server sets `"codemode": true`, so its tools stay inside `execute`. Remove it to put them on the direct catalog. See [MCP tools](#mcp-tools). |
+| Cursor edits files in the wrong project | Confirm you load `/plugin/opencode2` (it sets `x-opencode-directory`); the root entry does not. |
 | Still on catalog-era errors (`ctx.catalog`) | You are loading the root dual export. Switch to `/plugin/opencode2`. |

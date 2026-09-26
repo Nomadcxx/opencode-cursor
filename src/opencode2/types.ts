@@ -19,6 +19,17 @@ export type Hooks<Spec> = <Name extends keyof Spec>(
   callback: (input: Spec[Name]) => Promise<void> | void,
 ) => Promise<Registration>;
 
+export type ModelHookOptions = {
+  /** Limits the hook to one provider. Unscoped hooks apply to every provider. */
+  readonly providerID?: string;
+};
+
+export type ModelHooks<Spec> = <Name extends keyof Spec>(
+  name: Name,
+  callback: (input: Spec[Name]) => Promise<void> | void,
+  options?: ModelHookOptions,
+) => Promise<Registration>;
+
 export type Transform<Input> = (callback: (input: Input) => void) => Promise<Registration>;
 
 export type ProviderInfo = {
@@ -162,24 +173,57 @@ export type SessionContext = {
   options?: Record<string, unknown>;
 };
 
-export type SessionHttpRequest = {
-  readonly model: { providerID: string; id?: string };
-  request: Request;
+/**
+ * Fires once per model call before the request is built. `headers` reach the
+ * AI SDK call options, so they are sent to the local proxy.
+ */
+export type SessionModelRequest = {
+  readonly sessionID: string;
+  readonly agent: string;
+  readonly model: { providerID: string; id: string; variant?: string };
+  readonly kind: "primary" | "compaction" | "title" | "generate";
+  baseURL?: string;
+  headers: Record<string, string>;
 };
 
 export type SessionHooks = {
   readonly context: SessionContext;
-  /** Present on some hosts; optional at runtime — registration may throw. */
-  readonly "http.request": SessionHttpRequest;
+  readonly "model.request": SessionModelRequest;
 };
 
 export type SessionDomain = {
-  readonly hook: Hooks<SessionHooks>;
+  readonly hook: ModelHooks<SessionHooks>;
   readonly get?: (input: { sessionID: string }) => Promise<{
     readonly id?: string;
     readonly directory?: string;
     readonly location?: { readonly directory?: string };
   }>;
+};
+
+// ── MCP ──
+
+/**
+ * MCP server config fields this plugin reads. `codemode` is observed, not
+ * written: writing it also changes the remote raw-tool URL. The host
+ * `MCPEditor` is a superset.
+ */
+export type McpServerConfig = {
+  readonly codemode?: boolean;
+};
+
+export type McpEditor = {
+  list(): readonly (readonly [string, McpServerConfig])[];
+};
+
+export type McpDomain = {
+  readonly transform: Transform<McpEditor>;
+};
+
+// ── Events ──
+
+export type EventDomain = {
+  /** Host returns an async-iterable event stream. */
+  readonly subscribe: () => unknown;
 };
 
 export type PluginLocation = {
@@ -192,6 +236,8 @@ export type PluginContext = {
   readonly session: SessionDomain;
   readonly tool: ToolDomain;
   readonly location?: PluginLocation;
+  readonly mcp?: McpDomain;
+  readonly event?: EventDomain;
 };
 
 export type Cleanup = () => Promise<void> | void;

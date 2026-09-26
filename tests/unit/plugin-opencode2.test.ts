@@ -33,14 +33,16 @@ function registration(onDispose: () => void = () => {}): Registration {
   return { dispose: async () => onDispose() };
 }
 
-function createContext(options: { supportHttpRequest?: boolean } = {}) {
-  const supportHttpRequest = options.supportHttpRequest !== false;
+function createContext(options: { withMcp?: boolean; withSessionGet?: boolean } = {}) {
   const disposed: string[] = [];
   const toolAddCalls: any[][] = [];
+  const toolTransforms: Array<(draft: any) => void> = [];
   const providerAdds: any[] = [];
-  let httpRequestHook: ((event: any) => Promise<void>) | undefined;
+  const hookOptions: Record<string, unknown> = {};
+  let modelRequestHook: ((event: any) => Promise<void>) | undefined;
   let sessionContextHook: ((event: any) => Promise<void>) | undefined;
   let providerTransform: ((editor: any) => void) | undefined;
+  let mcpTransform: ((editor: any) => void) | undefined;
   let activeConnectionCalls = 0;
   let reloadCalls = 0;
   let credential: any = { type: "key", key: "cursor-key" };
@@ -56,7 +58,7 @@ function createContext(options: { supportHttpRequest?: boolean } = {}) {
     });
   };
 
-  const context = {
+  const context: any = {
     integration: {
       transform: async (callback: (draft: any) => void) => {
         callback({
@@ -88,35 +90,53 @@ function createContext(options: { supportHttpRequest?: boolean } = {}) {
     },
     tool: {
       transform: async (callback: (draft: any) => void) => {
-        callback({ add: (...args: any[]) => toolAddCalls.push(args) });
+        toolTransforms.push(callback);
+        callback({ add: (...args: any[]) => toolAddCalls.push(args), list: () => [], update: () => {} });
         return registration(() => disposed.push("tool"));
       },
       reload: async () => {},
     },
     session: {
-      hook: async (name: string, callback: (event: any) => Promise<void>) => {
+      hook: async (name: string, callback: (event: any) => Promise<void>, opts?: unknown) => {
+        hookOptions[name] = opts;
         if (name === "context") {
           sessionContextHook = callback;
           return registration(() => disposed.push("session:context"));
         }
-        if (name === "http.request") {
-          if (!supportHttpRequest) {
-            throw new Error("http.request not supported");
-          }
-          httpRequestHook = callback;
-          return registration(() => disposed.push("session:http.request"));
+        if (name === "model.request") {
+          modelRequestHook = callback;
+          return registration(() => disposed.push("session:model.request"));
         }
         throw new Error(`Unexpected session hook: ${name}`);
       },
+      ...(options.withSessionGet
+        ? {
+            get: async ({ sessionID }: { sessionID: string }) => ({
+              id: sessionID,
+              location: { directory: `/projects/${sessionID}` },
+            }),
+          }
+        : {}),
     },
     location: { directory: process.cwd() },
   };
+
+  if (options.withMcp) {
+    context.mcp = {
+      transform: async (callback: (editor: any) => void) => {
+        mcpTransform = callback;
+        return registration(() => disposed.push("mcp"));
+      },
+    };
+  }
 
   return {
     context,
     disposed,
     toolAddCalls,
+    toolTransforms,
     providerAdds,
+    hookOptions,
     models: () => models,
     reloadCalls: () => reloadCalls,
     activeConnectionCalls: () => activeConnectionCalls,
@@ -126,8 +146,9 @@ function createContext(options: { supportHttpRequest?: boolean } = {}) {
     setCredential: (value: any) => {
       credential = value;
     },
-    httpRequestHook: () => httpRequestHook,
+    modelRequestHook: () => modelRequestHook,
     sessionContextHook: () => sessionContextHook,
+    mcpTransform: () => mcpTransform,
   };
 }
 
@@ -181,61 +202,76 @@ describe("opencode 2.0 stable adapter", () => {
     await cleanup?.();
   });
 
-  test("registers direct-catalog tools (codemode false)", async () => {
-    const fixture = createContext();
+  test("registers no plugin tools, so host builtins are never replaced", async () => {
+    const fixture = createContext({ withMcp: true });
 
     const cleanup = await opencode2.default.setup(fixture.context);
 
-    expect(fixture.toolAddCalls.length).toBeGreaterThan(0);
-    for (const args of fixture.toolAddCalls) {
-      expect(args).toHaveLength(1);
-      expect(args[0]).toEqual(
-        expect.objectContaining({
-          name: expect.any(String),
-          description: expect.any(String),
-          input: expect.any(Object),
-          output: expect.any(Object),
-          execute: expect.any(Function),
-          options: { codemode: false },
-        }),
-      );
+    expect(fixture.toolAddCalls).toEqual([]);
+    await cleanup?.();
+  });
+
+  test("moves MCP tools onto the direct catalog without writing server config", async () => {
+    const fixture = createContext({ withMcp: true });
+    const cleanup = await opencode2.default.setup(fixture.context);
+
+    fixture.mcpTransform()!({
+      list: () => [
+        ["github", { type: "local" }],
+        ["executor", { type: "local", codemode: true }],
+      ],
+    });
+
+    const tools = [
+      { id: "github_create_pr", options: { namespace: "github", codemode: true, pinned: true } },
+      { id: "executor_run", options: { namespace: "executor", codemode: true } },
+      { id: "read", options: { codemode: false } },
+    ];
+    const updated: Record<string, any> = {};
+    for (const transform of fixture.toolTransforms) {
+      transform({
+        list: () => tools,
+        update: (id: string, update: (draft: any) => void) => {
+          const draft = { options: { ...tools.find((t) => t.id === id)!.options } };
+          update(draft);
+          updated[id] = draft.options;
+        },
+      });
     }
+
+    expect(updated).toEqual({ github_create_pr: { namespace: "github", codemode: false } });
     await cleanup?.();
   });
 
-  test("routes Cursor HTTP requests to the live proxy when the hook exists", async () => {
-    const fixture = createContext({ supportHttpRequest: true });
+  test("model.request sends the session workspace directory to the proxy", async () => {
+    const fixture = createContext({ withSessionGet: true });
     const cleanup = await opencode2.default.setup(fixture.context);
-    const event = {
-      model: { providerID: "cursor-acp" },
-      request: new Request("http://127.0.0.1:9/v1/chat/completions", {
-        method: "POST",
-        body: "probe",
-      }),
-    };
+    expect(fixture.hookOptions["model.request"]).toEqual({ providerID: "cursor-acp" });
 
-    await fixture.httpRequestHook()!(event);
+    const event = { sessionID: "ses_a", model: { providerID: "cursor-acp" }, headers: {} as Record<string, string> };
+    await fixture.modelRequestHook()!(event);
+    expect(event.headers["x-opencode-directory"]).toBe(encodeURIComponent("/projects/ses_a"));
 
-    expect(event.request.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1\/chat\/completions$/);
-    expect(event.request.url).not.toContain(":9/");
-    expect(await event.request.text()).toBe("probe");
+    const other = { sessionID: "ses_b", model: { providerID: "ollama" }, headers: {} as Record<string, string> };
+    await fixture.modelRequestHook()!(other);
+    expect(other.headers).toEqual({});
     await cleanup?.();
   });
 
-  test("still starts when http.request is unavailable", async () => {
-    const fixture = createContext({ supportHttpRequest: false });
-
+  test("model.request falls back to the plugin location without session.get", async () => {
+    const fixture = createContext();
     const cleanup = await opencode2.default.setup(fixture.context);
 
-    expect(cleanup).toBeTypeOf("function");
-    expect(fixture.httpRequestHook()).toBeUndefined();
-    expect(fixture.providerAdds.length).toBeGreaterThan(0);
+    const event = { sessionID: "ses_a", model: { providerID: "cursor-acp" }, headers: {} as Record<string, string> };
+    await fixture.modelRequestHook()!(event);
+    expect(decodeURIComponent(event.headers["x-opencode-directory"])).toBe(process.cwd());
     await cleanup?.();
   });
 
   test("resolves Cursor credentials only for cursor-acp turns", async () => {
     const fixture = createContext();
     const cleanup = await opencode2.default.setup(fixture.context);
+    expect(fixture.hookOptions.context).toEqual({ providerID: "cursor-acp" });
     fixture.resetActiveConnectionCalls();
 
     await fixture.sessionContextHook()!({
@@ -246,12 +282,15 @@ describe("opencode 2.0 stable adapter", () => {
     expect(fixture.activeConnectionCalls()).toBe(0);
 
     expect(pluginModule.getStoredApiKey).toBeTypeOf("function");
+    const system: any[] = [];
     await fixture.sessionContextHook()!({
       model: { providerID: "cursor-acp" },
-      system: [],
+      system,
       tools: {},
     });
     expect(pluginModule.getStoredApiKey!()).toBe("cursor-key");
+    // No MCP domain → no direct-MCP guidance and no local tool advertisement.
+    expect(system).toEqual([]);
 
     fixture.setCredential(undefined);
     await fixture.sessionContextHook()!({
@@ -263,19 +302,58 @@ describe("opencode 2.0 stable adapter", () => {
     await cleanup?.();
   });
 
+  test("adds direct-MCP guidance when MCP servers are placed on the direct catalog", async () => {
+    const fixture = createContext({ withMcp: true });
+    const cleanup = await opencode2.default.setup(fixture.context);
+    fixture.mcpTransform()!({ list: () => [["github", { type: "local" }]] });
+
+    const system: any[] = [];
+    await fixture.sessionContextHook()!({ model: { providerID: "cursor-acp" }, system, tools: {} });
+
+    expect(system).toHaveLength(1);
+    expect(system[0].text).toContain("called directly");
+    await cleanup?.();
+  });
+
   test("cleanup disposes OpenCode 2.0 registrations", async () => {
-    const fixture = createContext();
+    const fixture = createContext({ withMcp: true });
     const cleanup = await opencode2.default.setup(fixture.context);
 
     expect(cleanup).toBeTypeOf("function");
     await cleanup!();
     expect(fixture.disposed.sort()).toEqual([
       "integration",
+      "mcp",
       "provider",
       "session:context",
-      "session:http.request",
+      "session:model.request",
       "tool",
     ]);
+  });
+});
+
+describe("OpenCode 2.0 credential events", () => {
+  test("only Cursor credential changes trigger rediscovery", () => {
+    expect(opencode2.isCursorCredentialEvent({ type: "credential.updated", data: {} })).toBe(true);
+    expect(
+      opencode2.isCursorCredentialEvent({ type: "credential.switched", data: { integrationID: "cursor-acp" } }),
+    ).toBe(true);
+    expect(
+      opencode2.isCursorCredentialEvent({ type: "credential.switched", data: { integrationID: "openai" } }),
+    ).toBe(false);
+    expect(opencode2.isCursorCredentialEvent({ type: "session.updated", data: {} })).toBe(false);
+  });
+});
+
+describe("proxy workspace directory header", () => {
+  test("uses an absolute URI-encoded header, else the fallback", () => {
+    const { resolveRequestWorkspaceDirectory } = pluginModule;
+    expect(resolveRequestWorkspaceDirectory(encodeURIComponent("/work/my project"), "/fallback")).toBe(
+      "/work/my project",
+    );
+    expect(resolveRequestWorkspaceDirectory(undefined, "/fallback")).toBe("/fallback");
+    expect(resolveRequestWorkspaceDirectory("relative/dir", "/fallback")).toBe("/fallback");
+    expect(resolveRequestWorkspaceDirectory("%E0%A4%A", "/fallback")).toBe("/fallback");
   });
 });
 
