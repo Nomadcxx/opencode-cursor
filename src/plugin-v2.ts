@@ -1,14 +1,13 @@
 /**
- * OpenCode V2 plugin entrypoint.
+ * OpenCode next-era (catalog) plugin entrypoint.
  *
- * OpenCode 2.x uses a different plugin API: the default export must be an
- * object with an `id` and a `setup` function, instead of the V1 async factory
- * function. This module provides that V2 shape while reusing the same proxy,
- * MCP bridge, and tool machinery as the V1 plugin.
+ * Targets the OpenCode 2 preview API where the default export is an object with
+ * `id` + `setup`, and providers register through `ctx.catalog`. Stable
+ * OpenCode 2.0 removed `ctx.catalog` — use `plugin-opencode2.ts` /
+ * `@rama_nigg/open-cursor/plugin/opencode2` instead.
  *
- * The V1 and V2 entrypoints are combined in plugin-entry.ts as a dual export
- * ({ id, server, setup }) so a single package works on both OpenCode 1.x and
- * 2.x — mirroring how oh-my-opencode-slim does it.
+ * The V1 and next-era entrypoints are still combined in plugin-entry.ts as a
+ * dual export ({ id, server, setup }) for OpenCode 1.x and catalog-era hosts.
  */
 import { shouldEnableCursorPlugin } from "./plugin-toggle.js";
 import { createLogger } from "./utils/logger.js";

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **OpenCode 2.0 stable support:** dedicated `@rama_nigg/open-cursor/plugin/opencode2` entry uses `ctx.provider.transform` + in-memory model inventory (no `opencode.json` dump, no removed `ctx.catalog`). Same local proxy + `@cursor/sdk` backend as OpenCode 1.x. See `docs/opencode-2.md`.
+
 ### BREAKING
 
 - **Authentication:** API key authentication now supports three methods with priority: (1) `CURSOR_API_KEY` environment variable, (2) OpenCode auth store (`opencode auth login --provider cursor-acp`), (3) provider options in `opencode.json`. Get your API key from [cursor.com/settings](https://cursor.com/settings). Legacy OAuth flow via `cursor-agent login` is no longer supported.

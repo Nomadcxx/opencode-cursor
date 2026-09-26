@@ -6,6 +6,14 @@ export type OpenCodeModelCost = {
   context_over_200k?: OpenCodeModelCost;
 };
 
+/** OpenCode 2.0 `Model.Info.cost` tier array. */
+export type OpenCode2ModelCost = {
+  tier?: { type: "context"; size: number };
+  input: number;
+  output: number;
+  cache: { read: number; write: number };
+};
+
 export type CursorPricingCoverage = {
   priced: string[];
   missing: string[];
@@ -110,6 +118,33 @@ export function applyCursorModelCost<T extends Record<string, unknown>>(
   const modelCost = getCursorModelCost(modelId);
   if (!modelCost) return entry;
   return { ...entry, cost: modelCost };
+}
+
+/** Convert classic cost → OpenCode 2.0 `Model.Info.cost` array. */
+export function toOpenCode2Costs(cost: OpenCodeModelCost | undefined): OpenCode2ModelCost[] {
+  if (!cost) return [];
+  const out: OpenCode2ModelCost[] = [
+    {
+      input: cost.input,
+      output: cost.output,
+      cache: {
+        read: cost.cache_read ?? 0,
+        write: cost.cache_write ?? 0,
+      },
+    },
+  ];
+  if (cost.context_over_200k) {
+    out.push({
+      tier: { type: "context", size: 200_000 },
+      input: cost.context_over_200k.input,
+      output: cost.context_over_200k.output,
+      cache: {
+        read: cost.context_over_200k.cache_read ?? 0,
+        write: cost.context_over_200k.cache_write ?? 0,
+      },
+    });
+  }
+  return out;
 }
 
 export function checkCursorPricingCoverage(modelIds: string[]): CursorPricingCoverage {
