@@ -16,9 +16,9 @@
 subscription. It translates prompts, streaming responses, thinking, and tool
 calls between OpenCode and `cursor-agent`.
 
-> **Kilo Code users:** [chiarelli/kilocode-cursor](https://github.com/chiarelli/kilocode-cursor) is a downstream port of this plugin to Kilo Code, with Kilo-native auth, MCP passthrough, and session resume.
+> **Also worth a look:** [oakimov/cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) takes a different approach, speaking Cursor's native agent protocol directly so OpenCode owns the tool loop. [opencode-plugin-compat](https://github.com/oakimov/opencode-plugin-compat) runs it unchanged on Kilo Code, MiMo Code, and other OpenCode forks. Excellent work, and a compelling read if you want to understand how deep the Cursor integration can go.
 
-> **Also worth a look:** [oakimov/cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) takes a different approach, speaking Cursor's native agent protocol directly so OpenCode owns the tool loop. Excellent work, and a compelling read if you want to understand how deep the Cursor integration can go.
+> **Kilo Code users:** [chiarelli/kilocode-cursor](https://github.com/chiarelli/kilocode-cursor) is a downstream port of this plugin to Kilo Code, with Kilo-native auth, MCP passthrough, and session resume.
 
 ## Installation
 
