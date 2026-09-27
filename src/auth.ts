@@ -20,7 +20,9 @@ export interface AuthResult {
 }
 
 export interface ResolveSdkApiKeyInput {
-  env?: Pick<NodeJS.ProcessEnv, "CURSOR_API_KEY">;
+  // Not `Pick<NodeJS.ProcessEnv, "CURSOR_API_KEY">`: picking from an index
+  // signature makes the key required, which `process.env` does not satisfy.
+  env?: Readonly<Record<string, string | undefined>>;
   storedApiKey?: string;
   authorizationHeader?: string | null;
 }

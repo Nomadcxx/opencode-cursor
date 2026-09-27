@@ -14,7 +14,8 @@
 
 `open-cursor` connects OpenCode to the models available through your Cursor
 subscription. It translates prompts, streaming responses, thinking, and tool
-calls between OpenCode and `cursor-agent`.
+calls between OpenCode and Cursor (via a local openai-compatible proxy backed
+by `@cursor/sdk`).
 
 ---
 
@@ -22,11 +23,18 @@ calls between OpenCode and `cursor-agent`.
 
 > **Kilo Code users:** [chiarelli/kilocode-cursor](https://github.com/chiarelli/kilocode-cursor) is a downstream port of this plugin to Kilo Code, with Kilo-native auth, MCP passthrough, and session resume.
 
+## OpenCode versions
+
+| Host | Plugin entry |
+|---|---|
+| **OpenCode 1.x** | `@rama_nigg/open-cursor` (installer below) |
+| **OpenCode 2.0** | `@rama_nigg/open-cursor/plugin/opencode2` — see [OpenCode 2.0 setup](docs/opencode-2.md) |
+
 ## Installation
 
-You need OpenCode, a Cursor subscription, and the `cursor-agent` command.
+You need OpenCode, a Cursor subscription, and Node.js ≥ 20 (for the SDK runner).
 
-Install the package and configure OpenCode:
+Install the package and configure OpenCode 1.x:
 
 ```bash
 npm install -g @rama_nigg/open-cursor
@@ -36,13 +44,24 @@ open-cursor install
 Authenticate and verify the provider:
 
 ```bash
-cursor-agent login
+# Set CURSOR_API_KEY from https://cursor.com/settings, or:
+opencode auth login --provider cursor-acp
 opencode models | grep cursor-acp
 ```
 
 The final command should list `cursor-acp/auto`. The installer backs up your
 existing OpenCode configuration before writing it and does not touch `.cursor`
 by default.
+
+For OpenCode 2.0, skip the 1.x installer and load the dedicated entry:
+
+```json
+{
+  "plugin": ["@rama_nigg/open-cursor/plugin/opencode2"]
+}
+```
+
+Details: [OpenCode 2.0 setup](docs/opencode-2.md).
 
 For shell, manual, and source installation, see the
 [installation guide](https://nomadcxx.github.io/opencode-cursor/docs/getting-started/installation/).
@@ -64,6 +83,7 @@ picker.
 ## Documentation
 
 - [Installation](https://nomadcxx.github.io/opencode-cursor/docs/getting-started/installation/)
+- [OpenCode 2.0 setup](docs/opencode-2.md)
 - [Authentication](https://nomadcxx.github.io/opencode-cursor/docs/getting-started/authentication/)
 - [Configuration](https://nomadcxx.github.io/opencode-cursor/docs/reference/configuration/)
 - [Choosing a model](https://nomadcxx.github.io/opencode-cursor/docs/guides/choosing-a-model/)

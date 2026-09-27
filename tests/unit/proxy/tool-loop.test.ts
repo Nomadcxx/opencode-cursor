@@ -231,6 +231,34 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.name).toBe("bash");
   });
 
+  it("maps bash and its aliases to the OpenCode 2.0 shell tool", () => {
+    for (const name of ["bash", "executeCommand"]) {
+      const event: any = {
+        type: "tool_call",
+        call_id: `call_${name}`,
+        name,
+        tool_call: { [name]: { args: { command: "pwd" } } },
+      };
+
+      const result = extractOpenAiToolCall(event, new Set(["shell", "read"]));
+      expect(result.action).toBe("intercept");
+      expect(result.toolCall?.function.name).toBe("shell");
+    }
+  });
+
+  it("maps mcp__<server>__<tool> to OpenCode 2.0 host MCP naming", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_mcp",
+      name: "mcp__my_docs__search",
+      tool_call: { mcp__my_docs__search: { args: { q: "x" } } },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["my-docs_search"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("my-docs_search");
+  });
+
   it("maps createDirectory alias to allowed mkdir tool name", () => {
     const event: any = {
       type: "tool_call",

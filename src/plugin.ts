@@ -187,6 +187,29 @@ export async function ensurePluginDirectory(): Promise<void> {
 export const CURSOR_PROVIDER_ID = "cursor-acp";
 const CURSOR_PROVIDER_PREFIX = `${CURSOR_PROVIDER_ID}/`;
 
+/**
+ * Per-request workspace directory (URI-encoded absolute path). Set by the
+ * OpenCode 2.0 entry: one daemon serves many project locations through a
+ * shared proxy, so the directory captured at proxy start is only a fallback.
+ * Node lowercases incoming header names; Fetch `Headers` are case-insensitive.
+ */
+export const OPENCODE_DIRECTORY_HEADER = "x-opencode-directory";
+
+export function resolveRequestWorkspaceDirectory(
+  header: string | null | undefined,
+  fallback: string,
+): string {
+  const raw = typeof header === "string" ? header.trim() : "";
+  if (!raw) return fallback;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return fallback;
+  }
+  return isAbsolute(decoded) ? resolve(decoded) : fallback;
+}
+
 export function shouldProcessModel(model: string | undefined): boolean {
   if (!model) return false;
   return model.startsWith(CURSOR_PROVIDER_PREFIX);
@@ -1301,6 +1324,10 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const params = resolveRuntimeParams(body?.cursorParams);
       const authHeader = req.headers.get("authorization");
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
+      const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
+        req.headers.get(OPENCODE_DIRECTORY_HEADER),
+        workspaceDirectory,
+      );
       const backend = resolveBackendForRequest(sdkApiKey);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
@@ -1308,7 +1335,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         messages,
         tools,
         model,
-        workspaceDirectory,
+        workspaceDirectory: requestWorkspaceDirectory,
       });
       const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
       const {
@@ -1351,7 +1378,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         sdkApiKey,
         model,
         prompt,
-        workspaceDirectory,
+        workspaceDirectory: requestWorkspaceDirectory,
         resumeChatId,
         params,
       });
@@ -1375,7 +1402,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           stdout,
           sessionResumeKey,
           model,
-          workspaceDirectory,
+          requestWorkspaceDirectory,
           sessionResumeRecordContentPrefix,
           sessionResumeToolFingerprint,
         );
@@ -1607,7 +1634,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                   event,
                   sessionResumeKey,
                   model,
-                  workspaceDirectory,
+                  requestWorkspaceDirectory,
                   sessionResumeRecordContentPrefix,
                   sessionResumeToolFingerprint,
                 );
@@ -1700,7 +1727,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                 event,
                 sessionResumeKey,
                 model,
-                workspaceDirectory,
+                requestWorkspaceDirectory,
                 sessionResumeRecordContentPrefix,
                 sessionResumeToolFingerprint,
               );
@@ -1945,6 +1972,10 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const params = resolveRuntimeParams(bodyData?.cursorParams);
       const authHeaderNode = req.headers["authorization"] as string | undefined;
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
+      const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
+        req.headers[OPENCODE_DIRECTORY_HEADER] as string | undefined,
+        workspaceDirectory,
+      );
       const backend = resolveBackendForRequest(sdkApiKeyNode);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
@@ -1952,7 +1983,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         messages,
         tools,
         model,
-        workspaceDirectory,
+        workspaceDirectory: requestWorkspaceDirectory,
       });
       const prompt = applyBridgeJsonPrompt(resolvedPrompt.prompt, { allowedToolNames });
       const {
@@ -1996,7 +2027,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         sdkApiKey: sdkApiKeyNode,
         model,
         prompt,
-        workspaceDirectory,
+        workspaceDirectory: requestWorkspaceDirectory,
         resumeChatId,
         params,
       });
@@ -2028,7 +2059,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             stdout,
             sessionResumeKey,
             model,
-            workspaceDirectory,
+            requestWorkspaceDirectory,
             sessionResumeRecordContentPrefix,
             sessionResumeToolFingerprint,
           );
@@ -2280,7 +2311,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               event,
               sessionResumeKey,
               model,
-              workspaceDirectory,
+              requestWorkspaceDirectory,
               sessionResumeRecordContentPrefix,
               sessionResumeToolFingerprint,
             );
