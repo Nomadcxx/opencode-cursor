@@ -103,13 +103,13 @@ export function extractImagesFromMessages(messages: unknown): SdkImageLike[] | u
   }
   if (found.length === 0) return undefined;
 
-  // Dedupe identical entries (same data+size or same url) while preserving order.
+  // Dedupe identical entries (same data or same url) while preserving order.
+  // Key on the full payload, not its length: distinct images of equal encoded
+  // size must not collapse.
   const seen = new Set<string>();
   const unique: SdkImageLike[] = [];
   for (const img of found) {
-    const key = img.data
-      ? `d:${img.mimeType}:${img.data.length}`
-      : `u:${img.url}`;
+    const key = img.data ? `d:${img.mimeType}:${img.data}` : `u:${img.url}`;
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(img);

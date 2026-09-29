@@ -166,4 +166,20 @@ describe("extractImagesFromMessages", () => {
       { url: "https://example.com/u.png" },
     ]);
   });
+
+  it("keeps distinct images that share a mime type and payload length", () => {
+    const messages = [
+      {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } },
+          { type: "image_url", image_url: { url: "data:image/png;base64,BBBB" } },
+        ],
+      },
+    ];
+    expect(extractImagesFromMessages(messages)).toEqual([
+      { data: "AAAA", mimeType: "image/png" },
+      { data: "BBBB", mimeType: "image/png" },
+    ]);
+  });
 });
