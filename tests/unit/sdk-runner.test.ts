@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { buildModelSelection, sdkMessageToStreamJson } from "../../scripts/sdk-runner.mjs";
+import { buildModelSelection, buildUserMessage, sdkMessageToStreamJson } from "../../scripts/sdk-runner.mjs";
 
 describe("sdk-runner buildModelSelection", () => {
   it("keeps model: { id } when params are absent or empty", () => {
@@ -39,6 +39,23 @@ describe("sdk-runner buildModelSelection", () => {
     ).toEqual({
       id: "claude-opus-5",
       params: [{ id: "effort", value: "high" }],
+    });
+  });
+});
+
+describe("sdk-runner buildUserMessage", () => {
+  it("returns the plain string when no images are present (identical to today)", () => {
+    expect(buildUserMessage("hello", undefined)).toBe("hello");
+    expect(buildUserMessage("hello", [])).toBe("hello");
+  });
+
+  it("returns a { text, images } object when images are present", () => {
+    const message = buildUserMessage("describe this", [
+      { data: "AAAB", mimeType: "image/png" },
+    ]);
+    expect(message).toEqual({
+      text: "describe this",
+      images: [{ data: "AAAB", mimeType: "image/png" }],
     });
   });
 });

@@ -30,6 +30,7 @@ import { createLogger } from "./utils/logger.js";
 import { RequestPerf } from "./utils/perf.js";
 import { parseAgentError, formatErrorForUser, stripAnsi, isResumeSpecificFailure } from "./utils/errors.js";
 import { buildPromptFromMessages, buildToolFingerprint } from "./proxy/prompt-builder.js";
+import { extractImagesFromMessages, type SdkImageLike } from "./proxy/image-extract.js";
 import {
   applyBridgeJsonPrompt,
   BridgeJsonStreamDetector,
@@ -585,6 +586,7 @@ function createBunChildForBackend(input: {
   workspaceDirectory: string;
   resumeChatId?: string;
   params?: RuntimeModelParameter[];
+  images?: SdkImageLike[];
 }): any {
   if (input.backend === "sdk") {
     if (!input.sdkApiKey) {
@@ -596,6 +598,7 @@ function createBunChildForBackend(input: {
       prompt: input.prompt,
       cwd: input.workspaceDirectory,
       params: input.params,
+      images: input.images,
     });
   }
 
@@ -632,6 +635,7 @@ function createNodeChildForBackend(input: {
   workspaceDirectory: string;
   resumeChatId?: string;
   params?: RuntimeModelParameter[];
+  images?: SdkImageLike[];
 }): any {
   if (input.backend === "sdk") {
     if (!input.sdkApiKey) {
@@ -643,6 +647,7 @@ function createNodeChildForBackend(input: {
       prompt: input.prompt,
       cwd: input.workspaceDirectory,
       params: input.params,
+      images: input.images,
     });
   }
 
@@ -1373,6 +1378,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       }
 
       reqPerf.mark("child-create-start");
+      const images = extractImagesFromMessages(messages);
       const child = createBunChildForBackend({
         backend,
         sdkApiKey,
@@ -1381,6 +1387,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         workspaceDirectory: requestWorkspaceDirectory,
         resumeChatId,
         params,
+        images,
       });
       reqPerf.mark("child-created");
 
@@ -2022,6 +2029,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       }
 
       reqPerf.mark("child-create-start");
+      const images = extractImagesFromMessages(messages);
       const child = createNodeChildForBackend({
         backend,
         sdkApiKey: sdkApiKeyNode,
@@ -2030,6 +2038,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         workspaceDirectory: requestWorkspaceDirectory,
         resumeChatId,
         params,
+        images,
       });
       reqPerf.mark("child-created");
 
