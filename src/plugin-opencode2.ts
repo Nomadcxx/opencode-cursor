@@ -1,8 +1,7 @@
 /**
  * OpenCode 2.0 plugin entrypoint for open-cursor.
  *
- * Separate from `plugin-v2.ts` on purpose: that module targets the next-era
- * `ctx.catalog` API, which stable OpenCode 2.0 removed. This entrypoint uses
+ * Stable OpenCode 2.0 removed the preview `ctx.catalog` API. This entrypoint uses
  * `ctx.provider.transform` + in-memory `editor.add` / `reload()`, matching the
  * stable 2.0 host contract, while keeping this project's local HTTP proxy +
  * `@cursor/sdk` backend (OpenCode talks openai-compatible HTTP; it does not
@@ -15,11 +14,11 @@
  * The proxy's default tool loop forwards Cursor tool calls that match the
  * advertised host catalog and leaves the rest to Cursor.
  *
- * Load only as: `{ "plugin": ["@rama_nigg/open-cursor/plugin/opencode2"] }`
- * Do not also load the classic root entry under OpenCode 2.0.
+ * Reached through the root default export (`plugin-entry.ts` delegates its
+ * `setup` here), so the install line is `{ "plugins": ["@rama_nigg/open-cursor"] }`.
+ * OpenCode 2.0 does not resolve `exports` subpaths as plugin specifiers (#135).
  */
 import { resolveSdkApiKey } from "./auth.js";
-import { shouldEnableCursorPlugin } from "./plugin-toggle.js";
 import { createLogger } from "./utils/logger.js";
 import {
   CURSOR_PROVIDER_ID,
@@ -139,15 +138,9 @@ const plugin: Plugin2 = {
   id: "open-cursor",
 
   setup: async (ctx: PluginContext): Promise<Cleanup | void> => {
-    const state = shouldEnableCursorPlugin();
-    if (!state.enabled) {
-      log.info("Plugin disabled in OpenCode config; skipping initialization", {
-        configPath: state.configPath,
-        reason: state.reason,
-      });
-      return;
-    }
-
+    // No `plugin-toggle` check here: that reads the 1.x config file, which a
+    // 2.0 host may not even use (OPENCODE_CONFIG_DIR). On 2.0 the host owns
+    // enablement through `plugins`; a removed entry is simply never loaded.
     const registrations: Array<{ dispose: () => Promise<void> | void }> = [];
     const track = async (p: Promise<{ dispose: () => Promise<void> | void }>) => {
       registrations.push(await p);

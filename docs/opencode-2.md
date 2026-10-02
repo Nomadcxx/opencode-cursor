@@ -1,24 +1,27 @@
 # OpenCode 2.0 setup
 
-Dedicated entrypoint: `@rama_nigg/open-cursor/plugin/opencode2`.
-
-Do **not** also load the classic root package entry under OpenCode 2.0 — that
-path targets OpenCode 1.x (and the next-era `ctx.catalog` dual export). Stable
-OpenCode 2.0 removed `ctx.catalog`; the dedicated entry uses
+The package's default export serves both hosts: OpenCode 1.x calls its
+`server()`, OpenCode 2.0 calls its `setup()`. On 2.0 the plugin uses
 `ctx.provider.transform` and publishes Cursor models **in memory**.
 
 ## Install
 
 ```json
 {
-  "plugin": ["@rama_nigg/open-cursor/plugin/opencode2"]
+  "plugins": ["@rama_nigg/open-cursor"]
 }
 ```
 
-Pin a version if you want: `"@rama_nigg/open-cursor@2.5.8/plugin/opencode2"`.
+Pin a version if you want: `"@rama_nigg/open-cursor@x.y.z"`.
 
-Prefer a dedicated config directory so 1.x `plugin` / `provider` entries and
-2.0 `plugins/` do not share one file:
+Use the bare package name. OpenCode 2.0 installs plugin specifiers with npm and
+resolves the package's main export; it does not understand `exports` subpaths,
+so `@rama_nigg/open-cursor/plugin/opencode2` fails with
+`NpmInstallFailedError ... ENOENT ... package.json` (issue #135).
+
+The config key is `plugins` on 2.0 (`plugin` on 1.x). Prefer a dedicated config
+directory so 1.x `plugin` / `provider` entries and 2.0 `plugins` do not share
+one file:
 
 ```bash
 export OPENCODE_CONFIG_DIR=~/.config/opencode2
@@ -32,9 +35,10 @@ also picked up automatically via the integration `env` method.
 
 ## How it differs from OpenCode 1.x
 
-| | OpenCode 1.x (root entry) | OpenCode 2.0 (`plugin/opencode2`) |
+| | OpenCode 1.x | OpenCode 2.0 |
 |---|---|---|
-| Load path | `@rama_nigg/open-cursor` | `@rama_nigg/open-cursor/plugin/opencode2` |
+| Config | `"plugin": ["@rama_nigg/open-cursor"]` | `"plugins": ["@rama_nigg/open-cursor"]` |
+| Entry | default export `server()` | default export `setup()` (`src/plugin-opencode2.ts`) |
 | Models | Written into `opencode.json` by installer / auto-refresh | In-memory `ctx.provider.transform` → `editor.add` → `reload()` |
 | Auth | OpenCode 1 auth store / env | Integration key + `CURSOR_API_KEY` env |
 | Backend | Local HTTP proxy + `@cursor/sdk` | Same proxy + SDK (unchanged) |
@@ -105,7 +109,8 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 (`ctx.catalog`) or relied on `providers.cursor-acp.models` written into
 `opencode.json`:
 
-1. Switch the plugin string to `/plugin/opencode2` only.
+1. Upgrade the package and use the bare `@rama_nigg/open-cursor` specifier
+   under `plugins`.
 2. Remove any leftover `providers.cursor-acp` (or `provider.cursor-acp`) model
    dump from the 2.0 config file so it cannot fight the in-memory inventory.
 3. Restart the OpenCode 2.0 daemon / TUI.
@@ -115,9 +120,10 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 
 | Symptom | Fix |
 |---|---|
-| No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Load **only** `/plugin/opencode2`. Filter by provider **Cursor** (`time.released` is `0`). |
+| `failed to load plugin … NpmInstallFailedError … ENOENT … package.json` | The specifier is an `exports` subpath (`…/plugin/opencode2`). Use the bare `@rama_nigg/open-cursor`. |
+| `TypeError: … 'ctx.catalog.transform'` | The installed package is 2.5.9 or older. Upgrade (`opencode plugin update`). |
+| No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Filter by provider **Cursor** (`time.released` is `0`). |
 | Requests hit a stale proxy port | Restart after plugin reload so `settings.baseURL` matches the live proxy. Remove conflicting `providers.cursor-acp` overlays. |
 | Only Auto / Composer models after `/connect` | Discovery reruns on credential events; restart the daemon if the host did not emit one. |
 | Cursor cannot find an MCP tool | The server sets `"codemode": true`, so its tools stay inside `execute`. Remove it to put them on the direct catalog. See [MCP tools](#mcp-tools). |
-| Cursor edits files in the wrong project | Confirm you load `/plugin/opencode2` (it sets `x-opencode-directory`); the root entry does not. |
-| Still on catalog-era errors (`ctx.catalog`) | You are loading the root dual export. Switch to `/plugin/opencode2`. |
+| Cursor edits files in the wrong project | The `model.request` hook sets `x-opencode-directory` per session; check the proxy log for the header and restart the daemon. |

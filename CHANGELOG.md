@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **OpenCode 2.0 stable support:** dedicated `@rama_nigg/open-cursor/plugin/opencode2` entry uses `ctx.provider.transform` + in-memory model inventory (no `opencode.json` dump, no removed `ctx.catalog`). Same local proxy + `@cursor/sdk` backend as OpenCode 1.x. See `docs/opencode-2.md`.
+- **OpenCode 2.0 stable support:** `"plugins": ["@rama_nigg/open-cursor"]` loads a `setup()` that uses `ctx.provider.transform` + in-memory model inventory (no `opencode.json` dump, no removed `ctx.catalog`). Same local proxy + `@cursor/sdk` backend as OpenCode 1.x. See `docs/opencode-2.md`.
   - Registers no plugin tools: OpenCode 2.0's permission-checked builtins (`read`, `shell`, `glob`, `grep`, `edit`, `write`, …) are never replaced; Cursor tool calls are forwarded to them (`bash` aliases map to `shell`).
   - MCP servers come from OpenCode 2.0 itself; tools of servers that do not set `"codemode": true` join the direct catalog so Cursor can call them by name (`mcp__<server>__<tool>` maps to `<server>_<tool>`). The plugin's own MCP bridge is not used on 2.0.
   - Each Cursor request carries its session's workspace directory (`x-opencode-directory`), so a multi-project daemon runs Cursor in the right project.
@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Issue #135 (OpenCode 2.0 `failed to load plugin … NpmInstallFailedError … ENOENT`):** OpenCode 2.0 installs plugin specifiers with npm and only resolves the package main export, so the documented `@rama_nigg/open-cursor/plugin/opencode2` subpath was treated as a local directory. The root default export now carries the stable 2.0 `setup()` (the catalog-era `ctx.catalog` preview module is removed); install with the bare package name under `plugins`. The 2.0 entry no longer consults the 1.x `plugin` array to decide whether to run — the host's `plugins` list is authoritative.
 - **Issue #76 (ECONNREFUSED on 127.0.0.1:32124):** the proxy failed to start because the plugin spawned the removed `cursor-agent` binary. The plugin now works without `cursor-agent` installed.
 - The system prompt no longer suggests an ambiguous `mcp` tool name; full tool names are listed explicitly, and a defensive guard logs any remaining bare `mcp` calls.
 

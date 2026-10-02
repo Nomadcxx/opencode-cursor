@@ -27,8 +27,8 @@ by `@cursor/sdk`).
 
 | Host | Plugin entry |
 |---|---|
-| **OpenCode 1.x** | `@rama_nigg/open-cursor` (installer below) |
-| **OpenCode 2.0** | `@rama_nigg/open-cursor/plugin/opencode2` — see [OpenCode 2.0 setup](docs/opencode-2.md) |
+| **OpenCode 1.x** | `"plugin": ["@rama_nigg/open-cursor"]` (installer below) |
+| **OpenCode 2.0** | `"plugins": ["@rama_nigg/open-cursor"]` — see [OpenCode 2.0 setup](docs/opencode-2.md) |
 
 ## Installation
 
@@ -53,11 +53,12 @@ The final command should list `cursor-acp/auto`. The installer backs up your
 existing OpenCode configuration before writing it and does not touch `.cursor`
 by default.
 
-For OpenCode 2.0, skip the 1.x installer and load the dedicated entry:
+For OpenCode 2.0, skip the 1.x installer and add the package to `plugins`
+(bare package name — OpenCode 2.0 does not resolve `exports` subpaths):
 
 ```json
 {
-  "plugin": ["@rama_nigg/open-cursor/plugin/opencode2"]
+  "plugins": ["@rama_nigg/open-cursor"]
 }
 ```
 

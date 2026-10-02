@@ -202,6 +202,30 @@ describe("opencode 2.0 stable adapter", () => {
     await cleanup?.();
   });
 
+  // OpenCode 2.0 installs the bare package name and resolves `exports["."]`;
+  // it never reads custom subpaths (issue #135). The root dual export must
+  // therefore carry the stable 2.0 `setup`, next to the 1.x `server`.
+  test("root package entry exposes the stable 2.0 setup", async () => {
+    const entry = (await import("../../src/plugin-entry.js")).default;
+    expect(entry.id).toBe("open-cursor");
+    expect(entry.server).toBeTypeOf("function");
+
+    const fixture = createContext();
+    const context = {
+      ...fixture.context,
+      catalog: {
+        transform: async () => {
+          throw new Error("catalog must not be used on stable OpenCode 2.0");
+        },
+      },
+    };
+
+    const cleanup = await entry.setup(context);
+    expect(cleanup).toBeTypeOf("function");
+    expect(fixture.providerAdds.at(-1)?.info.id).toBe("cursor-acp");
+    await cleanup?.();
+  });
+
   test("registers no plugin tools, so host builtins are never replaced", async () => {
     const fixture = createContext({ withMcp: true });
 
