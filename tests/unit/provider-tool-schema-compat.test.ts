@@ -1059,6 +1059,19 @@ describe("tool schema compatibility", () => {
         agent: "explore",
       });
       expect(result.validation.ok).toBe(true);
+
+      const both = applyToolSchemaCompat(
+        {
+          id: "c_sub2",
+          type: "function",
+          function: {
+            name: "subagent",
+            arguments: JSON.stringify({ description: "d", prompt: "p", agent: "general", subagentType: "explore" }),
+          },
+        },
+        new Map(),
+      );
+      expect(both.normalizedArgs).toEqual({ description: "d", prompt: "p", agent: "general" });
     });
 
     it("leaves an already-canonical subagent_type untouched", () => {

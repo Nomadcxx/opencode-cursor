@@ -267,6 +267,10 @@ function buildTaskToolCall(
   if (args[agent] === undefined && otherAgentValue !== undefined) {
     args[agent] = otherAgentValue;
   }
+  // A bare runtime model id (e.g. "composer-2.5") is not an OpenCode "providerID/modelID".
+  if (toolName === "subagent" && typeof args.model === "string" && !args.model.includes("/")) {
+    delete args.model;
+  }
 
   const optionalStrings = toolName === "task" ? ["task_id", "command"] : ["sessionID", "model"];
   if (

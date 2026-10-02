@@ -199,6 +199,15 @@ describe("proxy/bridge-json", () => {
       expect(JSON.parse(call?.function.arguments ?? "{}")).toEqual({ ...base, subagent_type: "explore" });
     });
 
+    it("drops a bare runtime model id but keeps an OpenCode provider/model", () => {
+      const parse = (model: string) => JSON.parse(
+        extractBridgeToolCallFromText(subagent({ ...base, agent: "explore", model }), SUBAGENT)?.function.arguments ?? "{}",
+      );
+
+      expect(parse("composer-2.5").model).toBeUndefined();
+      expect(parse("cursor-acp/composer-2.5").model).toBe("cursor-acp/composer-2.5");
+    });
+
     it("rejects subagent envelopes without agent or with a non-boolean background", () => {
       expect(extractBridgeToolCallFromText(subagent(base), SUBAGENT)).toBeNull();
       expect(

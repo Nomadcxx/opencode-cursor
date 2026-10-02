@@ -362,8 +362,11 @@ function normalizeToolSpecificArgs(
 
   if (normalizedToolName === "subagent") {
     const { subagent_type: rawSubagentType, ...rest } = args;
-    if (rawSubagentType === undefined || rest.agent !== undefined) {
+    if (rawSubagentType === undefined) {
       return args;
+    }
+    if (rest.agent !== undefined) {
+      return rest;
     }
     const agent = preserveCanonicalSubagentType
       ? rawSubagentType
