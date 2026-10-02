@@ -196,7 +196,10 @@ export function extractOpenAiToolCall(
   };
 }
 
-export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: OpenAiToolCall) {
+export function createToolCallCompletionResponse(
+  meta: ToolLoopMeta,
+  toolCalls: OpenAiToolCall | OpenAiToolCall[],
+) {
   return {
     id: meta.id,
     object: "chat.completion",
@@ -208,7 +211,7 @@ export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: O
         message: {
           role: "assistant",
           content: null,
-          tool_calls: [toolCall],
+          tool_calls: [toolCalls].flat(),
         },
         finish_reason: "tool_calls",
       },
@@ -216,7 +219,10 @@ export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: O
   };
 }
 
-export function createToolCallStreamChunks(meta: ToolLoopMeta, toolCall: OpenAiToolCall): Array<any> {
+export function createToolCallStreamChunks(
+  meta: ToolLoopMeta,
+  toolCalls: OpenAiToolCall | OpenAiToolCall[],
+): Array<any> {
   const toolDelta = {
     id: meta.id,
     object: "chat.completion.chunk",
@@ -227,12 +233,7 @@ export function createToolCallStreamChunks(meta: ToolLoopMeta, toolCall: OpenAiT
         index: 0,
         delta: {
           role: "assistant",
-          tool_calls: [
-            {
-              index: 0,
-              ...toolCall,
-            },
-          ],
+          tool_calls: [toolCalls].flat().map((toolCall, index) => ({ index, ...toolCall })),
         },
         finish_reason: null,
       },
