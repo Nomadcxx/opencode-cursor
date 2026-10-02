@@ -348,6 +348,12 @@ function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): st
     return "shell";
   }
 
+  // OpenCode 2.0 renamed the host `task` tool to `subagent` (`agent` replaces
+  // `subagent_type`; tool-schema-compat remaps the argument).
+  if ((aliasedCanonical ?? normalizedName) === "task" && allowedToolNames.has("subagent")) {
+    return "subagent";
+  }
+
   return null;
 }
 
