@@ -1,6 +1,6 @@
 // tests/unit/cli/opencode-cursor.test.ts
 import { describe, expect, it } from "bun:test";
-import { closeSync, mkdtempSync, openSync, rmSync, symlinkSync } from "node:fs";
+import { closeSync, mkdtempSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -116,6 +116,25 @@ describe("cli/opencode-cursor commandDoctor", () => {
       } else {
         process.env.CURSOR_AGENT_EXECUTABLE = originalCursorAgent;
       }
+    }
+  });
+});
+
+describe("cli/opencode-cursor plugin symlink", () => {
+  it("reports the symlink target path, not the target file contents", () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-plugin-"));
+    const target = join(dir, "plugin-entry.js");
+    const link = join(dir, "cursor-acp.js");
+    writeFileSync(target, "export default {};\n");
+    symlinkSync(target, link);
+
+    try {
+      const doctor = runDoctorChecks(join(dir, "missing-config.json"), link)
+        .find((check) => check.name === "Plugin file");
+      expect(doctor?.message).toBe(`symlink → ${target}`);
+      expect(getStatusResult(join(dir, "missing-config.json"), link).plugin.target).toBe(target);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });
