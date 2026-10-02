@@ -246,6 +246,20 @@ describe("proxy/tool-loop", () => {
     }
   });
 
+  it("maps Cursor's native Task to the OpenCode 2.0 subagent tool", () => {
+    const event: any = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call_task",
+      tool_call: {
+        taskToolCall: { args: { description: "List files", prompt: "List them.", subagentType: { explore: {} } } },
+      },
+    };
+
+    expect(extractOpenAiToolCall(event, new Set(["subagent", "read"])).toolCall?.function.name).toBe("subagent");
+    expect(extractOpenAiToolCall(event, new Set(["task", "subagent"])).toolCall?.function.name).toBe("task");
+  });
+
   it("maps mcp__<server>__<tool> to OpenCode 2.0 host MCP naming", () => {
     const event: any = {
       type: "tool_call",

@@ -45,6 +45,7 @@ const EXPLORATION_TOOLS = new Set([
   "shell",
   "webfetch",
   "task",
+  "subagent",
 ]);
 
 export interface ToolLoopGuardDecision {

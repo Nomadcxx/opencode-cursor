@@ -1016,6 +1016,51 @@ describe("tool schema compatibility", () => {
       expect(result.validation.ok).toBe(true);
     });
 
+    it("remaps cursor Task args onto the OpenCode 2.0 subagent schema", () => {
+      // Captured from cursor-agent's taskToolCall started event.
+      const cursorTaskArgs = {
+        description: "List directory files",
+        prompt: "List all files.",
+        subagentType: { explore: {} },
+        model: "composer-2.5",
+        agentId: "272a6795-e070-4ac8-9033-177936ddef34",
+        attachments: [],
+        mode: "TASK_MODE_UNSPECIFIED",
+        respondingToMessageIds: [],
+        environment: "SUBAGENT_EXECUTION_ENVIRONMENT_UNSPECIFIED",
+      };
+      const subagentSchema = new Map([
+        [
+          "subagent",
+          {
+            type: "object",
+            properties: {
+              agent: { type: "string" },
+              description: { type: "string" },
+              prompt: { type: "string" },
+              model: { type: "string" },
+              sessionID: { type: "string" },
+              background: { type: "boolean" },
+            },
+            required: ["agent", "description", "prompt"],
+            additionalProperties: false,
+          },
+        ],
+      ]);
+
+      const result = applyToolSchemaCompat(
+        { id: "c_sub", type: "function", function: { name: "subagent", arguments: JSON.stringify(cursorTaskArgs) } },
+        subagentSchema,
+      );
+
+      expect(result.normalizedArgs).toEqual({
+        description: "List directory files",
+        prompt: "List all files.",
+        agent: "explore",
+      });
+      expect(result.validation.ok).toBe(true);
+    });
+
     it("leaves an already-canonical subagent_type untouched", () => {
       const result = applyToolSchemaCompat(
         buildTaskCall({

@@ -19,12 +19,29 @@ For file changes through opencode-cursor, read any needed files first, then resp
 {"name":"write","arguments":{"path":"relative/path","content":"complete file contents"}}
 Use this only for a single complete-file write. Otherwise answer normally or use the available tool format.`;
 
-const TASK_BRIDGE_JSON_CONTEXT = `SYSTEM: OpenCode Task bridge mode is active.
-For Task only, the exact envelope below overrides the earlier generic "standard OpenAI tool_call" instruction. Do not add id, type, or function fields, and do not stringify arguments.
-OpenCode owns the task tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's task tool, respond with one JSON object, or one JSON array of those objects to dispatch several tasks in parallel, and no prose:
-{"name":"task","arguments":{"description":"3-5 words","prompt":"task details","subagent_type":"one name listed in the OpenCode task description"}}
-[{"name":"task","arguments":{"description":"first task","prompt":"details","subagent_type":"explore"}},{"name":"task","arguments":{"description":"second task","prompt":"details","subagent_type":"general"}}]
+// OpenCode 1.x offers `task` (subagent_type); OpenCode 2.0 renamed it `subagent` (agent).
+type TaskToolName = "task" | "subagent";
+
+function taskAgentField(toolName: TaskToolName): "subagent_type" | "agent" {
+  return toolName === "task" ? "subagent_type" : "agent";
+}
+
+function resolveTaskToolName(allowedToolNames: Set<string>): TaskToolName | null {
+  if (allowedToolNames.has("task")) {
+    return "task";
+  }
+  return allowedToolNames.has("subagent") ? "subagent" : null;
+}
+
+function taskBridgeContext(toolName: TaskToolName): string {
+  const agent = taskAgentField(toolName);
+  return `SYSTEM: OpenCode Task bridge mode is active.
+For ${toolName} only, the exact envelope below overrides the earlier generic "standard OpenAI tool_call" instruction. Do not add id, type, or function fields, and do not stringify arguments.
+OpenCode owns the ${toolName} tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's ${toolName} tool, respond with one JSON object, or one JSON array of those objects to dispatch several tasks in parallel, and no prose:
+{"name":"${toolName}","arguments":{"description":"3-5 words","prompt":"task details","${agent}":"one name listed in the OpenCode ${toolName} description"}}
+[{"name":"${toolName}","arguments":{"description":"first task","prompt":"details","${agent}":"explore"}},{"name":"${toolName}","arguments":{"description":"second task","prompt":"details","${agent}":"general"}}]
 Use this only when delegating through OpenCode. Otherwise answer normally.`;
+}
 
 type BridgePromptOptions = {
   allowedToolNames: Set<string>;
@@ -155,11 +172,10 @@ export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptio
   ) {
     result = result ? `${BRIDGE_JSON_CONTEXT}\n\n${result}` : BRIDGE_JSON_CONTEXT;
   }
-  if (
-    options.allowedToolNames.has("task")
-    && !result.includes("OpenCode Task bridge mode is active")
-  ) {
-    result = result ? `${result}\n\n${TASK_BRIDGE_JSON_CONTEXT}` : TASK_BRIDGE_JSON_CONTEXT;
+  const taskToolName = resolveTaskToolName(options.allowedToolNames);
+  if (taskToolName && !result.includes("OpenCode Task bridge mode is active")) {
+    const context = taskBridgeContext(taskToolName);
+    result = result ? `${result}\n\n${context}` : context;
   }
   return result;
 }
@@ -211,10 +227,9 @@ function buildBridgeToolCall(
     return null;
   }
 
-  if (parsed.name === "task") {
-    return allowedToolNames.has("task")
-      ? buildTaskToolCall(id, parsed.arguments)
-      : null;
+  if (parsed.name === "task" || parsed.name === "subagent") {
+    const taskToolName = resolveTaskToolName(allowedToolNames);
+    return taskToolName ? buildTaskToolCall(id, taskToolName, parsed.arguments) : null;
   }
 
   const writeToolName = resolveAllowedWriteToolName(allowedToolNames);
@@ -242,14 +257,24 @@ function buildBridgeToolCall(
 
 function buildTaskToolCall(
   id: string,
-  args: Record<string, unknown>,
+  toolName: TaskToolName,
+  rawArgs: Record<string, unknown>,
 ): OpenAiToolCall | null {
+  // Models trained on either host may use the other host's agent field name.
+  const agent = taskAgentField(toolName);
+  const otherAgent = taskAgentField(toolName === "task" ? "subagent" : "task");
+  const { [otherAgent]: otherAgentValue, ...args } = rawArgs;
+  if (args[agent] === undefined && otherAgentValue !== undefined) {
+    args[agent] = otherAgentValue;
+  }
+
+  const optionalStrings = toolName === "task" ? ["task_id", "command"] : ["sessionID", "model"];
   if (
     !isNonEmptyString(args.description)
     || !isNonEmptyString(args.prompt)
-    || !isNonEmptyString(args.subagent_type)
-    || (args.task_id !== undefined && typeof args.task_id !== "string")
-    || (args.command !== undefined && typeof args.command !== "string")
+    || !isNonEmptyString(args[agent])
+    || optionalStrings.some((key) => args[key] !== undefined && typeof args[key] !== "string")
+    || (toolName === "subagent" && args.background !== undefined && typeof args.background !== "boolean")
   ) {
     return null;
   }
@@ -258,7 +283,7 @@ function buildTaskToolCall(
     id,
     type: "function",
     function: {
-      name: "task",
+      name: toolName,
       arguments: JSON.stringify(args),
     },
   };

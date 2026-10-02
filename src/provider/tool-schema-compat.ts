@@ -360,6 +360,25 @@ function normalizeToolSpecificArgs(
     return { ...args, subagent_type: subagentType };
   }
 
+  if (normalizedToolName === "subagent") {
+    const { subagent_type: rawSubagentType, ...rest } = args;
+    if (rawSubagentType === undefined || rest.agent !== undefined) {
+      return args;
+    }
+    const agent = preserveCanonicalSubagentType
+      ? rawSubagentType
+      : resolveCursorSubagentType(rawSubagentType);
+    if (agent === null) {
+      return args;
+    }
+    // cursor-agent's Task sends its own bare model id (e.g. "composer-2.5");
+    // `subagent.model` expects an OpenCode "providerID/modelID".
+    if (typeof rest.model === "string" && !rest.model.includes("/")) {
+      delete rest.model;
+    }
+    return { ...rest, agent };
+  }
+
   if (normalizedToolName === "bash") {
     const normalized: JsonRecord = { ...args };
     const normalizedCommand = normalizeBashCommand(normalized.command);

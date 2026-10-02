@@ -154,6 +154,59 @@ describe("proxy/bridge-json", () => {
       .toEqual([0, 1, 2]);
   });
 
+  describe("OpenCode 2.0 subagent tool", () => {
+    const SUBAGENT = new Set(["subagent"]);
+    const subagent = (args: Record<string, unknown>) => JSON.stringify({ name: "subagent", arguments: args });
+    const base = { description: "Count files", prompt: "Count the files." };
+
+    it("prompts with the subagent name and agent field", () => {
+      const prompt = applyBridgeJsonPrompt("USER: delegate", { allowedToolNames: SUBAGENT, env: {} });
+
+      expect(prompt).toContain('{"name":"subagent","arguments":{"description":"3-5 words"');
+      expect(prompt).toContain('"agent":"explore"');
+      expect(prompt).not.toContain("subagent_type");
+      expect(prompt).not.toContain('"name":"task"');
+    });
+
+    it("extracts a subagent array with agent arguments", () => {
+      const calls = extractBridgeToolCallsFromText(
+        `[${subagent({ ...base, agent: "explore" })},${subagent({ ...base, agent: "general", background: true })}]`,
+        SUBAGENT,
+      );
+
+      expect(calls?.map((call) => call.function.name)).toEqual(["subagent", "subagent"]);
+      expect(calls?.map((call) => JSON.parse(call.function.arguments))).toEqual([
+        { ...base, agent: "explore" },
+        { ...base, agent: "general", background: true },
+      ]);
+    });
+
+    it("maps a v1 task envelope onto subagent when only subagent is offered", () => {
+      const call = extractBridgeToolCallFromText(TASK_JSON, SUBAGENT);
+
+      expect(call?.function.name).toBe("subagent");
+      expect(JSON.parse(call?.function.arguments ?? "{}")).toEqual({
+        description: "Run project proof",
+        prompt: "Follow your configured instructions.",
+        agent: "project-proof",
+      });
+    });
+
+    it("maps agent onto subagent_type when only task is offered", () => {
+      const call = extractBridgeToolCallFromText(subagent({ ...base, agent: "explore" }), new Set(["task"]));
+
+      expect(call?.function.name).toBe("task");
+      expect(JSON.parse(call?.function.arguments ?? "{}")).toEqual({ ...base, subagent_type: "explore" });
+    });
+
+    it("rejects subagent envelopes without agent or with a non-boolean background", () => {
+      expect(extractBridgeToolCallFromText(subagent(base), SUBAGENT)).toBeNull();
+      expect(
+        extractBridgeToolCallFromText(subagent({ ...base, agent: "explore", background: "yes" }), SUBAGENT),
+      ).toBeNull();
+    });
+  });
+
   it("does not reuse ids when an identical envelope is retried", () => {
     const first = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
     const retry = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
