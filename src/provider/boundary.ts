@@ -160,8 +160,8 @@ export interface ProviderBoundary {
     allowedToolNames: Set<string>,
     toolLoopMode: ToolLoopMode,
   ): ToolCallExtractionResult;
-  createNonStreamToolCallResponse(meta: ToolLoopMeta, toolCall: OpenAiToolCall): any;
-  createStreamToolCallChunks(meta: ToolLoopMeta, toolCall: OpenAiToolCall): Array<any>;
+  createNonStreamToolCallResponse(meta: ToolLoopMeta, toolCalls: OpenAiToolCall[]): any;
+  createStreamToolCallChunks(meta: ToolLoopMeta, toolCalls: OpenAiToolCall[]): Array<any>;
 }
 
 export function parseProviderBoundaryMode(
@@ -276,12 +276,12 @@ function createSharedBoundary(
       return extractOpenAiToolCall(event, allowedToolNames);
     },
 
-    createNonStreamToolCallResponse(meta, toolCall) {
-      return createToolCallCompletionResponse(meta, toolCall);
+    createNonStreamToolCallResponse(meta, toolCalls) {
+      return createToolCallCompletionResponse(meta, toolCalls);
     },
 
-    createStreamToolCallChunks(meta, toolCall) {
-      return createToolCallStreamChunks(meta, toolCall);
+    createStreamToolCallChunks(meta, toolCalls) {
+      return createToolCallStreamChunks(meta, toolCalls);
     },
   };
 }

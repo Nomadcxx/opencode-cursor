@@ -34,7 +34,7 @@ import { extractImagesFromMessages, type SdkImageLike } from "./proxy/image-extr
 import {
   applyBridgeJsonPrompt,
   BridgeJsonStreamDetector,
-  extractBridgeToolCallFromStreamOutput,
+  extractBridgeToolCallsFromStreamOutput,
   isBridgeJsonEnabled,
 } from "./proxy/bridge-json.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
@@ -1449,7 +1449,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           });
           const payload = boundaryContext.run(
             "createNonStreamToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, [toolCall]),
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1458,18 +1458,17 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
         }
 
         const completion = extractCompletionFromStream(stdout);
-        const bridgeToolCall = bridgeJsonEnabled
-          ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
+        const bridgeToolCalls = bridgeJsonEnabled
+          ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
           : null;
-        if (bridgeToolCall) {
-          const toolCall = bridgeToolCall;
-          log.debug("Intercepted bridge JSON tool call (non-stream)", {
-            name: toolCall.function.name,
-            callId: toolCall.id,
+        if (bridgeToolCalls) {
+          log.debug("Intercepted bridge JSON tool calls (non-stream)", {
+            names: bridgeToolCalls.map((toolCall) => toolCall.function.name),
+            callIds: bridgeToolCalls.map((toolCall) => toolCall.id),
           });
           const payload = boundaryContext.run(
             "createNonStreamBridgeToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, bridgeToolCalls),
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1548,15 +1547,15 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             const bridgeDetector = bridgeJsonEnabled
               ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
               : null;
-            const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
+            const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall[]) => {
               log.debug("Intercepted OpenCode tool call (stream)", {
-                name: toolCall.function.name,
-                callId: toolCall.id,
+                names: toolCalls.map((toolCall) => toolCall.function.name),
+                callIds: toolCalls.map((toolCall) => toolCall.id),
               });
               const streamChunks = boundaryContext.run(
                 "createStreamToolCallChunks",
                 (boundary) =>
-                  boundary.createStreamToolCallChunks({ id, created, model }, toolCall),
+                  boundary.createStreamToolCallChunks({ id, created, model }, toolCalls),
               );
               for (const chunk of streamChunks) {
                 enqueueSse(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -1596,7 +1595,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
               }
               const decision = bridgeDetector.push(event);
               if (decision.action === "tool_call") {
-                emitToolCallAndTerminate(decision.toolCall);
+                emitToolCallAndTerminate(decision.toolCalls);
                 return true;
               }
               if (decision.action === "buffer") {
@@ -1686,7 +1685,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                       enqueueSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                     },
                     onInterceptedToolCall: (toolCall) => {
-                      emitToolCallAndTerminate(toolCall);
+                      emitToolCallAndTerminate([toolCall]);
                     },
                     onFallbackToLegacy: (error) => {
                       boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);
@@ -1775,7 +1774,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                     enqueueSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                   },
                   onInterceptedToolCall: (toolCall) => {
-                    emitToolCallAndTerminate(toolCall);
+                    emitToolCallAndTerminate([toolCall]);
                   },
                   onFallbackToLegacy: (error) => {
                     boundaryContext.activateLegacyFallback("handleToolLoopEvent.flush", error);
@@ -2107,7 +2106,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             });
             const payload = boundaryContext.run(
               "createNonStreamToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, [toolCall]),
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -2115,18 +2114,17 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           }
 
           const completion = extractCompletionFromStream(stdout);
-          const bridgeToolCall = bridgeJsonEnabled
-            ? extractBridgeToolCallFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
+          const bridgeToolCalls = bridgeJsonEnabled
+            ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
             : null;
-          if (bridgeToolCall) {
-            const toolCall = bridgeToolCall;
-            log.debug("Intercepted bridge JSON tool call (non-stream)", {
-              name: toolCall.function.name,
-              callId: toolCall.id,
+          if (bridgeToolCalls) {
+            log.debug("Intercepted bridge JSON tool calls (non-stream)", {
+              names: bridgeToolCalls.map((toolCall) => toolCall.function.name),
+              callIds: bridgeToolCalls.map((toolCall) => toolCall.id),
             });
             const payload = boundaryContext.run(
               "createNonStreamBridgeToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, bridgeToolCalls),
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -2225,18 +2223,18 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           streamTerminated = true;
           res.end();
         });
-        const emitToolCallAndTerminate = (toolCall: OpenAiToolCall) => {
+        const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall[]) => {
           if (streamTerminated || res.writableEnded) {
             return;
           }
           log.debug("Intercepted OpenCode tool call (stream)", {
-            name: toolCall.function.name,
-            callId: toolCall.id,
+            names: toolCalls.map((toolCall) => toolCall.function.name),
+            callIds: toolCalls.map((toolCall) => toolCall.id),
           });
           const streamChunks = boundaryContext.run(
             "createStreamToolCallChunks",
             (boundary) =>
-              boundary.createStreamToolCallChunks({ id, created, model }, toolCall),
+              boundary.createStreamToolCallChunks({ id, created, model }, toolCalls),
           );
           for (const chunk of streamChunks) {
             writeSse(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -2292,7 +2290,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           }
           const decision = bridgeDetector.push(event);
           if (decision.action === "tool_call") {
-            emitToolCallAndTerminate(decision.toolCall);
+            emitToolCallAndTerminate(decision.toolCalls);
             return true;
           }
           if (decision.action === "buffer") {
@@ -2365,7 +2363,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                   writeSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                 },
                 onInterceptedToolCall: (toolCall) => {
-                  emitToolCallAndTerminate(toolCall);
+                  emitToolCallAndTerminate([toolCall]);
                 },
                 onFallbackToLegacy: (error) => {
                   boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);

@@ -124,10 +124,10 @@ describe("provider boundary", () => {
     expect(skipped.action).toBe("skip");
 
     const meta = { id: "resp-1", created: 123, model: "auto" };
-    const nonStream = boundary.createNonStreamToolCallResponse(meta, result.toolCall!);
+    const nonStream = boundary.createNonStreamToolCallResponse(meta, [result.toolCall!]);
     expect(nonStream.choices[0].finish_reason).toBe("tool_calls");
 
-    const stream = boundary.createStreamToolCallChunks(meta, result.toolCall!);
+    const stream = boundary.createStreamToolCallChunks(meta, [result.toolCall!]);
     expect(stream).toHaveLength(2);
     expect(stream[1].choices[0].finish_reason).toBe("tool_calls");
   });

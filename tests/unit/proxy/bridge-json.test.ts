@@ -2,10 +2,17 @@ import { describe, expect, it } from "bun:test";
 import {
   applyBridgeJsonPrompt,
   BridgeJsonStreamDetector,
-  extractBridgeToolCallFromStreamOutput,
-  extractBridgeToolCallFromText,
+  extractBridgeToolCallsFromStreamOutput,
+  extractBridgeToolCallsFromText,
   isBridgeJsonEnabled,
 } from "../../../src/proxy/bridge-json.js";
+import { createToolCallCompletionResponse, createToolCallStreamChunks } from "../../../src/proxy/tool-loop.js";
+
+const extractBridgeToolCallFromText = (...args: Parameters<typeof extractBridgeToolCallsFromText>) =>
+  extractBridgeToolCallsFromText(...args)?.[0] ?? null;
+const extractBridgeToolCallFromStreamOutput = (
+  ...args: Parameters<typeof extractBridgeToolCallsFromStreamOutput>
+) => extractBridgeToolCallsFromStreamOutput(...args)?.[0] ?? null;
 
 const delta = (text: string) => ({
   type: "assistant" as const,
@@ -126,6 +133,64 @@ describe("proxy/bridge-json", () => {
       ).toBeNull();
     });
   }
+
+  it("extracts a JSON array of task envelopes as parallel tool calls", () => {
+    const second = JSON.parse(TASK_JSON);
+    second.arguments.subagent_type = "explore";
+    const calls = extractBridgeToolCallsFromText(
+      `[${TASK_JSON}, ${JSON.stringify(second)}, ${TASK_JSON}]`,
+      new Set(["task"]),
+    );
+
+    expect(calls?.map((call) => JSON.parse(call.function.arguments).subagent_type)).toEqual([
+      "project-proof",
+      "explore",
+      "project-proof",
+    ]);
+    expect(new Set(calls?.map((call) => call.id)).size).toBe(3);
+
+    const chunks = createToolCallStreamChunks({ id: "x", created: 0, model: "m" }, calls!);
+    expect(chunks.flatMap((chunk) => chunk.choices[0].delta.tool_calls ?? []).map((call: any) => call.index))
+      .toEqual([0, 1, 2]);
+  });
+
+  it("does not reuse ids when an identical envelope is retried", () => {
+    const first = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
+    const retry = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
+
+    expect(first?.[0].id).not.toBe(retry?.[0].id);
+  });
+
+  it("extracts a write array as parallel write calls", () => {
+    const calls = extractBridgeToolCallsFromText(
+      JSON.stringify(["a.txt", "b.txt"].map((path) => ({ name: "write", arguments: { path, content: path } }))),
+      new Set(["write"]),
+    );
+
+    expect(calls?.map((call) => JSON.parse(call.function.arguments).path)).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("extracts every envelope of a streamed array from non-stream output", () => {
+    const array = `[${TASK_JSON},${TASK_JSON},${TASK_JSON}]`;
+    const output = [delta(array.slice(0, 60)), delta(array.slice(60))].map(JSON.stringify).join("\n");
+
+    const calls = extractBridgeToolCallsFromStreamOutput(output, new Set(["task"]));
+
+    expect(calls).toHaveLength(3);
+    expect(new Set(calls?.map((call) => call.id)).size).toBe(3);
+    const response = createToolCallCompletionResponse({ id: "x", created: 0, model: "m" }, calls!);
+    expect(response.choices[0].message.tool_calls).toHaveLength(3);
+  });
+
+  it("rejects an array when any envelope is invalid or the array is empty", () => {
+    const invalid = JSON.parse(TASK_JSON);
+    delete invalid.arguments.prompt;
+
+    expect(
+      extractBridgeToolCallsFromText(`[${TASK_JSON},${JSON.stringify(invalid)}]`, new Set(["task"])),
+    ).toBeNull();
+    expect(extractBridgeToolCallsFromText("[]", new Set(["task"]))).toBeNull();
+  });
 
   it("extracts a later bridge response from stream-json output after prelude text", () => {
     const output = [
@@ -287,6 +352,8 @@ describe("proxy/bridge-json", () => {
     );
     expect(taskPrompt).toContain("Do not add id, type, or function fields");
     expect(taskPrompt).toContain("do not stringify arguments");
+    expect(taskPrompt).toContain("one JSON array of those objects to dispatch several tasks in parallel");
+    expect(taskPrompt).not.toContain("exactly one JSON object");
     expect(readPrompt).toBe(basePrompt);
     expect(disabled).toBe(basePrompt);
   });
@@ -315,9 +382,33 @@ describe("proxy/bridge-json", () => {
       const decision = detector.push(delta('"subagent_type":"project-proof"}}'));
       expect(decision.action).toBe("tool_call");
       if (decision.action === "tool_call") {
-        expect(decision.toolCall.function.name).toBe("task");
+        expect(decision.toolCalls[0].function.name).toBe("task");
       }
       expect(detector.flush()).toBe("");
+    });
+
+    it("reassembles a split array of Task envelopes", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["task"]));
+      const array = `[${TASK_JSON},${TASK_JSON}]`;
+
+      expect(detector.push(delta("["))).toEqual({ action: "buffer" });
+      expect(detector.push(delta(array.slice(1, 40)))).toEqual({ action: "buffer" });
+      const decision = detector.push(delta(array.slice(40)));
+
+      expect(decision.action).toBe("tool_call");
+      const calls = decision.action === "tool_call" ? decision.toolCalls : [];
+      expect(calls.map((call) => call.function.name)).toEqual(["task", "task"]);
+      expect(new Set(calls.map((call) => call.id)).size).toBe(2);
+    });
+
+    it("passes markdown that starts with a bracket through", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["task"]));
+
+      expect(detector.push(delta("["))).toEqual({ action: "buffer" });
+      expect(detector.push(delta("docs](https://example.com)"))).toEqual({
+        action: "passthrough",
+        text: "[docs](https://example.com)",
+      });
     });
 
     it("passes ordinary text through immediately", () => {
@@ -334,7 +425,7 @@ describe("proxy/bridge-json", () => {
 
       expect(decision.action).toBe("tool_call");
       if (decision.action === "tool_call") {
-        expect(JSON.parse(decision.toolCall.function.arguments)).toEqual(
+        expect(JSON.parse(decision.toolCalls[0].function.arguments)).toEqual(
           JSON.parse(TASK_JSON).arguments,
         );
       }

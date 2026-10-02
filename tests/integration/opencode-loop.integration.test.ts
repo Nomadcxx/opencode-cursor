@@ -362,6 +362,16 @@ process.stdin.on("end", () => {
       },
       { type: "result", subtype: "success", is_error: false },
     ];
+  } else if (scenario === "assistant-bridge-task-array") {
+    const text = JSON.stringify(["explore", "general", "explore"].map((subagent_type) => ({
+      name: "task",
+      arguments: { description: "Parallel probe", prompt: "Report back.", subagent_type },
+    })));
+    events = [
+      { type: "assistant", timestamp_ms: now + 1, message: { role: "assistant", content: [{ type: "text", text: text.slice(0, 50) }] } },
+      { type: "assistant", timestamp_ms: now + 2, message: { role: "assistant", content: [{ type: "text", text: text.slice(50) }] } },
+      { type: "result", subtype: "success", is_error: false },
+    ];
   } else if (scenario === "assistant-bridge-task-mixed-thinking") {
     events = [
       {
@@ -917,6 +927,52 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(promptText).toContain("project-proof");
     expect(promptText).toContain("Do not invoke Cursor's built-in Task tool");
     expect(promptText).not.toContain(["When calling", "the task tool"].join(" "));
+  });
+
+  it("streams a Task bridge JSON array as parallel tool calls", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-array";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: true,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Dispatch three subagents in parallel" }],
+    });
+
+    const chunks = parseJsonChunks(parseSseData(await response.text()));
+    const toolCalls = chunks.flatMap((chunk) => chunk.choices?.[0]?.delta?.tool_calls ?? []);
+
+    expect(toolCalls.map((call: any) => call.index)).toEqual([0, 1, 2]);
+    expect(toolCalls.map((call: any) => JSON.parse(call.function.arguments).subagent_type))
+      .toEqual(["explore", "general", "explore"]);
+    expect(new Set(toolCalls.map((call: any) => call.id)).size).toBe(3);
+    expect(chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean))
+      .toEqual(["tool_calls"]);
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain('"name":"task"');
+  });
+
+  it("returns a non-stream Task bridge JSON array as parallel tool calls", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-array";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Dispatch three subagents in parallel" }],
+    });
+
+    const json: any = await response.json();
+    const toolCalls = json.choices?.[0]?.message?.tool_calls ?? [];
+    expect(toolCalls.map((call: any) => JSON.parse(call.function.arguments).subagent_type))
+      .toEqual(["explore", "general", "explore"]);
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+    expect(json.choices?.[0]?.message?.content).toBeNull();
   });
 
   it("preserves thinking from mixed assistant events while bridging Task JSON", async () => {

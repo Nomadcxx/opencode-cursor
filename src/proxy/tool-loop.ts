@@ -196,7 +196,10 @@ export function extractOpenAiToolCall(
   };
 }
 
-export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: OpenAiToolCall) {
+export function createToolCallCompletionResponse(
+  meta: ToolLoopMeta,
+  toolCalls: OpenAiToolCall[],
+) {
   return {
     id: meta.id,
     object: "chat.completion",
@@ -208,7 +211,7 @@ export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: O
         message: {
           role: "assistant",
           content: null,
-          tool_calls: [toolCall],
+          tool_calls: toolCalls,
         },
         finish_reason: "tool_calls",
       },
@@ -216,8 +219,11 @@ export function createToolCallCompletionResponse(meta: ToolLoopMeta, toolCall: O
   };
 }
 
-export function createToolCallStreamChunks(meta: ToolLoopMeta, toolCall: OpenAiToolCall): Array<any> {
-  const toolDelta = {
+export function createToolCallStreamChunks(
+  meta: ToolLoopMeta,
+  toolCalls: OpenAiToolCall[],
+): Array<any> {
+  const toolDeltas = toolCalls.map((toolCall, index) => ({
     id: meta.id,
     object: "chat.completion.chunk",
     created: meta.created,
@@ -227,17 +233,12 @@ export function createToolCallStreamChunks(meta: ToolLoopMeta, toolCall: OpenAiT
         index: 0,
         delta: {
           role: "assistant",
-          tool_calls: [
-            {
-              index: 0,
-              ...toolCall,
-            },
-          ],
+          tool_calls: [{ index, ...toolCall }],
         },
         finish_reason: null,
       },
     ],
-  };
+  }));
 
   const finishChunk = {
     id: meta.id,
@@ -253,7 +254,7 @@ export function createToolCallStreamChunks(meta: ToolLoopMeta, toolCall: OpenAiT
     ],
   };
 
-  return [toolDelta, finishChunk];
+  return [...toolDeltas, finishChunk];
 }
 
 function extractToolNameAndArgs(event: StreamJsonToolCallEvent): {

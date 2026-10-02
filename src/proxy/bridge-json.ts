@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { parseStreamJsonLine } from "../streaming/parser.js";
 import { MixedDeltaTracker } from "../streaming/delta-tracker.js";
 import {
@@ -8,6 +8,9 @@ import {
   type StreamJsonAssistantEvent,
 } from "../streaming/types.js";
 import type { OpenAiToolCall } from "./tool-loop.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("proxy:bridge-json");
 
 export const BRIDGE_JSON_ENV = "CURSOR_ACP_BRIDGE_JSON";
 
@@ -18,8 +21,9 @@ Use this only for a single complete-file write. Otherwise answer normally or use
 
 const TASK_BRIDGE_JSON_CONTEXT = `SYSTEM: OpenCode Task bridge mode is active.
 For Task only, the exact envelope below overrides the earlier generic "standard OpenAI tool_call" instruction. Do not add id, type, or function fields, and do not stringify arguments.
-OpenCode owns the task tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's task tool, respond with exactly one JSON object and no prose:
+OpenCode owns the task tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's task tool, respond with one JSON object, or one JSON array of those objects to dispatch several tasks in parallel, and no prose:
 {"name":"task","arguments":{"description":"3-5 words","prompt":"task details","subagent_type":"one name listed in the OpenCode task description"}}
+[{"name":"task","arguments":{"description":"first task","prompt":"details","subagent_type":"explore"}},{"name":"task","arguments":{"description":"second task","prompt":"details","subagent_type":"general"}}]
 Use this only when delegating through OpenCode. Otherwise answer normally.`;
 
 type BridgePromptOptions = {
@@ -30,7 +34,7 @@ type BridgePromptOptions = {
 export type BridgeStreamDecision =
   | { action: "buffer" }
   | { action: "passthrough"; text?: string }
-  | { action: "tool_call"; toolCall: OpenAiToolCall };
+  | { action: "tool_call"; toolCalls: OpenAiToolCall[] };
 
 export class BridgeJsonStreamDetector {
   private state: "undecided" | "candidate" | "passthrough" = "undecided";
@@ -59,10 +63,11 @@ export class BridgeJsonStreamDetector {
 
     if (this.state === "undecided") {
       const meaningful = this.buffer.trimStart();
-      if (!meaningful || meaningful === "`" || meaningful === "``") {
+      if (!meaningful || /^(`{1,2}|\[\s*)$/.test(meaningful)) {
         return { action: "buffer" };
       }
-      if (meaningful.startsWith("{") || meaningful.startsWith("```")) {
+      // `[` alone is common prose (markdown links); only `[{` starts an envelope array.
+      if (/^(\{|```|\[\s*\{)/.test(meaningful)) {
         this.state = "candidate";
       } else {
         const withheld = this.buffer;
@@ -88,15 +93,15 @@ export class BridgeJsonStreamDetector {
 
     // ponytail: bridge responses are small; reparse the accumulated candidate.
     // If envelopes become large, replace this O(n²) path with an incremental parser.
-    const toolCall = extractBridgeToolCallFromText(
+    const toolCalls = extractBridgeToolCallsFromText(
       this.buffer,
       this.allowedToolNames,
       this.writeSchema,
     );
-    if (toolCall) {
+    if (toolCalls) {
       this.buffer = "";
       this.state = "passthrough";
-      return { action: "tool_call", toolCall };
+      return { action: "tool_call", toolCalls };
     }
 
     if (containsCompleteJson(this.buffer)) {
@@ -159,11 +164,11 @@ export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptio
   return result;
 }
 
-export function extractBridgeToolCallFromText(
+export function extractBridgeToolCallsFromText(
   text: string,
   allowedToolNames: Set<string>,
   writeSchema?: unknown,
-): OpenAiToolCall | null {
+): OpenAiToolCall[] | null {
   const jsonText = extractStrictJsonText(text);
   if (!jsonText) {
     return null;
@@ -176,13 +181,39 @@ export function extractBridgeToolCallFromText(
     return null;
   }
 
+  // Random, not content-derived: a retried identical envelope must not reuse earlier call ids.
+  const id = `call_bridge_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
+  if (!Array.isArray(parsed)) {
+    const toolCall = buildBridgeToolCall(parsed, id, allowedToolNames, writeSchema);
+    return toolCall ? [toolCall] : null;
+  }
+  const toolCalls = parsed.map((entry, i) =>
+    buildBridgeToolCall(entry, `${id}_${i}`, allowedToolNames, writeSchema));
+  if (toolCalls.length > 0 && toolCalls.every((call): call is OpenAiToolCall => call !== null)) {
+    return toolCalls;
+  }
+  const rejectedIndex = toolCalls.indexOf(null);
+  log.warn("Dropping bridge JSON array; passing it through as text", {
+    envelopeCount: parsed.length,
+    rejectedIndex,
+    rejectedName: isRecord(parsed[rejectedIndex]) ? parsed[rejectedIndex].name : undefined,
+  });
+  return null;
+}
+
+function buildBridgeToolCall(
+  parsed: unknown,
+  id: string,
+  allowedToolNames: Set<string>,
+  writeSchema: unknown,
+): OpenAiToolCall | null {
   if (!isRecord(parsed) || !isRecord(parsed.arguments)) {
     return null;
   }
 
   if (parsed.name === "task") {
     return allowedToolNames.has("task")
-      ? buildTaskToolCall(jsonText, parsed.arguments)
+      ? buildTaskToolCall(id, parsed.arguments)
       : null;
   }
 
@@ -200,7 +231,7 @@ export function extractBridgeToolCallFromText(
   }
 
   return {
-    id: `call_bridge_${shortHash(jsonText)}`,
+    id,
     type: "function",
     function: {
       name: writeToolName,
@@ -210,7 +241,7 @@ export function extractBridgeToolCallFromText(
 }
 
 function buildTaskToolCall(
-  jsonText: string,
+  id: string,
   args: Record<string, unknown>,
 ): OpenAiToolCall | null {
   if (
@@ -224,7 +255,7 @@ function buildTaskToolCall(
   }
 
   return {
-    id: `call_bridge_${shortHash(jsonText)}`,
+    id,
     type: "function",
     function: {
       name: "task",
@@ -233,11 +264,11 @@ function buildTaskToolCall(
   };
 }
 
-export function extractBridgeToolCallFromStreamOutput(
+export function extractBridgeToolCallsFromStreamOutput(
   output: string,
   allowedToolNames: Set<string>,
   writeSchema?: unknown,
-): OpenAiToolCall | null {
+): OpenAiToolCall[] | null {
   if (!output) {
     return null;
   }
@@ -251,7 +282,7 @@ export function extractBridgeToolCallFromStreamOutput(
     if (isAssistantText(event)) {
       const decision = detector.push(event);
       if (decision.action === "tool_call") {
-        return decision.toolCall;
+        return decision.toolCalls;
       }
     } else if (event.type === "tool_call") {
       detector.reset();
@@ -290,7 +321,10 @@ function extractStrictJsonText(text: string): string | null {
   if (!trimmed) {
     return null;
   }
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+  if (
+    (trimmed.startsWith("{") && trimmed.endsWith("}"))
+    || (trimmed.startsWith("[") && trimmed.endsWith("]"))
+  ) {
     return trimmed;
   }
 
@@ -309,10 +343,6 @@ function containsCompleteJson(text: string): boolean {
   } catch {
     return false;
   }
-}
-
-function shortHash(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
