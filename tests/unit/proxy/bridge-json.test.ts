@@ -6,7 +6,7 @@ import {
   extractBridgeToolCallsFromText,
   isBridgeJsonEnabled,
 } from "../../../src/proxy/bridge-json.js";
-import { createToolCallStreamChunks } from "../../../src/proxy/tool-loop.js";
+import { createToolCallCompletionResponse, createToolCallStreamChunks } from "../../../src/proxy/tool-loop.js";
 
 const extractBridgeToolCallFromText = (...args: Parameters<typeof extractBridgeToolCallsFromText>) =>
   extractBridgeToolCallsFromText(...args)?.[0] ?? null;
@@ -150,7 +150,36 @@ describe("proxy/bridge-json", () => {
     expect(new Set(calls?.map((call) => call.id)).size).toBe(3);
 
     const chunks = createToolCallStreamChunks({ id: "x", created: 0, model: "m" }, calls!);
-    expect(chunks[0].choices[0].delta.tool_calls.map((call: any) => call.index)).toEqual([0, 1, 2]);
+    expect(chunks.flatMap((chunk) => chunk.choices[0].delta.tool_calls ?? []).map((call: any) => call.index))
+      .toEqual([0, 1, 2]);
+  });
+
+  it("does not reuse ids when an identical envelope is retried", () => {
+    const first = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
+    const retry = extractBridgeToolCallsFromText(`[${TASK_JSON}]`, new Set(["task"]));
+
+    expect(first?.[0].id).not.toBe(retry?.[0].id);
+  });
+
+  it("extracts a write array as parallel write calls", () => {
+    const calls = extractBridgeToolCallsFromText(
+      JSON.stringify(["a.txt", "b.txt"].map((path) => ({ name: "write", arguments: { path, content: path } }))),
+      new Set(["write"]),
+    );
+
+    expect(calls?.map((call) => JSON.parse(call.function.arguments).path)).toEqual(["a.txt", "b.txt"]);
+  });
+
+  it("extracts every envelope of a streamed array from non-stream output", () => {
+    const array = `[${TASK_JSON},${TASK_JSON},${TASK_JSON}]`;
+    const output = [delta(array.slice(0, 60)), delta(array.slice(60))].map(JSON.stringify).join("\n");
+
+    const calls = extractBridgeToolCallsFromStreamOutput(output, new Set(["task"]));
+
+    expect(calls).toHaveLength(3);
+    expect(new Set(calls?.map((call) => call.id)).size).toBe(3);
+    const response = createToolCallCompletionResponse({ id: "x", created: 0, model: "m" }, calls!);
+    expect(response.choices[0].message.tool_calls).toHaveLength(3);
   });
 
   it("rejects an array when any envelope is invalid or the array is empty", () => {
@@ -323,6 +352,8 @@ describe("proxy/bridge-json", () => {
     );
     expect(taskPrompt).toContain("Do not add id, type, or function fields");
     expect(taskPrompt).toContain("do not stringify arguments");
+    expect(taskPrompt).toContain("one JSON array of those objects to dispatch several tasks in parallel");
+    expect(taskPrompt).not.toContain("exactly one JSON object");
     expect(readPrompt).toBe(basePrompt);
     expect(disabled).toBe(basePrompt);
   });
@@ -364,7 +395,10 @@ describe("proxy/bridge-json", () => {
       expect(detector.push(delta(array.slice(1, 40)))).toEqual({ action: "buffer" });
       const decision = detector.push(delta(array.slice(40)));
 
-      expect(decision.action === "tool_call" && decision.toolCalls.length).toBe(2);
+      expect(decision.action).toBe("tool_call");
+      const calls = decision.action === "tool_call" ? decision.toolCalls : [];
+      expect(calls.map((call) => call.function.name)).toEqual(["task", "task"]);
+      expect(new Set(calls.map((call) => call.id)).size).toBe(2);
     });
 
     it("passes markdown that starts with a bracket through", () => {

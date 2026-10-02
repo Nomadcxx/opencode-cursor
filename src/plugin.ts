@@ -1449,7 +1449,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           });
           const payload = boundaryContext.run(
             "createNonStreamToolCallResponse",
-            (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+            (boundary) => boundary.createNonStreamToolCallResponse(meta, [toolCall]),
           );
           return new Response(JSON.stringify(payload), {
             status: 200,
@@ -1547,10 +1547,10 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             const bridgeDetector = bridgeJsonEnabled
               ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
               : null;
-            const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall | OpenAiToolCall[]) => {
+            const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall[]) => {
               log.debug("Intercepted OpenCode tool call (stream)", {
-                names: [toolCalls].flat().map((toolCall) => toolCall.function.name),
-                callIds: [toolCalls].flat().map((toolCall) => toolCall.id),
+                names: toolCalls.map((toolCall) => toolCall.function.name),
+                callIds: toolCalls.map((toolCall) => toolCall.id),
               });
               const streamChunks = boundaryContext.run(
                 "createStreamToolCallChunks",
@@ -1685,7 +1685,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                       enqueueSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                     },
                     onInterceptedToolCall: (toolCall) => {
-                      emitToolCallAndTerminate(toolCall);
+                      emitToolCallAndTerminate([toolCall]);
                     },
                     onFallbackToLegacy: (error) => {
                       boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);
@@ -1774,7 +1774,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                     enqueueSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                   },
                   onInterceptedToolCall: (toolCall) => {
-                    emitToolCallAndTerminate(toolCall);
+                    emitToolCallAndTerminate([toolCall]);
                   },
                   onFallbackToLegacy: (error) => {
                     boundaryContext.activateLegacyFallback("handleToolLoopEvent.flush", error);
@@ -2106,7 +2106,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
             });
             const payload = boundaryContext.run(
               "createNonStreamToolCallResponse",
-              (boundary) => boundary.createNonStreamToolCallResponse(meta, toolCall),
+              (boundary) => boundary.createNonStreamToolCallResponse(meta, [toolCall]),
             );
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
@@ -2223,13 +2223,13 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           streamTerminated = true;
           res.end();
         });
-        const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall | OpenAiToolCall[]) => {
+        const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall[]) => {
           if (streamTerminated || res.writableEnded) {
             return;
           }
           log.debug("Intercepted OpenCode tool call (stream)", {
-            names: [toolCalls].flat().map((toolCall) => toolCall.function.name),
-            callIds: [toolCalls].flat().map((toolCall) => toolCall.id),
+            names: toolCalls.map((toolCall) => toolCall.function.name),
+            callIds: toolCalls.map((toolCall) => toolCall.id),
           });
           const streamChunks = boundaryContext.run(
             "createStreamToolCallChunks",
@@ -2363,7 +2363,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
                   writeSse(`data: ${JSON.stringify(toolResult)}\n\n`);
                 },
                 onInterceptedToolCall: (toolCall) => {
-                  emitToolCallAndTerminate(toolCall);
+                  emitToolCallAndTerminate([toolCall]);
                 },
                 onFallbackToLegacy: (error) => {
                   boundaryContext.activateLegacyFallback("handleToolLoopEvent", error);

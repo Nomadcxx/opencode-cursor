@@ -415,14 +415,14 @@ describe("proxy/tool-loop", () => {
   it("builds valid non-stream tool call response", () => {
     const response = createToolCallCompletionResponse(
       { id: "resp-1", created: 123, model: "cursor-acp/auto" },
-      {
+      [{
         id: "call_9",
         type: "function",
         function: {
           name: "oc_read",
           arguments: "{\"path\":\"a.txt\"}",
         },
-      },
+      }],
     );
 
     expect(response.object).toBe("chat.completion");
@@ -434,20 +434,37 @@ describe("proxy/tool-loop", () => {
   it("builds valid stream chunks with tool_calls finish reason", () => {
     const chunks = createToolCallStreamChunks(
       { id: "resp-2", created: 456, model: "cursor-acp/auto" },
-      {
+      [{
         id: "call_10",
         type: "function",
         function: {
           name: "oc_write",
           arguments: "{\"path\":\"b.txt\",\"content\":\"x\"}",
         },
-      },
+      }],
     );
 
     expect(chunks).toHaveLength(2);
     expect(chunks[0].choices[0].delta.tool_calls[0].function.name).toBe("oc_write");
     expect(chunks[0].choices[0].finish_reason).toBeNull();
     expect(chunks[1].choices[0].finish_reason).toBe("tool_calls");
+  });
+
+  it("emits one indexed stream chunk per parallel tool call", () => {
+    const calls = ["a", "b", "c"].map((name) => ({
+      id: `call_${name}`,
+      type: "function" as const,
+      function: { name, arguments: "{}" },
+    }));
+    const meta = { id: "resp-3", created: 789, model: "cursor-acp/auto" };
+
+    const chunks = createToolCallStreamChunks(meta, calls);
+    expect(chunks.map((chunk) => chunk.choices[0].delta.tool_calls?.map((c: any) => [c.index, c.id])))
+      .toEqual([[[0, "call_a"]], [[1, "call_b"]], [[2, "call_c"]], undefined]);
+    expect(chunks.at(-1).choices[0].finish_reason).toBe("tool_calls");
+
+    const response = createToolCallCompletionResponse(meta, calls);
+    expect(response.choices[0].message.tool_calls.map((c) => c.id)).toEqual(["call_a", "call_b", "call_c"]);
   });
 });
 

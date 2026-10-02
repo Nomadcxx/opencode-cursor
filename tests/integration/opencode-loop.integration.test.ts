@@ -947,6 +947,32 @@ describe("OpenCode-owned tool loop integration", () => {
     expect(toolCalls.map((call: any) => JSON.parse(call.function.arguments).subagent_type))
       .toEqual(["explore", "general", "explore"]);
     expect(new Set(toolCalls.map((call: any) => call.id)).size).toBe(3);
+    expect(chunks.map((chunk) => chunk.choices?.[0]?.finish_reason).filter(Boolean))
+      .toEqual(["tool_calls"]);
+    const allContent = chunks
+      .map((chunk) => chunk.choices?.[0]?.delta?.content)
+      .filter((value): value is string => typeof value === "string")
+      .join("");
+    expect(allContent).not.toContain('"name":"task"');
+  });
+
+  it("returns a non-stream Task bridge JSON array as parallel tool calls", async () => {
+    process.env.MOCK_CURSOR_SCENARIO = "assistant-bridge-task-array";
+    process.env.MOCK_CURSOR_PROMPT_FILE = "";
+
+    const response = await requestCompletion(baseURL, {
+      model: "auto",
+      stream: false,
+      tools: [TASK_TOOL],
+      messages: [{ role: "user", content: "Dispatch three subagents in parallel" }],
+    });
+
+    const json: any = await response.json();
+    const toolCalls = json.choices?.[0]?.message?.tool_calls ?? [];
+    expect(toolCalls.map((call: any) => JSON.parse(call.function.arguments).subagent_type))
+      .toEqual(["explore", "general", "explore"]);
+    expect(json.choices?.[0]?.finish_reason).toBe("tool_calls");
+    expect(json.choices?.[0]?.message?.content).toBeNull();
   });
 
   it("preserves thinking from mixed assistant events while bridging Task JSON", async () => {

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { parseStreamJsonLine } from "../streaming/parser.js";
 import { MixedDeltaTracker } from "../streaming/delta-tracker.js";
 import {
@@ -8,6 +8,9 @@ import {
   type StreamJsonAssistantEvent,
 } from "../streaming/types.js";
 import type { OpenAiToolCall } from "./tool-loop.js";
+import { createLogger } from "../utils/logger.js";
+
+const log = createLogger("proxy:bridge-json");
 
 export const BRIDGE_JSON_ENV = "CURSOR_ACP_BRIDGE_JSON";
 
@@ -18,9 +21,9 @@ Use this only for a single complete-file write. Otherwise answer normally or use
 
 const TASK_BRIDGE_JSON_CONTEXT = `SYSTEM: OpenCode Task bridge mode is active.
 For Task only, the exact envelope below overrides the earlier generic "standard OpenAI tool_call" instruction. Do not add id, type, or function fields, and do not stringify arguments.
-OpenCode owns the task tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's task tool, respond with exactly one JSON object and no prose:
+OpenCode owns the task tool. Do not invoke Cursor's built-in Task tool; it uses a different subagent list. To call OpenCode's task tool, respond with one JSON object, or one JSON array of those objects to dispatch several tasks in parallel, and no prose:
 {"name":"task","arguments":{"description":"3-5 words","prompt":"task details","subagent_type":"one name listed in the OpenCode task description"}}
-To dispatch several tasks in parallel, respond instead with exactly one JSON array of these objects and no prose: [{"name":"task","arguments":{...}},{"name":"task","arguments":{...}}]
+[{"name":"task","arguments":{"description":"first task","prompt":"details","subagent_type":"explore"}},{"name":"task","arguments":{"description":"second task","prompt":"details","subagent_type":"general"}}]
 Use this only when delegating through OpenCode. Otherwise answer normally.`;
 
 type BridgePromptOptions = {
@@ -178,16 +181,24 @@ export function extractBridgeToolCallsFromText(
     return null;
   }
 
-  const id = `call_bridge_${shortHash(jsonText)}`;
+  // Random, not content-derived: a retried identical envelope must not reuse earlier call ids.
+  const id = `call_bridge_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   if (!Array.isArray(parsed)) {
     const toolCall = buildBridgeToolCall(parsed, id, allowedToolNames, writeSchema);
     return toolCall ? [toolCall] : null;
   }
   const toolCalls = parsed.map((entry, i) =>
     buildBridgeToolCall(entry, `${id}_${i}`, allowedToolNames, writeSchema));
-  return toolCalls.length > 0 && toolCalls.every((call): call is OpenAiToolCall => call !== null)
-    ? toolCalls
-    : null;
+  if (toolCalls.length > 0 && toolCalls.every((call): call is OpenAiToolCall => call !== null)) {
+    return toolCalls;
+  }
+  const rejectedIndex = toolCalls.indexOf(null);
+  log.warn("Dropping bridge JSON array; passing it through as text", {
+    envelopeCount: parsed.length,
+    rejectedIndex,
+    rejectedName: isRecord(parsed[rejectedIndex]) ? parsed[rejectedIndex].name : undefined,
+  });
+  return null;
 }
 
 function buildBridgeToolCall(
@@ -332,10 +343,6 @@ function containsCompleteJson(text: string): boolean {
   } catch {
     return false;
   }
-}
-
-function shortHash(value: string): string {
-  return createHash("sha256").update(value).digest("hex").slice(0, 12);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
