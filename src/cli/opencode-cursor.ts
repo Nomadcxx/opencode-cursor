@@ -8,6 +8,7 @@ import {
   mkdirSync,
   realpathSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -271,7 +272,7 @@ function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
     }
     const stat = lstatSync(pluginPath);
     if (stat.isSymbolicLink()) {
-      const target = readFileSync(pluginPath, "utf8");
+      const target = readlinkSync(pluginPath);
       return { name: "Plugin file", passed: true, message: `symlink → ${target}` };
     }
     return { name: "Plugin file", passed: true, message: "file (copy)" };
@@ -1069,7 +1070,7 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
       pluginType = stat.isSymbolicLink() ? "symlink" : "file";
       if (pluginType === "symlink") {
         try {
-          pluginTarget = readFileSync(pluginPath, "utf8");
+          pluginTarget = readlinkSync(pluginPath);
         } catch {
           pluginTarget = undefined;
         }
