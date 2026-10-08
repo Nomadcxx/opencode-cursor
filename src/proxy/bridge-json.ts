@@ -56,7 +56,15 @@ export type BridgeStreamDecision =
 export class BridgeJsonStreamDetector {
   private state: "undecided" | "candidate" | "passthrough" = "undecided";
   private buffer = "";
+  /** True until a fenced candidate's info line is complete and accepted. */
+  private fenceInfoPending = false;
   private readonly tracker = new MixedDeltaTracker();
+  // Incremental bracket/string scan of the candidate. A parseable envelope must
+  // end balanced and outside a string, so the full-buffer parse waits for that
+  // instead of rerunning on every streamed delta.
+  private depth = 0;
+  private inString = false;
+  private escaped = false;
 
   constructor(
     private readonly allowedToolNames: Set<string>,
@@ -86,6 +94,8 @@ export class BridgeJsonStreamDetector {
       // `[` alone is common prose (markdown links); only `[{` starts an envelope array.
       if (/^(\{|```|\[\s*\{)/.test(meaningful)) {
         this.state = "candidate";
+        this.fenceInfoPending = meaningful.startsWith("```");
+        this.scan(this.buffer);
       } else {
         const withheld = this.buffer;
         this.buffer = "";
@@ -94,10 +104,12 @@ export class BridgeJsonStreamDetector {
           ? { action: "passthrough", text: withheld }
           : { action: "passthrough" };
       }
+    } else {
+      this.scan(delta);
     }
 
-    const trimmed = this.buffer.trimStart();
-    if (trimmed.startsWith("```")) {
+    if (this.fenceInfoPending) {
+      const trimmed = this.buffer.trimStart();
       const infoLineEnd = trimmed.indexOf("\n", 3);
       if (infoLineEnd < 0) {
         return { action: "buffer" };
@@ -106,10 +118,13 @@ export class BridgeJsonStreamDetector {
       if (info && info.toLowerCase() !== "json") {
         return this.releaseBuffer();
       }
+      this.fenceInfoPending = false;
     }
 
-    // ponytail: bridge responses are small; reparse the accumulated candidate.
-    // If envelopes become large, replace this O(n²) path with an incremental parser.
+    if (this.depth !== 0 || this.inString) {
+      return { action: "buffer" };
+    }
+
     const toolCalls = extractBridgeToolCallsFromText(
       this.buffer,
       this.allowedToolNames,
@@ -140,7 +155,11 @@ export class BridgeJsonStreamDetector {
   reset(): void {
     this.state = "undecided";
     this.buffer = "";
+    this.fenceInfoPending = false;
     this.tracker.reset();
+    this.depth = 0;
+    this.inString = false;
+    this.escaped = false;
   }
 
   private releaseBuffer(): BridgeStreamDecision {
@@ -148,6 +167,28 @@ export class BridgeJsonStreamDetector {
     this.buffer = "";
     this.state = "passthrough";
     return { action: "passthrough", text };
+  }
+
+  // Each delta is scanned once as it arrives, keeping detection linear in envelope size.
+  private scan(text: string): void {
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (this.inString) {
+        if (this.escaped) {
+          this.escaped = false;
+        } else if (ch === "\\") {
+          this.escaped = true;
+        } else if (ch === '"') {
+          this.inString = false;
+        }
+      } else if (ch === '"') {
+        this.inString = true;
+      } else if (ch === "{" || ch === "[") {
+        this.depth++;
+      } else if (ch === "}" || ch === "]") {
+        this.depth--;
+      }
+    }
   }
 }
 

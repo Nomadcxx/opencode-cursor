@@ -561,5 +561,47 @@ describe("proxy/bridge-json", () => {
         text: write,
       });
     });
+
+    it("parses a streamed envelope once, not on every delta", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["write"]));
+      const content = 'function f() {\n  return { a: "}]\\\\" };\n}\n'.repeat(200);
+      const envelope = JSON.stringify({ name: "write", arguments: { path: "src/f.ts", content } });
+      const originalParse = JSON.parse;
+      let parseCalls = 0;
+      JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+        parseCalls++;
+        return originalParse(...args);
+      }) as typeof JSON.parse;
+
+      let decision;
+      try {
+        for (let i = 0; i < envelope.length; i += 7) {
+          decision = detector.push(delta(envelope.slice(i, i + 7)));
+          if (i + 7 < envelope.length) {
+            expect(decision).toEqual({ action: "buffer" });
+          }
+        }
+      } finally {
+        JSON.parse = originalParse;
+      }
+
+      expect(decision?.action).toBe("tool_call");
+      if (decision?.action === "tool_call") {
+        expect(JSON.parse(decision.toolCalls[0].function.arguments).content).toBe(content);
+      }
+      expect(parseCalls).toBe(1);
+    });
+
+    it("extracts a streamed fenced envelope after the closing fence", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["task"]));
+      const fenced = `\`\`\`json\n${TASK_JSON}\n\`\`\``;
+
+      for (let i = 0; i < fenced.length - 3; i += 5) {
+        expect(detector.push(delta(fenced.slice(i, Math.min(i + 5, fenced.length - 3))))).toEqual({
+          action: "buffer",
+        });
+      }
+      expect(detector.push(delta("```")).action).toBe("tool_call");
+    });
   });
 });
