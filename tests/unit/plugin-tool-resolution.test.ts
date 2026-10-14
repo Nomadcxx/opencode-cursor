@@ -56,23 +56,32 @@ describe("buildLocalFallbackTools", () => {
     expect(names).toContain("oc_write");
   });
 
-  it("advertises canonical edit/write with OpenCode-native camelCase schema in opencode mode", () => {
+  it("advertises canonical native tools with Kilo-native schemas in opencode mode", () => {
     const registry = new CoreRegistry();
     registerDefaultTools(registry);
 
     const tools = buildLocalFallbackTools(registry, "opencode");
     const byName = (name: string) => tools.find((t) => t.name === name) as any;
 
-    // Canonical names are executed by OpenCode-native tools (camelCase contract).
+    // Canonical names are executed by Kilo-native tools (camelCase contract).
     expect(byName("edit").parameters.required).toEqual(["filePath", "oldString", "newString"]);
     expect(byName("write").parameters.required).toEqual(["filePath", "content"]);
+    // Native read uses filePath; the plugin's local read uses path.
+    expect(byName("read").parameters.required).toEqual(["filePath"]);
+    // Native bash uses workdir; the plugin's local bash uses cwd.
+    expect(byName("bash").parameters.properties).toHaveProperty("workdir");
+    expect(byName("bash").parameters.properties).not.toHaveProperty("cwd");
+    // Native glob keeps `path` (same as the plugin contract) — no remap needed.
+    expect(byName("glob").parameters.properties).toHaveProperty("path");
 
     // oc_* aliases route to the plugin's local registry, which uses snake_case.
     expect(byName("oc_edit").parameters.required).toEqual(["path", "old_string", "new_string"]);
     expect(byName("oc_write").parameters.required).toEqual(["path", "content"]);
+    expect(byName("oc_read").parameters.required).toEqual(["path"]);
+    expect(byName("oc_bash").parameters.properties).toHaveProperty("cwd");
   });
 
-  it("keeps canonical edit/write snake_case in proxy-exec mode (plugin executes locally)", () => {
+  it("keeps canonical native tools snake_case in proxy-exec mode (plugin executes locally)", () => {
     const registry = new CoreRegistry();
     registerDefaultTools(registry);
 
@@ -81,6 +90,8 @@ describe("buildLocalFallbackTools", () => {
 
     expect(byName("edit").parameters.required).toEqual(["path", "old_string", "new_string"]);
     expect(byName("write").parameters.required).toEqual(["path", "content"]);
+    expect(byName("read").parameters.required).toEqual(["path"]);
+    expect(byName("bash").parameters.properties).toHaveProperty("cwd");
   });
 });
 

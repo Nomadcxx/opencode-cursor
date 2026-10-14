@@ -5,7 +5,7 @@ import { spawn, spawnSync } from "child_process";
 import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
-import { isAbsolute, join, relative, resolve } from "path";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { ToolMapper, type ToolUpdate } from "./acp/tools.js";
 import { LineBuffer } from "./streaming/line-buffer.js";
 import { StreamToSseConverter, formatSseDone } from "./streaming/openai-sse.js";
@@ -3087,33 +3087,157 @@ function applyToolContextDefaults(
 }
 
 /**
+ * Maps a plugin tool/alias name to the Kilo permission key the native tool would use.
+ * `oc_*` aliases resolve to their base name; write shares the native `edit` action.
+ * Unknown plugin-only tools keep their own name so a `"<tool>": "deny"` rule still applies.
+ */
+export function resolvePermissionKey(toolName: string): string {
+  const base = toolName.startsWith("oc_") ? toolName.slice(3) : toolName;
+  switch (base) {
+    case "bash":
+    case "shell":
+      return "bash";
+    case "write":
+      return "edit";
+    case "read":
+    case "edit":
+    case "glob":
+    case "grep":
+      return base;
+    default:
+      return base;
+  }
+}
+
+/**
+ * Builds the permission patterns + external_directory target for a plugin tool call,
+ * mirroring the native tools closely enough that existing `permission` rules apply.
+ * Paths are made relative to the worktree where the native tool does the same.
+ */
+function buildPermissionRequest(
+  toolName: string,
+  args: Record<string, any>,
+  worktree: string,
+): { permission: string; patterns: string[]; always: string[]; externalTarget?: string } | null {
+  const base = toolName.startsWith("oc_") ? toolName.slice(3) : toolName;
+  const permission = resolvePermissionKey(toolName);
+  const str = (v: unknown): string | undefined => (typeof v === "string" && v.length > 0 ? v : undefined);
+  const rel = (p: string) => relative(worktree, p) || ".";
+
+  switch (base) {
+    case "read": {
+      const filePath = str(args.path) ?? str(args.filePath);
+      if (!filePath) return null;
+      return { permission, patterns: [rel(resolve(filePath))], always: ["*"], externalTarget: resolve(filePath) };
+    }
+    case "write":
+    case "edit": {
+      const filePath = str(args.path) ?? str(args.filePath);
+      if (!filePath) return null;
+      return { permission: "edit", patterns: [rel(resolve(filePath))], always: ["*"], externalTarget: resolve(filePath) };
+    }
+    case "glob": {
+      const pattern = str(args.pattern);
+      if (!pattern) return null;
+      const dir = str(args.path);
+      return {
+        permission,
+        patterns: [pattern],
+        always: ["*"],
+        externalTarget: dir ? resolve(dir) : undefined,
+      };
+    }
+    case "ls": {
+      const dir = str(args.path);
+      if (!dir) return null;
+      return { permission, patterns: [rel(resolve(dir))], always: ["*"], externalTarget: resolve(dir) };
+    }
+    case "bash":
+    case "shell": {
+      const command = str(args.command);
+      if (!command) return null;
+      const cwd = str(args.cwd) ?? str(args.workdir) ?? worktree;
+      // The native shell tool decomposes the command into sub-command patterns via a
+      // tree-sitter scanner. We cannot reproduce that here, so we request the whole
+      // command as the pattern; `"bash": {"*": "..."}` rules still apply, and a
+      // pattern like `"rm *"` matches the full command string.
+      return {
+        permission,
+        patterns: [command],
+        always: [command.split(/\s+/)[0] + " *"],
+        externalTarget: resolve(cwd),
+      };
+    }
+    default:
+      // Plugin-only tools (mkdir/rm/stat) have no native equivalent, so the permission
+      // key is the tool's own name. This matches the documented rule that permission
+      // keys match the custom tool name, so `"rm": "deny"` hides/blocks it. Existing
+      // configs are unaffected because the default ruleset is `"*": "allow"`.
+      {
+        const target = str(args.path) ?? str(args.filePath) ?? str(args.target);
+        if (!target) return null;
+        return {
+          permission,
+          patterns: [rel(resolve(target))],
+          always: ["*"],
+          externalTarget: resolve(target),
+        };
+      }
+  }
+}
+
+/**
+ * True when the target lives outside the session workspace, matching the core
+ * `assertExternalDirectory` rule (which skips roots/config and in-workspace paths).
+ */
+function isExternalTarget(target: string | undefined, worktree: string, directory: string): boolean {
+  if (!target) return false;
+  const candidate = canonicalizePathForCompare(target);
+  return !isWithinPath(worktree, candidate) && !isWithinPath(directory, candidate);
+}
+
+/**
  * Build tool hook entries from local registry
  */
 export const TOOL_HOOK_EXCLUSIONS = new Set(["grep"]);
-const OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["edit", "write"]);
+
+// In `opencode` mode Kilo owns execution of these tools. Registering a same-named
+// plugin tool hook shadows the built-in implementation ("custom tool wins"), which
+// drops native behavior the plugin does not reproduce:
+//   - `read`  returns image/PDF file attachments and asks `read`/`external_directory`
+//   - `bash`  asks `bash`/`external_directory` (sub-command patterns)
+//   - `glob`  asks `glob`/`external_directory`
+//   - `edit`/`write` ask `edit`/`external_directory`
+// The plugin still exposes `oc_*` aliases for compatibility/local execution.
+const OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS = new Set(["edit", "write", "read", "bash", "glob"]);
 
 // Exported for mode-boundary tests without initializing the full plugin runtime.
 export function shouldRegisterNativeToolHook(toolName: string, mode: ToolLoopMode): boolean {
   return !(mode === "opencode" && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(toolName));
 }
 
-// OpenCode-native edit/write use camelCase arg names; the plugin's local registry
-// uses snake_case. Only these keys diverge in case between the two contracts.
-const NATIVE_CANONICAL_KEY_MAP: Record<string, string> = {
-  path: "filePath",
-  old_string: "oldString",
-  new_string: "newString",
+// Kilo-native tools use camelCase arg names; the plugin's local registry uses
+// snake_case. Only the keys listed here diverge between the two contracts, and the
+// divergence is per-tool (e.g. native `glob` really does use `path`, while native
+// `read` uses `filePath`, and native `bash` uses `workdir`).
+const NATIVE_CANONICAL_KEY_MAP: Record<string, Record<string, string>> = {
+  edit: { path: "filePath", old_string: "oldString", new_string: "newString" },
+  write: { path: "filePath" },
+  read: { path: "filePath" },
+  bash: { cwd: "workdir" },
+  glob: {},
 };
 
 /**
- * Remap a local (snake_case) tool schema to OpenCode's native camelCase contract for
+ * Remap a local (snake_case) tool schema to Kilo's native camelCase contract for
  * the keys that diverge. Other properties (e.g. cursor-agent compat fields) pass through
  * unchanged. Returns a new object; the input is not mutated.
  */
-function toNativeCanonicalSchema(parameters: unknown): unknown {
+function toNativeCanonicalSchema(toolName: string, parameters: unknown): unknown {
   if (!parameters || typeof parameters !== "object") return parameters;
+  const keyMap = NATIVE_CANONICAL_KEY_MAP[toolName] ?? {};
   const p = parameters as Record<string, any>;
-  const remap = (key: string) => NATIVE_CANONICAL_KEY_MAP[key] ?? key;
+  const remap = (key: string) => keyMap[key] ?? key;
   const properties: Record<string, unknown> = {};
   if (p.properties && typeof p.properties === "object") {
     for (const [key, value] of Object.entries(p.properties)) {
@@ -3128,18 +3252,18 @@ export function buildLocalFallbackTools(
   registry: CoreRegistry,
   mode: ToolLoopMode = "opencode",
 ): any[] {
-  // In opencode mode, canonical edit/write are executed by OpenCode's NATIVE tools
-  // (camelCase: filePath/oldString/newString), not by the plugin — see
-  // OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS. So the canonical fallback entry must advertise
-  // the native camelCase schema; otherwise the schema-compat layer coerces the model's
-  // args to the advertised snake_case and the native handler rejects them. The oc_* alias
-  // keeps the local snake_case schema because it routes to the plugin's own registry.
+  // In opencode mode, canonical native tools (edit/write/read/bash/glob) are executed by
+  // Kilo's NATIVE tools (camelCase args), not by the plugin — see
+  // OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS. So each canonical fallback entry must advertise
+  // the native schema; otherwise the schema-compat layer coerces the model's args to the
+  // advertised snake_case and the native handler rejects them. The oc_* alias keeps the
+  // local snake_case schema because it routes to the plugin's own registry.
   // In proxy-exec mode the plugin executes these locally, so snake_case stays correct.
   const canonicalIsNative = mode === "opencode";
   return registry.list().flatMap((t) => {
     const ocAlias = `oc_${t.id}`;
     if (canonicalIsNative && OPENCODE_NATIVE_TOOL_HOOK_EXCLUSIONS.has(t.name)) {
-      const canonical = { ...t, parameters: toNativeCanonicalSchema(t.parameters) };
+      const canonical = { ...t, parameters: toNativeCanonicalSchema(t.name, t.parameters) };
       return t.name === ocAlias ? [canonical] : [canonical, { ...t, name: ocAlias }];
     }
     return t.name === ocAlias ? [t] : [t, { ...t, name: ocAlias }];
@@ -3170,6 +3294,37 @@ export function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: s
               fallbackBaseDir,
               sessionWorkspaceBySession,
             );
+
+            // Enforce Kilo `permission` rules for tools the plugin executes itself.
+            // The native tools call ctx.ask(...) internally; plugin hooks must do the
+            // same, otherwise `deny`/`ask` rules keyed on the native permission name
+            // (read/edit/bash/glob/...) never apply to oc_* aliases or plugin-only tools.
+            const worktree = typeof context?.worktree === "string" && context.worktree
+              ? context.worktree
+              : resolveWorkspaceDirectory(undefined, context?.directory);
+            const directory = typeof context?.directory === "string" && context.directory
+              ? context.directory
+              : worktree;
+            const request = buildPermissionRequest(toolName, normalizedArgs, worktree);
+            if (request && typeof context?.ask === "function") {
+              if (isExternalTarget(request.externalTarget, worktree, directory)) {
+                const target = request.externalTarget!;
+                const glob = `${dirname(target)}/*`;
+                await context.ask({
+                  permission: "external_directory",
+                  patterns: [glob],
+                  always: [glob],
+                  metadata: { filepath: target, parentDir: dirname(target) },
+                });
+              }
+              await context.ask({
+                permission: request.permission,
+                patterns: request.patterns,
+                always: request.always,
+                metadata: { tool: toolName },
+              });
+            }
+
             return await handler(normalizedArgs);
           } catch (error: any) {
             log.debug("Tool hook execution failed", { tool: toolName, error: String(error?.message || error) });
@@ -3187,8 +3342,12 @@ export function buildToolHookEntries(registry: CoreRegistry, fallbackBaseDir?: s
       entries[ocAlias] = createEntry(ocAlias);
     }
 
-    // Some agent variants emit "shell" instead of "bash".
-    if (t.name === "bash" && !entries.shell) {
+    // Some agent variants emit "shell" instead of "bash". Only expose this
+    // compat hook where the plugin owns execution; in opencode mode the native
+    // `bash` tool handles the alias (tool-loop maps "shell" -> "bash"), and
+    // registering a separate unguarded `shell` hook would let it bypass the
+    // native `bash` permission check.
+    if (t.name === "bash" && shouldRegisterNativeToolHook("bash", TOOL_LOOP_MODE) && !entries.shell) {
       entries.shell = createEntry("shell");
     }
   }

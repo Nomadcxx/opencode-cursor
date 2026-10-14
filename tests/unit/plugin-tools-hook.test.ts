@@ -47,20 +47,28 @@ describe("Plugin tool hook", () => {
     expect(hooks.tool).toBeDefined();
     expect(typeof hooks.tool).toBe("object");
 
-    // Verify local aliases are registered without shadowing OpenCode native tools.
+    // Verify local aliases are registered without shadowing Kilo native tools.
+    // Native-named tools owned by Kilo (edit/write/read/bash/glob) must NOT be
+    // shadowed by plugin hooks in opencode mode — doing so drops native image
+    // attachments and permission checks. Only oc_* aliases and non-native names remain.
     const toolNames = Object.keys(hooks.tool || {});
-    expect(toolNames).toContain("bash");
-    expect(toolNames).toContain("shell");
-    expect(toolNames).toContain("read");
+    expect(toolNames).not.toContain("bash");
+    expect(toolNames).not.toContain("read");
+    expect(toolNames).not.toContain("glob");
+    // `shell` is a cursor-agent compat alias for bash; in opencode mode the native
+    // `bash` tool owns it (tool-loop aliases shell -> bash), so it must not be
+    // registered as an unguarded plugin hook either.
+    expect(toolNames).not.toContain("shell");
     expect(toolNames).not.toContain("write");
     expect(toolNames).not.toContain("edit");
+    expect(toolNames).toContain("oc_bash");
     expect(toolNames).toContain("oc_edit");
     expect(toolNames).toContain("oc_write");
     expect(toolNames).toContain("oc_read");
+    expect(toolNames).toContain("oc_glob");
     expect(toolNames).not.toContain("grep");
     expect(toolNames).not.toContain("oc_grep");
     expect(toolNames).toContain("ls");
-    expect(toolNames).toContain("glob");
     expect(toolNames).toContain("mkdir");
     expect(toolNames).toContain("rm");
     expect(toolNames).toContain("stat");
@@ -72,20 +80,20 @@ describe("Plugin tool hook", () => {
     expect(bashTool?.args).toBeDefined();
     expect(typeof bashTool?.execute).toBe("function");
 
-    const shellTool = hooks.tool?.shell;
-    expect(shellTool).toBeDefined();
-    expect(shellTool?.description).toBeDefined();
-    expect(shellTool?.args).toBeDefined();
-    expect(typeof shellTool?.execute).toBe("function");
+    // In opencode mode the `shell` compat hook is intentionally NOT registered;
+    // the native `bash` tool handles the alias so permissions are enforced.
+    expect(hooks.tool?.shell).toBeUndefined();
   });
 
-  it("registers native write only outside OpenCode-owned tool-loop mode", () => {
-    expect(shouldRegisterNativeToolHook("write", "opencode")).toBe(false);
-    expect(shouldRegisterNativeToolHook("write", "proxy-exec")).toBe(true);
-    expect(shouldRegisterNativeToolHook("write", "off")).toBe(true);
-    expect(shouldRegisterNativeToolHook("edit", "opencode")).toBe(false);
-    expect(shouldRegisterNativeToolHook("edit", "proxy-exec")).toBe(true);
-    expect(shouldRegisterNativeToolHook("edit", "off")).toBe(true);
+  it("registers native hooks only outside Kilo-owned tool-loop mode", () => {
+    for (const name of ["write", "edit", "read", "bash", "glob"]) {
+      expect(shouldRegisterNativeToolHook(name, "opencode")).toBe(false);
+      expect(shouldRegisterNativeToolHook(name, "proxy-exec")).toBe(true);
+      expect(shouldRegisterNativeToolHook(name, "off")).toBe(true);
+    }
+    // Non-native names keep their hooks in every mode.
+    expect(shouldRegisterNativeToolHook("mkdir", "opencode")).toBe(true);
+    expect(shouldRegisterNativeToolHook("stat", "opencode")).toBe(true);
   });
 
   it("resolves relative oc_write paths against context directory", async () => {
@@ -154,18 +162,15 @@ describe("Plugin tool hook", () => {
     }
   }, 15000);
 
-  it("executes shell alias and defaults cwd to context directory", async () => {
+  it("does not register a plugin shell alias in opencode mode (native bash owns it)", async () => {
     const projectDir = mkdtempSync(join(tmpdir(), "plugin-hook-shell-"));
     try {
       const hooks = await CursorPlugin(createMockInput(projectDir));
-      const out = await hooks.tool?.shell?.execute(
-        {
-          command: "pwd",
-        },
-        createToolContext(projectDir, projectDir),
-      );
 
-      expect(realpathSync((out || "").trim())).toBe(realpathSync(projectDir));
+      // `shell` is a cursor-agent alias for native `bash`. In opencode mode the
+      // native tool owns it so permission checks apply; registering a plugin hook
+      // would shadow it with an unguarded handler.
+      expect(hooks.tool?.shell).toBeUndefined();
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
