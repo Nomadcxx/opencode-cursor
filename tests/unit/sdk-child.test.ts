@@ -56,6 +56,49 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 
+// Streams events for a request until it receives {"id","op":"cancel"} for it.
+const STREAMING_RUNNER = `#!/usr/bin/env node
+process.stdin.setEncoding("utf8");
+let buffer = "";
+const timers = new Map();
+
+function emit(payload) {
+  process.stdout.write(JSON.stringify(payload) + "\\n");
+}
+
+function handle(line) {
+  const request = JSON.parse(line);
+  if (request.op === "cancel") {
+    const timer = timers.get(request.id);
+    if (!timer) return;
+    clearInterval(timer);
+    timers.delete(request.id);
+    emit({ id: request.id, done: true, exitCode: 130 });
+    return;
+  }
+  let n = 0;
+  timers.set(request.id, setInterval(() => {
+    n++;
+    emit({
+      id: request.id,
+      event: {
+        type: "assistant",
+        message: { role: "assistant", content: [{ type: "text", text: "tick-" + n }] },
+      },
+    });
+  }, 10));
+}
+
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split("\\n");
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (line.trim()) handle(line);
+  }
+});
+`;
+
 async function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) {
@@ -141,4 +184,53 @@ describe("sdk-child runner path resolution", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("sdk-child cancellation", () => {
+  it("kill() cancels the in-flight runner request and drops its later events", async () => {
+    const originalRunnerPath = process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-streaming-runner-"));
+    const runnerPath = join(dir, "streaming-runner.mjs");
+    writeFileSync(runnerPath, STREAMING_RUNNER, "utf8");
+    chmodSync(runnerPath, 0o755);
+    stopSdkRunner();
+    process.env.CURSOR_ACP_SDK_RUNNER_PATH = runnerPath;
+
+    try {
+      const child = createSdkNodeChild({
+        apiKey: "cursor_123",
+        model: "auto",
+        prompt: "hello",
+        cwd: dir,
+      });
+      const closed = waitForClose(child);
+
+      let received = "";
+      let killedAt = -1;
+      await new Promise<void>((resolve) => {
+        child.stdout.on("data", (chunk) => {
+          received += chunk.toString("utf8");
+          if (killedAt < 0 && received.includes("tick-3")) {
+            killedAt = received.length;
+            child.kill();
+            resolve();
+          }
+        });
+      });
+
+      // The fake runner reports 130 only after it received the cancel op;
+      // without it the request would stream forever and this would time out.
+      expect(await closed).toBe(130);
+      // Anything the runner streamed between kill() and done is dropped.
+      expect(received.length).toBe(killedAt);
+    } finally {
+      stopSdkRunner();
+      if (originalRunnerPath === undefined) {
+        delete process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+      } else {
+        process.env.CURSOR_ACP_SDK_RUNNER_PATH = originalRunnerPath;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });

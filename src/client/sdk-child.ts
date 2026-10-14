@@ -17,8 +17,12 @@
  * - Requests run concurrently inside the runner (OpenCode fires several at once)
  * - Also exposes listModelsViaRunner() for model discovery (op: "listModels")
  *
+ * Cancellation:
+ * - kill() on a single child sends {"id","op":"cancel"} so the runner cancels
+ *   that SDK run; its later events are dropped and it ends at the runner's
+ *   done marker as usual
+ *
  * Limitations:
- * - kill() on a single child does not interrupt the in-flight SDK run
  * - If a different apiKey arrives (rare), the runner is re-spawned with the new key
  */
 
@@ -135,6 +139,8 @@ class SdkRunnerSingleton {
   private runnerProcess: ReturnType<typeof spawn> | null = null;
   private lastApiKey: string | null = null;
   private pendingRequests = new Map<string, PendingRequest>();
+  /** Pending requests whose consumer is gone; their events are dropped. */
+  private cancelledRequests = new Set<string>();
   private lineBuffer = "";
   private starting: Promise<void> | null = null;
 
@@ -177,18 +183,21 @@ class SdkRunnerSingleton {
 
     this.lastApiKey = apiKey;
 
-    this.runnerProcess = spawn(nodeBin, [runnerPath], {
+    const runner = spawn(nodeBin, [runnerPath], {
       env: { ...process.env, CURSOR_API_KEY: apiKey },
       stdio: ["pipe", "pipe", "pipe"],
     });
+    this.runnerProcess = runner;
+    this.lineBuffer = "";
 
     // Handle runner stdout (demultiplex by request id)
-    this.runnerProcess.stdout?.on("data", (chunk) => {
+    runner.stdout?.on("data", (chunk) => {
+      if (this.runnerProcess !== runner) return; // replaced runner
       this.handleStdoutChunk(chunk);
     });
 
     // Forward stderr to our logger (diagnostics only)
-    this.runnerProcess.stderr?.on("data", (chunk) => {
+    runner.stderr?.on("data", (chunk) => {
       const text = chunk.toString("utf8").trimEnd();
       for (const line of text.split("\n")) {
         if (line) {
@@ -197,28 +206,31 @@ class SdkRunnerSingleton {
       }
     });
 
-    // Handle runner exit
-    this.runnerProcess.on("close", (code) => {
+    // Handle runner exit. A runner replaced by kill() already failed its
+    // requests there; its late close must not touch the current runner's.
+    runner.on("close", (code) => {
+      if (this.runnerProcess !== runner) return;
       log.error(`sdk runner exited with code ${code}`);
       this.runnerProcess = null;
-      // Fail all pending requests
-      for (const [id, pending] of this.pendingRequests.entries()) {
-        pending.promiseRejector(new Error(`Runner exited with code ${code}`));
-        pending.controller.error(new Error(`Runner exited with code ${code}`));
-      }
-      this.pendingRequests.clear();
+      this.failPending(new Error(`Runner exited with code ${code}`));
     });
 
-    this.runnerProcess.on("error", (err) => {
+    runner.on("error", (err) => {
+      if (this.runnerProcess !== runner) return;
       log.error("sdk runner spawn error", { error: err.message });
       this.runnerProcess = null;
-      // Fail all pending requests
-      for (const [id, pending] of this.pendingRequests.entries()) {
-        pending.promiseRejector(err);
-        pending.controller.error(err);
-      }
-      this.pendingRequests.clear();
+      this.failPending(err);
     });
+  }
+
+  /** Fail every pending request (runner gone). */
+  private failPending(err: Error): void {
+    for (const pending of this.pendingRequests.values()) {
+      pending.promiseRejector(err);
+      pending.controller.error(err);
+    }
+    this.pendingRequests.clear();
+    this.cancelledRequests.clear();
   }
 
   /**
@@ -294,6 +306,9 @@ class SdkRunnerSingleton {
           pending.controller.close();
           pending.promiseResolver(wrapped.exitCode ?? 0);
           this.pendingRequests.delete(requestId);
+          this.cancelledRequests.delete(requestId);
+        } else if (this.cancelledRequests.has(requestId)) {
+          // Consumer already stopped reading; drop the run's trailing output.
         } else if (wrapped.event) {
           const eventJson = extractEventJson(line);
           pending.controller.enqueue(textEncoder.encode(eventJson + "\n"));
@@ -321,6 +336,25 @@ class SdkRunnerSingleton {
   }
 
   /**
+   * Ask the runner to cancel one in-flight request. The request still ends
+   * through the runner's done marker; events in between are dropped.
+   */
+  cancelRequest(requestId: string): void {
+    if (!this.pendingRequests.has(requestId) || this.cancelledRequests.has(requestId)) {
+      return;
+    }
+    this.cancelledRequests.add(requestId);
+    log.debug(`cancelling request ${requestId}`);
+    try {
+      this.sendRawRequest({ id: requestId, op: "cancel" });
+    } catch (err) {
+      log.debug(`cancel for ${requestId} not sent`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Kill the runner process (hard kill).
    */
   kill(): void {
@@ -331,6 +365,7 @@ class SdkRunnerSingleton {
         // ignore
       }
       this.runnerProcess = null;
+      this.failPending(new Error("Runner stopped"));
     }
   }
 }
@@ -368,7 +403,8 @@ export function createSdkBunChild(options: {
     imageCount: options.images?.length ?? 0,
   });
 
-  let requestId: string;
+  let requestId: string | undefined;
+  let killed = false;
   let resolveExited!: (code: number) => void;
   let rejectExited!: (err: Error) => void;
 
@@ -376,6 +412,11 @@ export function createSdkBunChild(options: {
     resolveExited = resolve;
     rejectExited = reject;
   });
+
+  const cancel = () => {
+    killed = true;
+    if (requestId) singleton.cancelRequest(requestId);
+  };
 
   const stdout = new ReadableStream<Uint8Array>({
     start: async (controller) => {
@@ -389,6 +430,7 @@ export function createSdkBunChild(options: {
 
         // Send the request to the runner
         singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.params, options.images);
+        if (killed) singleton.cancelRequest(requestId);
       } catch (err) {
         const error = err instanceof Error ? err : new Error(String(err));
         log.error("Failed to start request (bun)", { error: error.message });
@@ -397,9 +439,8 @@ export function createSdkBunChild(options: {
       }
     },
     cancel() {
-      // Best-effort: could stop forwarding events, but runner continues
-      // For now, just log it
       log.debug(`request ${requestId} cancelled (bun)`);
+      cancel();
     },
   });
 
@@ -416,8 +457,8 @@ export function createSdkBunChild(options: {
     stderr,
     exited,
     kill() {
-      log.debug(`kill() called on bun child ${requestId}` );
-      // Best-effort cancellation; runner process stays alive
+      log.debug(`kill() called on bun child ${requestId}`);
+      cancel();
     },
   };
 }
@@ -433,6 +474,7 @@ export class SdkNodeChild extends EventEmitter {
   public readonly stderr: PassThrough = new PassThrough();
 
   private requestId: string | null = null;
+  private killed = false;
 
   async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string; params?: SdkModelParam[]; images?: SdkImageLike[] }) {
     try {
@@ -484,6 +526,7 @@ export class SdkNodeChild extends EventEmitter {
 
       // Send the request to the runner
       singleton.sendRequest(requestId, options.model, options.cwd, options.prompt, options.params, options.images);
+      if (this.killed) singleton.cancelRequest(requestId);
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       log.error("Failed to spawn sdk node child", { error: error.message });
@@ -492,10 +535,11 @@ export class SdkNodeChild extends EventEmitter {
   }
 
   kill() {
+    this.killed = true;
     if (this.requestId) {
       log.debug(`kill() called on node child ${this.requestId}`);
+      singleton.cancelRequest(this.requestId);
     }
-    // Best-effort: runner process stays alive; individual request cannot be interrupted
   }
 }
 

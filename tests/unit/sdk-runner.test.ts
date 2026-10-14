@@ -1,5 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { buildModelSelection, buildUserMessage, sdkMessageToStreamJson } from "../../scripts/sdk-runner.mjs";
+import {
+  buildModelSelection,
+  buildUserMessage,
+  cancelRequest,
+  isCancelPending,
+  registerRun,
+  sdkMessageToStreamJson,
+  unregisterRun,
+} from "../../scripts/sdk-runner.mjs";
 
 describe("sdk-runner buildModelSelection", () => {
   it("keeps model: { id } when params are absent or empty", () => {
@@ -83,5 +91,62 @@ describe("sdk-runner MCP remapping", () => {
         },
       },
     });
+  });
+});
+
+function fakeRun(supportsCancel = true) {
+  const run = {
+    cancelCalls: 0,
+    supports: (op: string) => op !== "cancel" || supportsCancel,
+    cancel: async () => {
+      run.cancelCalls++;
+    },
+  };
+  return run;
+}
+
+describe("sdk-runner cancellation", () => {
+  it("cancels a registered run and flags its state", async () => {
+    const run = fakeRun();
+    const state = registerRun("req-a", run);
+
+    expect(await cancelRequest("req-a")).toBe(true);
+    expect(state.cancelled).toBe(true);
+    expect(run.cancelCalls).toBe(1);
+
+    // A repeated cancel does not cancel the run twice.
+    expect(await cancelRequest("req-a")).toBe(true);
+    expect(run.cancelCalls).toBe(1);
+    unregisterRun("req-a");
+  });
+
+  it("applies a cancel that arrives before the run is registered", async () => {
+    expect(await cancelRequest("req-b")).toBe(false);
+    expect(isCancelPending("req-b")).toBe(true);
+
+    const run = fakeRun();
+    const state = registerRun("req-b", run);
+    await Promise.resolve();
+
+    expect(state.cancelled).toBe(true);
+    expect(run.cancelCalls).toBe(1);
+    expect(isCancelPending("req-b")).toBe(false);
+    unregisterRun("req-b");
+  });
+
+  it("still flags the state when the run cannot be cancelled", async () => {
+    const run = fakeRun(false);
+    const state = registerRun("req-c", run);
+
+    expect(await cancelRequest("req-c")).toBe(true);
+    expect(state.cancelled).toBe(true);
+    expect(run.cancelCalls).toBe(0);
+    unregisterRun("req-c");
+  });
+
+  it("forgets a pending cancel when the request is unregistered", async () => {
+    await cancelRequest("req-d");
+    unregisterRun("req-d");
+    expect(isCancelPending("req-d")).toBe(false);
   });
 });
