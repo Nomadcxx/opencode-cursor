@@ -5,6 +5,7 @@ import {
   cancelRequest,
   isCancelPending,
   registerRun,
+  resolveStateRoot,
   sdkMessageToStreamJson,
   unregisterRun,
 } from "../../scripts/sdk-runner.mjs";
@@ -148,5 +149,27 @@ describe("sdk-runner cancellation", () => {
     await cancelRequest("req-d");
     unregisterRun("req-d");
     expect(isCancelPending("req-d")).toBe(false);
+  });
+});
+
+describe("sdk-runner resolveStateRoot", () => {
+  const cwd = "C:\\Users\\me\\OneDrive - Contoso, Inc\\Documents\\some\\deep\\project";
+
+  it("keeps the SDK default store off Windows", () => {
+    expect(resolveStateRoot(cwd, {}, "linux", "/home/me")).toBeUndefined();
+    expect(resolveStateRoot(cwd, {}, "darwin", "/Users/me")).toBeUndefined();
+  });
+
+  it("uses a short per-workspace root on Windows", () => {
+    const root = resolveStateRoot(cwd, {}, "win32", "C:\\Users\\me");
+    expect(root).toMatch(/[\\/]\.cursor[\\/]oc-sdk[\\/][0-9a-f]{16}$/);
+    // Deepest SDK file under the root: agents/agent-<64 hex>/store.db-wal
+    expect(root!.length + "/agents/agent-".length + 64 + "/store.db-wal".length).toBeLessThan(260);
+    expect(resolveStateRoot(cwd + "2", {}, "win32", "C:\\Users\\me")).not.toBe(root);
+  });
+
+  it("honors CURSOR_ACP_SDK_STATE_ROOT on any platform", () => {
+    const root = resolveStateRoot(cwd, { CURSOR_ACP_SDK_STATE_ROOT: "/tmp/oc" }, "linux", "/home/me");
+    expect(root).toMatch(/^[\\/]tmp[\\/]oc[\\/][0-9a-f]{16}$/);
   });
 });

@@ -18,6 +18,9 @@
  *
  * ENVIRONMENT VARIABLES:
  * - CURSOR_API_KEY: Required. API key from cursor.com/settings.
+ * - CURSOR_ACP_SDK_STATE_ROOT: (optional) Directory for the SDK's local agent
+ *   store. Defaults to the SDK's own location, except on Windows (see
+ *   resolveStateRoot).
  * - CURSOR_ACP_SETTING_SOURCES: (optional) CSV of setting sources to load.
  *   Defaults to empty (isolated mode: no Cursor env rules/skills/MCP per request).
  *   Examples: "all" (load everything), "user,project" (load user + project rules).
@@ -32,11 +35,15 @@
  * Lifecycle: reads stdin indefinitely; on EOF, disposes agents and exits 0.
  */
 
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Import Agent and Cursor dynamically after API key check to accelerate boot time
 let Agent;
 let Cursor;
+let SqliteLocalAgentStore;
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -293,6 +300,44 @@ export function isCancelPending(id) {
   return pendingCancels.has(id);
 }
 
+// ─── Local agent store ──────────────────────────────────────────────────────
+//
+// The SDK's default store lives at
+//   ~/.cursor/projects/<cwd with separators as dashes>/sdk-agent-store/<64 hex>/agents/agent-<64 hex>/store.db
+// which passes Windows' 260-character MAX_PATH for any moderately deep
+// workspace (a OneDrive project reaches ~310). SQLite then fails with
+// "unable to open database file" after the model has answered, and the SDK
+// retries the whole turn several times (minutes) before the run errors.
+
+/**
+ * Short state root for the SDK's local store, or undefined to keep the SDK
+ * default. On Windows: ~/.cursor/oc-sdk/<16 hex of cwd>.
+ * Exported for unit testing.
+ */
+export function resolveStateRoot(cwd, env = process.env, platform = process.platform, home = homedir()) {
+  const override = env.CURSOR_ACP_SDK_STATE_ROOT?.trim();
+  const workspaceKey = createHash("sha256").update(cwd).digest("hex").slice(0, 16);
+  if (override) return join(override, workspaceKey);
+  if (platform !== "win32") return undefined;
+  return join(home, ".cursor", "oc-sdk", workspaceKey);
+}
+
+/** Open stores by state root; the SDK expects one store per root, reused. */
+const stores = new Map();
+
+function openStore(cwd) {
+  const stateRoot = resolveStateRoot(cwd);
+  if (!stateRoot || !SqliteLocalAgentStore) return undefined;
+  let store = stores.get(stateRoot);
+  if (!store) {
+    store = SqliteLocalAgentStore.open({ workspaceRef: cwd, stateRoot });
+    // A failed open must not stick; the next request retries it.
+    store.catch(() => stores.delete(stateRoot));
+    stores.set(stateRoot, store);
+  }
+  return store;
+}
+
 // ─── Model selection ────────────────────────────────────────────────────────
 
 /**
@@ -357,11 +402,12 @@ async function handleRequest(apiKey, request) {
     // Timing: Agent.create
     const createStart = Date.now();
     const modelSelection = buildModelSelection(model, params);
+    const store = await openStore(cwd);
     agent = await Agent.create({
       apiKey,
       model: modelSelection,
       mode: "agent",
-      local: { cwd, settingSources: SETTING_SOURCES },
+      local: { cwd, settingSources: SETTING_SOURCES, ...(store ? { store } : {}) },
     });
     const createMs = Date.now() - createStart;
     if (isCancelPending(id)) {
@@ -463,6 +509,15 @@ async function main() {
       process.exit(1);
     }
 
+    if (resolveStateRoot(process.cwd())) {
+      try {
+        ({ SqliteLocalAgentStore } = await import("@cursor/sdk/sqlite"));
+        console.error(`[sdk-runner] Local agent store root: ${join(resolveStateRoot(process.cwd()), "..")}`);
+      } catch (err) {
+        console.error(`[sdk-runner] Short store root unavailable, using SDK default: ${err.message}`);
+      }
+    }
+
     // Persistent loop: dispatch each NDJSON line from stdin AS IT ARRIVES.
     // Requests run concurrently (OpenCode fires e.g. title-gen + chat at once).
     console.error("[sdk-runner] Waiting for requests on stdin...");
@@ -528,6 +583,7 @@ async function main() {
     // stdin closed: wait for in-flight requests, then shut down.
     console.error(`[sdk-runner] stdin closed, waiting for ${inFlight.size} in-flight request(s)`);
     await Promise.allSettled([...inFlight]);
+    await Promise.allSettled([...stores.values()].map((s) => s.then((store) => store.dispose())));
     console.error("[sdk-runner] All requests processed, shutting down");
 
     // Flush stdout before exiting
