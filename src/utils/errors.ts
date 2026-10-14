@@ -91,7 +91,7 @@ export function parseAgentError(stderr: string | unknown): ParsedError {
   // Model not found / not available
   if (clean.includes("model not found") || clean.includes("invalid model") || clean.includes("Cannot use this model")) {
     // Extract model name and available models from error
-    const modelMatch = clean.match(/Cannot use this model: ([^.]+)/);
+    const modelMatch = clean.match(/Cannot use this model: (.+?)(?:\. Available models:|$)/);
     const availableMatch = clean.match(/Available models: (.+)/);
 
     const details: Record<string, string> = {};
