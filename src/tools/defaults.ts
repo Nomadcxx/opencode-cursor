@@ -1,6 +1,9 @@
 import type { ToolRegistry } from "./core/registry.js";
 import { createLogger } from "../utils/logger.js";
 
+// ponytail: Keep complete tool output up to 16 MiB; stream results if searches exceed this ceiling.
+const TOOL_EXEC_MAX_BUFFER = 16 * 1024 * 1024;
+
 export const WRITE_TOOL_TARGETED_EDIT_CONTRACT =
   "Use only for new files or intentional full-file replacement. For targeted edits to existing files, use edit with old_string and new_string.";
 
@@ -288,7 +291,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     grepArgs.push("-e", pattern, path);
 
     const runGrep = async (extraArgs: string[] = []) => {
-      return execFileAsync("grep", [...extraArgs, ...grepArgs], { timeout: 30000 });
+      return execFileAsync("grep", [...extraArgs, ...grepArgs], {
+        timeout: 30000,
+        maxBuffer: TOOL_EXEC_MAX_BUFFER,
+      });
     };
 
     try {
@@ -411,7 +417,10 @@ export function registerDefaultTools(registry: ToolRegistry): void {
     }
 
     try {
-      const { stdout } = await execFileAsync("find", findArgs, { timeout: 30000 });
+      const { stdout } = await execFileAsync("find", findArgs, {
+        timeout: 30000,
+        maxBuffer: TOOL_EXEC_MAX_BUFFER,
+      });
       // Limit output to 50 lines (replaces piped `| head -50`)
       const lines = (stdout || "").split("\n").filter(Boolean);
       return lines.slice(0, 50).join("\n") || "No files found";
