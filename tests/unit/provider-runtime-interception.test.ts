@@ -609,7 +609,7 @@ describe("provider runtime interception fallback", () => {
     expect(args.path).toBeUndefined();
   });
 
-  it("skips schema-absent edit payloads that cannot execute", async () => {
+  it("passes body-less Cursor edit calls through to Cursor instead of OpenCode", async () => {
     const intercepted: OpenAiToolCall[] = [];
     const toolResults: any[] = [];
     const result = await handleToolLoopEventV1({
@@ -637,13 +637,11 @@ describe("provider runtime interception fallback", () => {
       boundary: createProviderBoundary("v1", "cursor-acp"),
     });
 
-    expect(result).toEqual({ intercepted: false, skipConverter: true });
+    // The Cursor SDK's native edit event carries only { path }; Cursor applies
+    // the change itself, so nothing is intercepted and no hint is emitted.
+    expect(result.intercepted).toBe(false);
     expect(intercepted).toHaveLength(0);
-    expect(toolResults).toHaveLength(1);
-    const hint = toolResults[0]?.choices?.[0]?.delta?.content ?? "";
-    expect(hint).toContain("Skipped malformed tool call");
-    expect(hint).toContain("oldString");
-    expect(hint).toContain("newString");
+    expect(toolResults).toHaveLength(0);
   });
 
   it("skips suspicious streamContent write reroutes that would shrink an existing file", async () => {
@@ -845,7 +843,7 @@ describe("provider runtime interception fallback", () => {
           call_id: "c4",
           tool_call: {
             editToolCall: {
-              args: { path: "TODO.md" },
+              args: { path: "TODO.md", old_string: "TODO" },
             },
           },
         } as any,
@@ -1431,16 +1429,17 @@ describe("graduated response (soft/hard termination)", () => {
   });
 
   it("soft-blocks schema validation guard on first trigger", async () => {
-    // Use edit with only path (no old_string, new_string, or content) so schema
-    // compat can't repair it — validation actually fails, hitting the guard.
+    // Use edit with no new_string or content so schema compat can't repair it —
+    // validation actually fails, hitting the guard. (A path-only edit is passed
+    // through to Cursor and never reaches validation.)
     const guard = createToolLoopGuard([], 1);
     guard.evaluateValidation(
       {
         id: "e1",
         type: "function",
-        function: { name: "edit", arguments: '{"path":"TODO.md"}' },
+        function: { name: "edit", arguments: '{"path":"TODO.md","old_string":"TODO"}' },
       },
-      "missing:old_string,new_string",
+      "missing:new_string",
     );
 
     const toolResults: any[] = [];
@@ -1451,7 +1450,7 @@ describe("graduated response (soft/hard termination)", () => {
           call_id: "e2",
           tool_call: {
             editToolCall: {
-              args: { path: "TODO.md" },
+              args: { path: "TODO.md", old_string: "TODO" },
             },
           },
         } as any,
