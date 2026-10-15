@@ -90,6 +90,56 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.arguments).toBe("{\"path\":\"foo.txt\",\"streamContent\":\"body\"}");
   });
 
+  it("presents oc_edit calls as native edit when OpenCode exposes edit", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_edit",
+      name: "oc_edit",
+      tool_call: {
+        oc_edit: {
+          args: { filePath: "foo.txt", oldString: "a", newString: "b" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["edit", "oc_edit", "write", "oc_write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("edit");
+    expect(result.toolCall?.function.arguments).toBe("{\"filePath\":\"foo.txt\",\"oldString\":\"a\",\"newString\":\"b\"}");
+  });
+
+  it("presents oc_write calls as native write when OpenCode exposes write", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_write",
+      tool_call: {
+        oc_write: {
+          args: { filePath: "foo.txt", content: "body" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["write", "oc_write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("write");
+  });
+
+  it("keeps oc_edit when native edit is not exposed", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_only",
+      name: "oc_edit",
+      tool_call: {
+        oc_edit: {
+          args: { filePath: "foo.txt", oldString: "a", newString: "b" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["oc_edit", "oc_write"]));
+    expect(result.toolCall?.function.name).toBe("oc_edit");
+  });
+
   it("extracts args from flat payload without args wrapper", () => {
     const event: any = {
       type: "tool_call",
