@@ -31,7 +31,8 @@ CURSOR_ACP_LOG_LEVEL=debug CURSOR_ACP_LOG_CONSOLE=1 \
 
 | Variable | Default | Effect | Change it when |
 |---|---:|---|---|
-| `CURSOR_ACP_BACKEND` | `auto` | Selects `auto`, `cursor-agent`, or `sdk`. Auto prefers `cursor-agent` and can fall back to the SDK when the binary is unavailable and a real API key exists. | You are isolating a backend failure or testing the SDK path. |
+| `CURSOR_ACP_BACKEND` | `auto` | Selects `auto`, `cursor-agent`, or `sdk`. Auto prefers the SDK with a key on OpenCode 2.0; 1.x prefers the CLI. | You are isolating a backend failure or testing the SDK path. |
+| `CURSOR_ACP_TRUST_WORKSPACE` | off | Passes `--trust` to headless CLI requests only when set to `true`. | You have chosen to trust the workspace and cannot answer the CLI prompt. |
 | `CURSOR_ACP_REUSE_EXISTING_PROXY` | enabled | Reuses a healthy proxy only when its reported workspace matches the current workspace. Set `false` to reject reuse. | A stale proxy owns the configured port. |
 | `CURSOR_ACP_FORCE` | enabled | Adds `--force` to the `cursor-agent` command. Set `false` to omit it. | You need Cursor's own approval behavior instead of forced agent execution. |
 | `CURSOR_ACP_AGENT_POOL` | off | Reuses a persistent `cursor-agent` runner per workspace and model for `1`, `true`, `on`, or `yes`. | Process startup dominates request time and you accept the experimental pool. |
@@ -89,6 +90,6 @@ installation should leave them unset.
 
 ## Complete variable list
 
-The tables above document all 32 variables read from `src/`. The docs build
+The tables above document the variables read from `src/`. The docs build
 compares this page with the source tree and fails if either side gains or loses
 a `CURSOR_ACP_*` name.
