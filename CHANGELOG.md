@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- OpenCode 2.0 selects the SDK under `auto` when a key is available and uses a private proxy. OpenCode 1.x keeps CLI-first selection.
+- The SDK backend requires `@cursor/sdk` 1.0.37 or newer and Node 22.13 or newer. `CURSOR_ACP_NODE_BIN` selects that runtime; the CLI backend keeps its existing compatibility.
+
 - **Runtime:** Replaced the `cursor-agent` binary (removed by Cursor in IDE versions >= 0.43) with the official `@cursor/sdk`. The SDK runs in a persistent Node.js child process (`scripts/sdk-runner.mjs`) instead of in-process, because the SDK's ConnectRPC/HTTP2 stack hangs inside OpenCode's embedded Bun runtime and its native `sqlite3` dependency cannot be bundled. The persistent process avoids paying Node boot + SDK import cost on every request.
 - **SDK Agent isolation:** The Agent now runs isolated from the Cursor environment by default (`settingSources: []`), no longer loading user/project/team/mdm/plugins rules and skills per request. This eliminates duplicate instructions between Cursor and OpenCode and reduces request latency. To restore the previous behavior, set `CURSOR_ACP_SETTING_SOURCES=all`, or specify a subset like `user,project`.
 - **Tool calls:** The SDK emits MCP tool calls as a generic tool named `mcp` with `{providerIdentifier, toolName, args}`; the runner remaps them to the `mcp__<server>__<tool>` names OpenCode expects, so MCP tools are executed instead of rejected as unavailable.
@@ -28,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Installation:** New local development workflow via `scripts/install-plugin.sh`, which creates a TypeScript wrapper at `~/.config/opencode/plugins/cursor-acp.ts` pointing at the repository entry point.
 
 ### Fixed
+
+- Preserve Windows workspace arguments through Cursor's launcher and keep concurrent request credentials and workspaces separate.
+- Cancel SDK runs when OpenCode takes over a tool call. On Windows, use a short SQLite state path and close shared stores after the last request finishes cleanup.
 
 - **Issue #135 (OpenCode 2.0 `failed to load plugin … NpmInstallFailedError … ENOENT`):** OpenCode 2.0 installs plugin specifiers with npm and only resolves the package main export, so the documented `@rama_nigg/open-cursor/plugin/opencode2` subpath was treated as a local directory. The root default export now carries the stable 2.0 `setup()` (the catalog-era `ctx.catalog` preview module is removed); install with the bare package name under `plugins`. The 2.0 entry no longer consults the 1.x `plugin` array to decide whether to run — the host's `plugins` list is authoritative.
 - **Issue #76 (ECONNREFUSED on 127.0.0.1:32124):** the proxy failed to start because the plugin spawned the removed `cursor-agent` binary. The plugin now works without `cursor-agent` installed.

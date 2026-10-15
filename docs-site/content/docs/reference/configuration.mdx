@@ -31,7 +31,8 @@ CURSOR_ACP_LOG_LEVEL=debug CURSOR_ACP_LOG_CONSOLE=1 \
 
 | Variable | Default | Effect | Change it when |
 |---|---:|---|---|
-| `CURSOR_ACP_BACKEND` | `auto` | Selects `auto`, `cursor-agent`, or `sdk`. Auto prefers `cursor-agent` and can fall back to the SDK when the binary is unavailable and a real API key exists. | You are isolating a backend failure or testing the SDK path. |
+| `CURSOR_ACP_BACKEND` | `auto` | Selects `auto`, `cursor-agent`, or `sdk`. Auto prefers the SDK with a key on OpenCode 2.0; 1.x prefers the CLI. | You are isolating a backend failure or testing the SDK path. |
+| `CURSOR_ACP_TRUST_WORKSPACE` | off | Passes `--trust` to headless CLI requests only when set to `true`. | You have chosen to trust the workspace and cannot answer the CLI prompt. |
 | `CURSOR_ACP_REUSE_EXISTING_PROXY` | enabled | Reuses a healthy proxy only when its reported workspace matches the current workspace. Set `false` to reject reuse. | A stale proxy owns the configured port. |
 | `CURSOR_ACP_FORCE` | enabled | Adds `--force` to the `cursor-agent` command. Set `false` to omit it. | You need Cursor's own approval behavior instead of forced agent execution. |
 | `CURSOR_ACP_AGENT_POOL` | off | Reuses a persistent `cursor-agent` runner per workspace and model for `1`, `true`, `on`, or `yes`. | Process startup dominates request time and you accept the experimental pool. |
@@ -82,13 +83,16 @@ MCP calls run through the shell-facing `mcptool` command. Read
 | `CURSOR_ACP_HOME_DIR` | OS home | Overrides the home directory used to find Cursor authentication files. | Tests or a managed environment use an alternate home. |
 | `CURSOR_ACP_NODE_BIN` | `node` | Selects the Node executable used for runner processes. | Node is installed under a non-standard executable path. |
 | `CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH` | packaged runner | Overrides `cursor-agent-runner.mjs`; a missing path is an error. | Developing or packaging the runner. |
+| `CURSOR_ACP_SDK_STATE_ROOT` | short per-workspace root on Windows | Overrides the SDK store root; other platforms keep the SDK default unless set. | You need a short writable location for Windows SQLite state. |
+| `CURSOR_ACP_SETTING_SOURCES` | empty | Selects Cursor setting sources such as `user,project`; empty keeps SDK requests isolated. | You want the SDK to load Cursor rules or skills. |
 | `CURSOR_ACP_SDK_RUNNER_PATH` | packaged runner | Overrides `sdk-runner.mjs`; a missing path is an error. | Developing or packaging the SDK runner. |
+| `CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY` | off | Disables background model discovery on 2.0 when set to `1`. | Running deterministic adapter tests without network discovery. |
 
 These path overrides are development and packaging controls. A normal
 installation should leave them unset.
 
 ## Complete variable list
 
-The tables above document all 32 variables read from `src/`. The docs build
+The tables above document the variables read by the plugin and its packaged runners. The docs build
 compares this page with the source tree and fails if either side gains or loses
 a `CURSOR_ACP_*` name.

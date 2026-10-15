@@ -10,11 +10,12 @@ const dir = mkdtempSync(join(tmpdir(), "open cursor, 141-"));
 after(() => rmSync(dir, { recursive: true, force: true }));
 writeFileSync(join(dir, "package.json"), '{"type":"module"}');
 const sourceRoot = resolve(process.env.ISSUE_141_SOURCE_ROOT ?? ".");
-const build = spawnSync("bun", ["build", "./src/plugin.ts", "--outdir", dir, "--target", "node"], {
+const build = spawnSync("bun", ["build", "./src/plugin.ts", "./src/client/sdk-child.ts", "--outdir", dir, "--target", "node"], {
   cwd: sourceRoot, encoding: "utf8", timeout: 30_000,
 });
 assert.equal(build.status, 0, build.stderr);
 const pluginURL = pathToFileURL(join(dir, "plugin.js")).href;
+const sdkChildURL = pathToFileURL(join(dir, "client/sdk-child.js")).href;
 
 function run(code, env = {}) {
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
@@ -106,17 +107,92 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
   `, { CURSOR_ACP_SDK_RUNNER_PATH: runner, CURSOR_ACP_REUSE_EXISTING_PROXY: "true" });
 });
 
+test("SDK done waits for agent cleanup before idle retirement", () => {
+  const runnerURL=pathToFileURL(join(sourceRoot,"scripts/sdk-runner.mjs")).href;
+  const result=run(`
+    const {handleRequest}=await import(${JSON.stringify(runnerURL)});
+    const agent={
+      send:async()=>({stream:async function*(){yield {type:'text',text:'answer'};}}),
+      [Symbol.asyncDispose]:async()=>{
+        console.log(JSON.stringify({marker:'cleanup-started'}));
+        await new Promise(resolve=>setTimeout(resolve,20));
+        console.log(JSON.stringify({marker:'cleanup-finished'}));
+      },
+    };
+    await handleRequest('fake-key',{id:'cleanup',model:'auto',cwd:'.',prompt:'test'},{create:async()=>agent});
+  `);
+  const rows=result.stdout.trim().split('\n').map(line=>JSON.parse(line));
+  assert.ok(rows.findIndex(row=>row.done)>rows.findIndex(row=>row.marker==='cleanup-finished'));
+});
+
+test("real SQLite stores share a short root for long workspaces and reopen after disposal", () => {
+  const runnerURL=pathToFileURL(join(sourceRoot,"scripts/sdk-runner.mjs")).href;
+  run(`
+    import assert from 'node:assert/strict';
+    import {join} from 'node:path';
+    import {SqliteLocalAgentStore} from '@cursor/sdk/sqlite';
+    const {acquireStore}=await import(${JSON.stringify(runnerURL)});
+    const cwd=join(${JSON.stringify(dir)},...Array(20).fill('deep-workspace'));
+    const root=join(${JSON.stringify(dir)},'sqlite');
+    const [a,b]=await Promise.all([acquireStore(cwd,SqliteLocalAgentStore,root),acquireStore(cwd,SqliteLocalAgentStore,root)]);
+    assert.equal(a.store,b.store);
+    await a.release();await b.release();
+    const next=await acquireStore(cwd,SqliteLocalAgentStore,root);
+    assert.notEqual(next.store,a.store);
+    await next.release();
+  `);
+});
+
+test("SDK cancellation stays bound to its key's runner, including early and Bun cancellation", () => {
+  const runner=join(dir,"cancellable.mjs");
+  writeFileSync(runner, `
+    import {createInterface} from 'node:readline';
+    const timers=new Map();
+    for await(const line of createInterface({input:process.stdin})){
+      const req=JSON.parse(line);
+      if(req.op==='cancel'){
+        clearInterval(timers.get(req.id));timers.delete(req.id);
+        console.log(JSON.stringify({id:req.id,done:true,exitCode:130}));
+      }else{
+        timers.set(req.id,setInterval(()=>console.log(JSON.stringify({id:req.id,event:{type:'assistant',message:{role:'assistant',content:[{type:'text',text:process.env.CURSOR_API_KEY}]}}})),10));
+      }
+    }
+  `);
+  run(`
+    import assert from 'node:assert/strict';
+    import {once} from 'node:events';
+    const {createSdkNodeChild,createSdkBunChild,stopSdkRunner}=await import(${JSON.stringify(sdkChildURL)});
+    const options=key=>({apiKey:key,model:'auto',cwd:'.',prompt:'test'});
+    const a=createSdkNodeChild(options('key-a'));
+    const b=createSdkNodeChild(options('key-b'));
+    const aClosed=once(a,'close'),bClosed=once(b,'close');
+    const [aChunk,bChunk]=await Promise.all([once(a.stdout,'data'),once(b.stdout,'data')]);
+    assert.match(aChunk[0].toString(),/key-a/);assert.match(bChunk[0].toString(),/key-b/);
+    a.kill();assert.deepEqual(await aClosed,[130]);
+    assert.match((await once(b.stdout,'data'))[0].toString(),/key-b/);
+    b.kill();assert.deepEqual(await bClosed,[130]);
+    const early=createSdkNodeChild(options('early'));
+    const earlyClosed=once(early,'close');early.kill();
+    assert.deepEqual(await earlyClosed,[130]);
+    const bun=createSdkBunChild(options('bun'));
+    const reader=bun.stdout.getReader();await reader.read();
+    await reader.cancel();assert.equal(await bun.exited,130);
+    stopSdkRunner();process.exit(0);
+  `,{CURSOR_ACP_SDK_RUNNER_PATH:runner});
+});
+
 test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI paths", {
   skip: process.platform !== "win32",
 }, () => {
   const workspace = join(dir, "OneDrive - Contoso, Inc", "project & literal %PATH% !bang! (draft)");
   const ps1 = join(dir, "cursor-agent.ps1");
   const cmd = join(dir, "cursor-agent.cmd");
-  writeFileSync(ps1, `
-    $text = ConvertTo-Json -InputObject @($args) -Compress
-    $event = @{type='assistant';message=@{role='assistant';content=@(@{type='text';text=$text})}}
-    ConvertTo-Json -InputObject $event -Depth 6 -Compress
+  writeFileSync(join(dir, "argv.mjs"), `
+    const text=JSON.stringify(process.argv.slice(2));
+    console.log(JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text}]}}));
   `);
+  // Cursor's PowerShell launcher forwards $args to its bundled Node entry.
+  writeFileSync(ps1, `& '${process.execPath.replaceAll("'", "''")}' "$PSScriptRoot\\argv.mjs" $args\n`);
   // Match the Cursor installer boundary: cmd.exe forwards argv into PowerShell.
   writeFileSync(cmd, '@echo off\r\nsetlocal enabledelayedexpansion\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0cursor-agent.ps1" %*\r\n');
   for (const pooled of [false, true]) {
