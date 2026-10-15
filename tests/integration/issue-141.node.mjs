@@ -112,11 +112,12 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
   const workspace = join(dir, "OneDrive - Contoso, Inc", "project & literal %PATH% !bang! (draft)");
   const ps1 = join(dir, "cursor-agent.ps1");
   const cmd = join(dir, "cursor-agent.cmd");
-  writeFileSync(ps1, `
-    $text = ConvertTo-Json -InputObject @($args) -Compress
-    $event = @{type='assistant';message=@{role='assistant';content=@(@{type='text';text=$text})}}
-    ConvertTo-Json -InputObject $event -Depth 6 -Compress
+  writeFileSync(join(dir, "argv.mjs"), `
+    const text=JSON.stringify(process.argv.slice(2));
+    console.log(JSON.stringify({type:'assistant',message:{role:'assistant',content:[{type:'text',text}]}}));
   `);
+  // Cursor's PowerShell launcher forwards $args to its bundled Node entry.
+  writeFileSync(ps1, `& '${process.execPath.replaceAll("'", "''")}' "$PSScriptRoot\\argv.mjs" $args\n`);
   // Match the Cursor installer boundary: cmd.exe forwards argv into PowerShell.
   writeFileSync(cmd, '@echo off\r\nsetlocal enabledelayedexpansion\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0cursor-agent.ps1" %*\r\n');
   for (const pooled of [false, true]) {
