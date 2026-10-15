@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { sdkMessageToStreamJson } from "../../../scripts/sdk-runner.mjs";
+import { parseStreamJsonLine } from "../../../src/streaming/parser.js";
 import {
   createToolCallCompletionResponse,
   createToolCallStreamChunks,
@@ -556,10 +558,16 @@ describe("extractOpenAiToolCall with pass-through", () => {
     // OpenCode 2 host tool names
     const allowed = new Set(["edit", "write", "read"]);
 
+    function sdkEdit(args: unknown, result?: unknown) {
+      return parseStreamJsonLine(JSON.stringify(sdkMessageToStreamJson({
+        type: "tool_call", name: "edit", call_id: "sdk-edit", args, result,
+      }))) as any;
+    }
+
     it("passes the Cursor SDK's path-only edit through to Cursor", () => {
       // sdk-runner shape: { tool_call: { edit: { args: { path }, result } } }
       const result = extractOpenAiToolCall(
-        createToolCallEvent("edit", { path: "C:/repo/combine_invoices.py" }),
+        sdkEdit({ path: "C:/repo/combine_invoices.py" }),
         allowed,
       );
       expect(result.action).toBe("passthrough");
@@ -568,37 +576,42 @@ describe("extractOpenAiToolCall with pass-through", () => {
     });
 
     it("passes the completed SDK edit event (with result) through too", () => {
-      const event: any = {
-        type: "tool_call",
-        call_id: "call_sdk_edit",
-        tool_call: {
-          edit: {
-            args: { path: "combine_invoices.py" },
-            result: { status: "success", value: { diffString: "+print('hi')" } },
-          },
-        },
-      };
+      const event = sdkEdit(
+        { path: "combine_invoices.py" },
+        { status: "success", value: { diffString: "+print('hi')" } },
+      );
       expect(extractOpenAiToolCall(event, allowed).action).toBe("passthrough");
     });
 
-    it("treats filePath-only edits as body-less", () => {
-      const result = extractOpenAiToolCall(
-        createToolCallEvent("editToolCall", { filePath: "README.md" }),
-        allowed,
-      );
-      expect(result.action).toBe("passthrough");
+    it("keeps CLI path-only edits on the validation path", () => {
+      for (const name of ["edit", "editToolCall"]) {
+        const result = extractOpenAiToolCall(createToolCallEvent(name, { path: "README.md" }), allowed);
+        expect(result.action).toBe("intercept");
+      }
+    });
+
+    it("keeps malformed SDK edits on the validation path", () => {
+      for (const args of [{}, { path: null }, { path: 1 }, { path: "" }, { path: "  " }, { path: "a\0.ts" }, { filePath: "a.ts" }, { path: "a.ts", extra: true }]) {
+        expect(extractOpenAiToolCall(sdkEdit(args), allowed).action).toBe("intercept");
+      }
+      expect(extractOpenAiToolCall({ type: "tool_call", source: "cursor-sdk", name: "edit", tool_call: {} } as any, allowed).action).toBe("intercept");
+    });
+
+    it("does not exempt SDK compatibility aliases", () => {
+      const event = sdkMessageToStreamJson({ type: "tool_call", name: "oc_edit", args: { path: "a.ts" } });
+      expect(extractOpenAiToolCall(event as any, new Set(["oc_edit"])).action).toBe("intercept");
     });
 
     it("still intercepts edits that carry a body", () => {
       const withStrings = extractOpenAiToolCall(
-        createToolCallEvent("editToolCall", { path: "a.ts", old_string: "a", new_string: "b" }),
+        sdkEdit({ path: "a.ts", old_string: "a", new_string: "b" }),
         allowed,
       );
       expect(withStrings.action).toBe("intercept");
       expect(withStrings.toolCall!.function.name).toBe("edit");
 
       const withStreamContent = extractOpenAiToolCall(
-        createToolCallEvent("editToolCall", { path: "a.ts", streamContent: "full body" }),
+        sdkEdit({ path: "a.ts", streamContent: "full body" }),
         allowed,
       );
       expect(withStreamContent.action).toBe("intercept");

@@ -66,6 +66,8 @@ export type StreamJsonToolCallPayload = {
 
 export type StreamJsonToolCallEvent = {
   type: "tool_call";
+  /** Internal SDK adapter provenance; absent on cursor-agent CLI events. */
+  source?: "cursor-sdk";
   subtype?: string;
   timestamp?: number;
   session_id?: string;

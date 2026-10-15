@@ -77,6 +77,13 @@ OpenCode, which runs it with its own permission checks. Cursor `bash`-style
 calls map onto OpenCode 2.0's `shell`. Calls that match nothing advertised run
 inside Cursor.
 
+The SDK's native `edit` events are an exception: they contain only a file path,
+and Cursor applies the change itself. The proxy lets these SDK events finish
+without replaying the edit in OpenCode. OpenCode's edit permission prompts and
+native patch preview do not cover these edits. This exception requires an SDK
+event with a valid path; CLI events and malformed edit arguments still go
+through the normal validation path. See [tool ownership](architecture/runtime-tool-loop.md#cursor-native-tool-side-effects).
+
 ## MCP tools
 
 OpenCode 2.0 connects MCP servers itself (`mcp.servers` in `opencode.json`);

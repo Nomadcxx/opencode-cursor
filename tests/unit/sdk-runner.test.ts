@@ -84,6 +84,7 @@ describe("sdk-runner MCP remapping", () => {
 
     expect(event).toEqual({
       type: "tool_call",
+      source: "cursor-sdk",
       call_id: "call-1",
       tool_call: {
         mcp__hybrid_memory__memory_search: {

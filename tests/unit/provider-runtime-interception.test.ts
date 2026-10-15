@@ -616,6 +616,7 @@ describe("provider runtime interception fallback", () => {
       ...createBaseOptions({
         event: {
           type: "tool_call",
+          source: "cursor-sdk",
           call_id: "c_edit_path_only_no_schema",
           tool_call: {
             editToolCall: {
@@ -642,6 +643,29 @@ describe("provider runtime interception fallback", () => {
     expect(result.intercepted).toBe(false);
     expect(intercepted).toHaveLength(0);
     expect(toolResults).toHaveLength(0);
+  });
+
+  it("retains validation hints for CLI path-only and malformed SDK edits in both boundaries", async () => {
+    for (const handle of [handleToolLoopEventLegacy, handleToolLoopEventV1]) {
+      for (const [source, args] of [[undefined, { path: "a.ts" }], ["cursor-sdk", {}], ["cursor-sdk", { path: null }]] as const) {
+        const hints: any[] = [];
+        const calls: OpenAiToolCall[] = [];
+        const result = await handle({
+          ...createBaseOptions({
+            event: { type: "tool_call", source, tool_call: { edit: { args } } } as any,
+            allowedToolNames: new Set(["edit", "write"]),
+            toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+            onToolResult: (hint) => { hints.push(hint); },
+            onInterceptedToolCall: (call) => { calls.push(call); },
+          }),
+          boundary: createProviderBoundary("v1", "cursor-acp"),
+        });
+        expect(result).toEqual({ intercepted: false, skipConverter: true });
+        expect(calls).toHaveLength(0);
+        expect(hints).toHaveLength(1);
+        expect(hints[0].choices[0].delta.content).toContain("Skipped malformed tool call");
+      }
+    }
   });
 
   it("skips suspicious streamContent write reroutes that would shrink an existing file", async () => {
