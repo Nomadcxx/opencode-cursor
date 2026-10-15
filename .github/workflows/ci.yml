@@ -23,6 +23,9 @@ jobs:
       - name: Run unit suite
         run: bun run test:ci:unit
 
+      - name: Verify proxy isolation and request credentials
+        run: bun run verify:issue-141
+
       - name: Unit job summary
         if: always()
         run: |
@@ -65,3 +68,17 @@ jobs:
             echo "- Forward tool calls: \`${CURSOR_ACP_FORWARD_TOOL_CALLS}\`"
             echo "- Emit tool updates: \`${CURSOR_ACP_EMIT_TOOL_UPDATES}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: bun install
+      - name: Verify Node proxy isolation and Windows CLI arguments
+        run: bun run verify:issue-141

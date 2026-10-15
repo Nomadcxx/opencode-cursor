@@ -276,6 +276,19 @@ describe("plugin resume orchestration", () => {
     expect(cmd).not.toContain("--resume");
   });
 
+  it("opts into workspace trust only when explicitly configured", () => {
+    const previous = process.env.CURSOR_ACP_TRUST_WORKSPACE;
+    try {
+      delete process.env.CURSOR_ACP_TRUST_WORKSPACE;
+      expect(buildCursorAgentCommand("auto", "/workspace")).not.toContain("--trust");
+      process.env.CURSOR_ACP_TRUST_WORKSPACE = "true";
+      expect(buildCursorAgentCommand("auto", "/workspace")).toContain("--trust");
+    } finally {
+      if (previous === undefined) delete process.env.CURSOR_ACP_TRUST_WORKSPACE;
+      else process.env.CURSOR_ACP_TRUST_WORKSPACE = previous;
+    }
+  });
+
   it("buildCursorAgentCommand omits --resume for unsafe chatIds", () => {
     const unsafeIds = [
       "",

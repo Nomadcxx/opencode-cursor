@@ -1,6 +1,6 @@
 // tests/unit/utils/binary.test.ts
 import { describe, test, expect } from "bun:test";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "../../../src/utils/binary.js";
+import { resolveCursorAgentBinary } from "../../../src/utils/binary.js";
 
 const neverExists = () => false;
 
@@ -91,34 +91,5 @@ describe("resolveCursorAgentBinary", () => {
       homedir: () => "/Users/user",
     });
     expect(result).toBe("cursor-agent");
-  });
-});
-
-describe("formatShellCommandForPlatform", () => {
-  test("win32: quotes resolved command paths that contain spaces", () => {
-    const command = formatShellCommandForPlatform(
-      "C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd",
-      "win32",
-    );
-
-    expect(command).toBe("\"C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd\"");
-  });
-
-  test("win32: does not double-quote an already quoted command", () => {
-    const command = formatShellCommandForPlatform(
-      "\"C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd\"",
-      "win32",
-    );
-
-    expect(command).toBe("\"C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd\"");
-  });
-
-  test("non-win32: leaves command paths unchanged", () => {
-    const command = formatShellCommandForPlatform(
-      "/Users/Walter Meier/.cursor-agent/cursor-agent",
-      "darwin",
-    );
-
-    expect(command).toBe("/Users/Walter Meier/.cursor-agent/cursor-agent");
   });
 });

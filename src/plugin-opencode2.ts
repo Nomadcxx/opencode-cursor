@@ -24,7 +24,6 @@ import {
   CURSOR_PROVIDER_ID,
   OPENCODE_DIRECTORY_HEADER,
   ensureCursorProxyServer,
-  setStoredApiKey,
 } from "./plugin.js";
 import { discoverModelsForRefresh, type DiscoveredModel } from "./models/sync.js";
 import { ModelDiscoveryService } from "./models/discovery.js";
@@ -165,7 +164,7 @@ const plugin: Plugin2 = {
     };
 
     // ── Proxy ────────────────────────────────────────────────
-    const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory);
+    const proxyBaseURL = await ensureCursorProxyServer(workspaceDirectory, undefined, { private: true });
     log.debug("Proxy server started", { baseURL: proxyBaseURL });
 
     // ── Provider inventory (in-memory; no opencode.json dump) ─
@@ -225,15 +224,18 @@ const plugin: Plugin2 = {
 
     // ── Per-request workspace directory ─────────────────────
     // Headers set here reach the AI SDK call options and therefore the proxy.
-    // `settings.baseURL` is the route; the AI SDK path uses its own fetch, so
-    // `http.request` hooks would never see these requests.
+    // Pin the route here too: shared 1.x config can overlay settings.baseURL.
+    // Resolve credentials on the same request so concurrent turns cannot swap keys.
     await track(
       ctx.session.hook(
         "model.request",
         async (event) => {
           if (event.model?.providerID !== CURSOR_PROVIDER_ID) return;
           const directory = await sessionDirectory(ctx, event.sessionID, workspaceDirectory);
+          event.baseURL = proxyBaseURL;
           event.headers[OPENCODE_DIRECTORY_HEADER] = encodeURIComponent(directory);
+          const key = resolveSdkApiKey({ env: process.env, storedApiKey: await resolveCursorApiKey(ctx.integration) });
+          event.headers.authorization = `Bearer ${key ?? "cursor-agent"}`;
         },
         { providerID: CURSOR_PROVIDER_ID },
       ),
@@ -256,20 +258,12 @@ const plugin: Plugin2 = {
       );
     }
 
-    // ── Per-turn credential + MCP guidance ──────────────────
+    // ── Per-turn MCP guidance ───────────────────────────────
     await track(
       ctx.session.hook(
         "context",
         async (event) => {
           if (event.model?.providerID !== CURSOR_PROVIDER_ID) return;
-
-          try {
-            const key = await resolveCursorApiKey(ctx.integration);
-            setStoredApiKey(key);
-          } catch (err) {
-            setStoredApiKey(undefined);
-            log.debug("Could not resolve Cursor API key", { error: String(err) });
-          }
 
           if (directMcpNamespaces.size > 0) {
             event.system.push({ type: "text", text: DIRECT_MCP_GUIDANCE });
@@ -289,7 +283,6 @@ const plugin: Plugin2 = {
           // best-effort cleanup
         }
       }
-      setStoredApiKey(undefined);
     };
   },
 };

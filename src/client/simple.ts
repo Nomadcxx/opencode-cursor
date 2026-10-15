@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import spawn from 'cross-spawn';
 import { LineBuffer } from '../streaming/line-buffer.js';
 import { parseStreamJsonLine } from '../streaming/parser.js';
 import {
@@ -7,7 +7,8 @@ import {
   type StreamJsonEvent,
 } from '../streaming/types.js';
 import { createLogger } from '../utils/logger.js';
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from '../utils/binary.js';
+import { resolveCursorAgentBinary } from '../utils/binary.js';
+import { buildCursorAgentSpawnCommand } from '../utils/cursor-agent-command.mjs';
 
 export interface CursorClientConfig {
   timeout?: number;
@@ -74,13 +75,14 @@ export class SimpleCursorClient {
     if (resumeId) {
       args.push('--resume', resumeId);
     }
+    if (process.env.CURSOR_ACP_TRUST_WORKSPACE === 'true') args.push('--trust');
 
     this.log.debug('Executing prompt stream', { promptLength: prompt.length, mode, model });
 
-    const child = spawn(formatShellCommandForPlatform(this.config.cursorAgentPath), args, {
+    const [command, spawnArgs] = buildCursorAgentSpawnCommand(this.config.cursorAgentPath, args);
+    const child = spawn(command, spawnArgs, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
     });
 
     if (prompt) {
@@ -185,14 +187,15 @@ export class SimpleCursorClient {
     if (resumeId) {
       args.push('--resume', resumeId);
     }
+    if (process.env.CURSOR_ACP_TRUST_WORKSPACE === 'true') args.push('--trust');
 
     this.log.debug('Executing prompt', { promptLength: prompt.length, mode, model });
 
     return new Promise((resolve, reject) => {
-      const child = spawn(formatShellCommandForPlatform(this.config.cursorAgentPath), args, {
+      const [command, spawnArgs] = buildCursorAgentSpawnCommand(this.config.cursorAgentPath, args);
+      const child = spawn(command, spawnArgs, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
-        shell: process.platform === 'win32',
       });
 
       let stdoutBuffer = '';

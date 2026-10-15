@@ -33,6 +33,19 @@ Inside OpenCode 2.0, run `/connect`, choose **Cursor**, then enter an API key
 from [cursor.com/settings](https://cursor.com/settings). `CURSOR_API_KEY` is
 also picked up automatically via the integration `env` method.
 
+With `CURSOR_ACP_BACKEND=auto` (the default), a real key selects the SDK backend
+on 2.0 even when `cursor-agent` is installed. Set `CURSOR_ACP_BACKEND=cursor-agent`
+to force the CLI, or `sdk` to require a key. OpenCode 1.x keeps its CLI-first
+`auto` behavior. The plugin sends credentials with each request to its private
+proxy; it does not share the 1.x stored-key cache.
+
+For a background service, set environment variables on the service and restart it:
+
+```text
+opencode2 service set env CURSOR_ACP_BACKEND sdk
+opencode2 service restart
+```
+
 ## How it differs from OpenCode 1.x
 
 | | OpenCode 1.x | OpenCode 2.0 |
@@ -41,7 +54,7 @@ also picked up automatically via the integration `env` method.
 | Entry | default export `server()` | default export `setup()` (`src/plugin-opencode2.ts`) |
 | Models | Written into `opencode.json` by installer / auto-refresh | In-memory `ctx.provider.transform` → `editor.add` → `reload()` |
 | Auth | OpenCode 1 auth store / env | Integration key + `CURSOR_API_KEY` env |
-| Backend | Local HTTP proxy + `@cursor/sdk` | Same proxy + SDK (unchanged) |
+| Backend | Local proxy, CLI-first under `auto` | Private proxy, SDK-first with a key under `auto` |
 | Provider package | `@ai-sdk/openai-compatible` in config | `aisdk:@ai-sdk/openai-compatible` with `settings.baseURL` |
 
 open-cursor still speaks openai-compatible HTTP to its local proxy. It does
@@ -100,8 +113,21 @@ One OpenCode 2.0 daemon serves every project location through a single local
 proxy. On each Cursor request the plugin sets `x-opencode-directory` (the
 session's `location.directory`, falling back to the plugin location) through
 the `session` `model.request` hook, and the proxy runs Cursor in that
-directory. Without the header (OpenCode 1.x) the proxy uses the directory it
-was started for.
+directory. The 2.0 proxy binds an ephemeral port and the request hook pins its
+URL, so a shared config pointing at the 1.x port 32124 cannot redirect 2.0
+requests. OpenCode 1.x uses its own proxy's startup directory.
+
+When using the CLI backend in an untrusted workspace, headless requests can
+stop at Cursor's trust prompt. Trust the workspace in Cursor first, or set
+`CURSOR_ACP_TRUST_WORKSPACE=true` to pass `--trust` for headless CLI requests.
+This opt-in also applies to the pooled runner. The plugin does not grant
+workspace trust by default.
+
+On Windows, the plugin invokes an installed `cursor-agent.ps1` sibling with
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File`, matching the flags
+in Cursor's batch launcher. This bypass applies to that child process; it does
+not change the machine's execution policy. Arguments stay separate from the
+script path. Skipping the batch launcher preserves literal `!` in workspace paths.
 
 ## Safe transition from next-era / dump-era builds
 

@@ -1,7 +1,7 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin/tool";
 import type { Auth } from "@opencode-ai/sdk";
-import { spawn, spawnSync } from "child_process";
+import spawn from "cross-spawn";
 import { realpathSync } from "fs";
 import { mkdir } from "fs/promises";
 import { homedir } from "os";
@@ -98,12 +98,14 @@ import {
 import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
 import { createCursorAgentPoolNodeChild, isAgentPoolEnabled } from "./client/cursor-agent-child.js";
 import {
+  isUsableSdkApiKey,
   parseCursorBackendPreference,
   resolveSdkApiKey,
   selectBackendForRequest,
   type CursorRuntimeBackend,
 } from "./provider/backend.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "./utils/binary.js";
+import { resolveCursorAgentBinary } from "./utils/binary.js";
+import { buildCursorAgentSpawnCommand } from "./utils/cursor-agent-command.mjs";
 
 const log = createLogger("plugin");
 
@@ -244,10 +246,10 @@ function isCursorAgentAvailable(): boolean {
   }
 
   const binary = resolveCursorAgentBinary();
-  const result = spawnSync(formatShellCommandForPlatform(binary), ["--version"], {
+  const [command, args] = buildCursorAgentSpawnCommand(binary, ["--version"]);
+  const result = spawn.sync(command, args, {
     stdio: "ignore",
     timeout: 1000,
-    shell: process.platform === "win32",
   });
   const error = result.error as NodeJS.ErrnoException | undefined;
 
@@ -257,7 +259,7 @@ function isCursorAgentAvailable(): boolean {
   return cursorAgentAvailabilityCache;
 }
 
-function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeBackend {
+function resolveBackendForRequest(sdkApiKey: string | undefined, preferSdk = false): CursorRuntimeBackend {
   const parsed = parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND);
   if (!parsed.valid) {
     log.warn("Invalid CURSOR_ACP_BACKEND value; falling back to auto", {
@@ -265,11 +267,19 @@ function resolveBackendForRequest(sdkApiKey: string | undefined): CursorRuntimeB
     });
   }
 
-  return selectBackendForRequest({
+  const cursorAgentAvailable = parsed.preference === "sdk"
+    || (preferSdk && isUsableSdkApiKey(sdkApiKey))
+    || isCursorAgentAvailable();
+  const backend = selectBackendForRequest({
     preference: parsed.preference,
-    cursorAgentAvailable: isCursorAgentAvailable(),
+    cursorAgentAvailable,
     sdkApiKey,
+    preferSdk,
   });
+  if (preferSdk && backend === "cursor-agent" && !cursorAgentAvailable) {
+    throw new Error("Cursor CLI is unavailable; install cursor-agent or connect a Cursor API key to use the SDK backend.");
+  }
+  return backend;
 }
 
 
@@ -306,6 +316,9 @@ export function buildCursorAgentCommand(
   }
   if (FORCE_TOOL_MODE) {
     cmd.push("--force");
+  }
+  if (process.env.CURSOR_ACP_TRUST_WORKSPACE === "true") {
+    cmd.push("--trust");
   }
   return cmd;
 }
@@ -565,8 +578,10 @@ function createCursorAgentBunChild(
     throw new Error("This provider requires Bun runtime.");
   }
 
+  const cmd = buildCursorAgentCommand(model, workspaceDirectory, resumeChatId);
+  const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
   const child = bunAny.Bun.spawn({
-    cmd: buildCursorAgentCommand(model, workspaceDirectory, resumeChatId),
+    cmd: [command, ...args],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -617,9 +632,9 @@ function createCursorAgentNodeChild(
   resumeChatId?: string,
 ): any {
   const cmd = buildCursorAgentCommand(model, workspaceDirectory, resumeChatId);
-  const child = spawn(formatShellCommandForPlatform(cmd[0]), cmd.slice(1), {
+  const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
+  const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "pipe"],
-    shell: process.platform === "win32",
   });
 
   child.stdin.write(prompt);
@@ -814,7 +829,8 @@ export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: s
     // Legacy proxies that do not expose workspace cannot be safely reused.
     return false;
   }
-  return normalizeWorkspaceForCompare(payload.workspaceDirectory) === normalizeWorkspaceForCompare(workspaceDirectory);
+  return payload.backendPreference === parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference
+    && normalizeWorkspaceForCompare(payload.workspaceDirectory) === normalizeWorkspaceForCompare(workspaceDirectory);
 }
 
 export async function fetchProxyHealthWithTimeout(
@@ -1230,15 +1246,35 @@ async function findFirstAllowedToolCallInOutput(
   return { toolCall: null, terminationMessage: null };
 }
 
-export async function ensureCursorProxyServer(workspaceDirectory: string, toolRouter?: ToolRouter): Promise<string> {
-  const key = getGlobalKey();
+export async function ensureCursorProxyServer(
+  workspaceDirectory: string,
+  toolRouter?: ToolRouter,
+  options: { private?: boolean } = {},
+): Promise<string> {
+  const g = globalThis as any;
+  const pending: Map<string, Promise<string>> = g[`${getGlobalKey()}_starting`] ??= new Map();
+  const startupKey = options.private ? "opencode2" : normalizeWorkspaceForCompare(workspaceDirectory);
+  const existing = pending.get(startupKey);
+  if (existing) return existing;
+  const startup = startCursorProxyServer(workspaceDirectory, toolRouter, options.private === true);
+  pending.set(startupKey, startup);
+  try {
+    return await startup;
+  } finally {
+    pending.delete(startupKey);
+  }
+}
+
+async function startCursorProxyServer(workspaceDirectory: string, toolRouter: ToolRouter | undefined, privateProxy: boolean): Promise<string> {
+  const key = getGlobalKey() + (privateProxy ? "_opencode2" : "");
   const g = globalThis as any;
   const normalizedWorkspace = normalizeWorkspaceForCompare(workspaceDirectory);
   const state: ProxyRuntimeState = g[key] ?? { baseURL: "", baseURLByWorkspace: {} };
   state.baseURLByWorkspace = state.baseURLByWorkspace ?? {};
   g[key] = state;
 
-  const existingBaseURL = state.baseURLByWorkspace[normalizedWorkspace] ?? state.baseURL;
+  // A 2.0 daemon shares one private proxy and sends the workspace on every request.
+  const existingBaseURL = privateProxy ? state.baseURL : state.baseURLByWorkspace[normalizedWorkspace];
   if (typeof existingBaseURL === "string" && existingBaseURL.length > 0) {
     return existingBaseURL;
   }
@@ -1249,7 +1285,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
   const resolveRequestSdkApiKey = (authHeader?: string | null): string | undefined =>
     resolveSdkApiKey({
       env: process.env,
-      storedApiKey,
+      storedApiKey: privateProxy ? undefined : storedApiKey,
       authorizationHeader: authHeader,
     });
 
@@ -1258,7 +1294,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
           const url = new URL(req.url);
 
       if (url.pathname === "/health") {
-        return new Response(JSON.stringify({ ok: true, workspaceDirectory }), {
+        return new Response(JSON.stringify({ ok: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
@@ -1331,9 +1367,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
       const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
         req.headers.get(OPENCODE_DIRECTORY_HEADER),
-        workspaceDirectory,
+        privateProxy ? "" : workspaceDirectory,
       );
-      const backend = resolveBackendForRequest(sdkApiKey);
+      if (!requestWorkspaceDirectory) {
+        return new Response(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }), { status: 400 });
+      }
+      const backend = resolveBackendForRequest(sdkApiKey, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
         backend,
@@ -1894,7 +1933,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
     }
   };
 
-  if (REUSE_EXISTING_PROXY) {
+  if (!privateProxy && REUSE_EXISTING_PROXY) {
     // Check if another process already started a proxy on the default port
     try {
       const res = await fetchProxyHealthWithTimeout(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`);
@@ -1920,7 +1959,7 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
 
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, workspaceDirectory }));
+        res.end(JSON.stringify({ ok: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }));
         return;
       }
 
@@ -1980,9 +2019,14 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
         req.headers[OPENCODE_DIRECTORY_HEADER] as string | undefined,
-        workspaceDirectory,
+        privateProxy ? "" : workspaceDirectory,
       );
-      const backend = resolveBackendForRequest(sdkApiKeyNode);
+      if (!requestWorkspaceDirectory) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }));
+        return;
+      }
+      const backend = resolveBackendForRequest(sdkApiKeyNode, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
         backend,
@@ -2513,11 +2557,12 @@ export async function ensureCursorProxyServer(workspaceDirectory: string, toolRo
   // Try to start on default port
   try {
     await new Promise<void>((resolve, reject) => {
-      server.listen(CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_HOST, () => resolve());
+      server.listen(privateProxy ? 0 : CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_HOST, () => resolve());
       server.once("error", reject);
     });
 
-    const baseURL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
+    const addr = server.address() as { port: number };
+    const baseURL = `http://${CURSOR_PROXY_HOST}:${addr.port}/v1`;
     state.baseURL = baseURL;
     state.baseURLByWorkspace![normalizedWorkspace] = baseURL;
     return baseURL;

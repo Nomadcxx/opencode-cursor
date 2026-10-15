@@ -1,12 +1,12 @@
 /**
  * sdk-child.ts
  *
- * Spawns sdk-runner.mjs as a persistent singleton process.
+ * Spawns sdk-runner.mjs as a persistent process per API key.
  * The runner reads NDJSON requests from stdin: {"id":"...","model":"...","cwd":"...","prompt":"..."}
  * and emits wrapped NDJSON responses to stdout: {"id":"...","event":{...}} or {"id":"...","done":true,"exitCode":...}
  *
  * This module demultiplexes per-request by:
- * 1. Maintaining a singleton runner process (lazy spawn on first use)
+ * 1. Maintaining one runner per API key (lazy spawn on first use)
  * 2. Generating a unique request id per create*Child call
  * 3. Writing the request to runner stdin
  * 4. Filtering runner stdout by id to re-emit per-request events
@@ -19,7 +19,6 @@
  *
  * Limitations:
  * - kill() on a single child does not interrupt the in-flight SDK run
- * - If a different apiKey arrives (rare), the runner is re-spawned with the new key
  */
 
 import { spawn } from "node:child_process";
@@ -133,24 +132,22 @@ interface PendingRequest {
  */
 class SdkRunnerSingleton {
   private runnerProcess: ReturnType<typeof spawn> | null = null;
-  private lastApiKey: string | null = null;
   private pendingRequests = new Map<string, PendingRequest>();
   private lineBuffer = "";
   private starting: Promise<void> | null = null;
+  private idle = false;
+
+  isIdle(): boolean {
+    return this.idle;
+  }
 
   /**
-   * Ensure the runner is spawned (or re-spawn if apiKey changed).
+   * Ensure this key's runner is spawned.
    * Concurrent callers share the same spawn (lock via this.starting) —
    * OpenCode fires multiple requests at once (e.g. title-gen + chat).
    */
   async ensureRunning(apiKey: string): Promise<void> {
-    // If apiKey changed, kill the old process and respawn
-    if (this.lastApiKey && this.lastApiKey !== apiKey) {
-      log.info("API key changed, restarting runner");
-      this.kill();
-      this.starting = null;
-    }
-
+    this.idle = false;
     if (this.runnerProcess) {
       return; // already running
     }
@@ -161,6 +158,9 @@ class SdkRunnerSingleton {
     this.starting = this.doSpawn(apiKey);
     try {
       await this.starting;
+    } catch (error) {
+      this.idle = true;
+      throw error;
     } finally {
       this.starting = null;
     }
@@ -174,8 +174,6 @@ class SdkRunnerSingleton {
       runnerPath,
       nodeBin,
     });
-
-    this.lastApiKey = apiKey;
 
     this.runnerProcess = spawn(nodeBin, [runnerPath], {
       env: { ...process.env, CURSOR_API_KEY: apiKey },
@@ -207,6 +205,7 @@ class SdkRunnerSingleton {
         pending.controller.error(new Error(`Runner exited with code ${code}`));
       }
       this.pendingRequests.clear();
+      this.idle = true;
     });
 
     this.runnerProcess.on("error", (err) => {
@@ -218,6 +217,7 @@ class SdkRunnerSingleton {
         pending.controller.error(err);
       }
       this.pendingRequests.clear();
+      this.idle = true;
     });
   }
 
@@ -294,6 +294,7 @@ class SdkRunnerSingleton {
           pending.controller.close();
           pending.promiseResolver(wrapped.exitCode ?? 0);
           this.pendingRequests.delete(requestId);
+          this.idle = this.pendingRequests.size === 0;
         } else if (wrapped.event) {
           const eventJson = extractEventJson(line);
           pending.controller.enqueue(textEncoder.encode(eventJson + "\n"));
@@ -335,10 +336,28 @@ class SdkRunnerSingleton {
   }
 }
 
-const singleton = new SdkRunnerSingleton();
+// ponytail: retire other idle keys on the next request; use a bounded idle
+// pool if hosts need a hard ceiling on simultaneous account requests.
+const runners = new Map<string, SdkRunnerSingleton>();
+
+function getSdkRunner(apiKey: string): SdkRunnerSingleton {
+  for (const [key, runner] of runners) {
+    if (key !== apiKey && runner.isIdle()) {
+      runner.kill();
+      runners.delete(key);
+    }
+  }
+  let runner = runners.get(apiKey);
+  if (!runner) {
+    runner = new SdkRunnerSingleton();
+    runners.set(apiKey, runner);
+  }
+  return runner;
+}
 
 export function stopSdkRunner(): void {
-  singleton.kill();
+  for (const runner of runners.values()) runner.kill();
+  runners.clear();
 }
 
 // ─── BUN-compatible child ──────────────────────────────────────────────────
@@ -362,6 +381,7 @@ export function createSdkBunChild(options: {
   params?: SdkModelParam[];
   images?: SdkImageLike[];
 }): SdkBunChild {
+  const singleton = getSdkRunner(options.apiKey);
   log.info("creating sdk bun child", {
     model: options.model,
     cwd: options.cwd,
@@ -435,6 +455,7 @@ export class SdkNodeChild extends EventEmitter {
   private requestId: string | null = null;
 
   async spawn(options: { apiKey: string; model: string; prompt: string; cwd: string; params?: SdkModelParam[]; images?: SdkImageLike[] }) {
+    const singleton = getSdkRunner(options.apiKey);
     try {
       log.info("spawning (via singleton) sdk node child", {
         model: options.model,
@@ -534,6 +555,7 @@ export function createSdkNodeChild(options: {
  * 4. Times out after 15 seconds
  */
 export async function listModelsViaRunner(apiKey: string): Promise<Array<{ id: string; name: string }>> {
+  const singleton = getSdkRunner(apiKey);
   try {
     // Ensure runner is alive
     await singleton.ensureRunning(apiKey);

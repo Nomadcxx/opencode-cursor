@@ -9,6 +9,12 @@ import {
 } from "../../src/provider/backend";
 
 describe("provider backend compatibility", () => {
+  it("prefers SDK for keyed 2.0 requests under auto while respecting explicit CLI selection", () => {
+    const request = { cursorAgentAvailable: true, sdkApiKey: "cursor_123", preferSdk: true };
+    expect(selectBackendForRequest({ ...request, preference: "auto" })).toBe("sdk");
+    expect(selectBackendForRequest({ ...request, preference: "cursor-agent" })).toBe("cursor-agent");
+    expect(selectBackendForRequest({ ...request, preference: "auto", sdkApiKey: "cursor-agent" })).toBe("cursor-agent");
+  });
   it("defaults to auto and accepts explicit backend preferences", () => {
     expect(parseCursorBackendPreference(undefined)).toEqual({ preference: "auto", valid: true });
     expect(parseCursorBackendPreference("auto")).toEqual({ preference: "auto", valid: true });

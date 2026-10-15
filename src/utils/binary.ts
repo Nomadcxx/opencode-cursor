@@ -1,12 +1,8 @@
 // src/utils/binary.ts
 //
 // Resolves the cursor-agent executable path. On Windows the binary is a `.cmd`
-// shim, which Node's spawn cannot execute directly without `shell: true` —
-// callers therefore pair this resolver with `shell: process.platform === "win32"`
-// and `formatShellCommandForPlatform()` at every Node spawn site. That re-enables
-// shell metacharacter interpretation, so any user-controlled string passed as an
-// argument on Windows must be treated as untrusted; never concatenate user input
-// into argv on win32.
+// shim. Node callers use cross-spawn with raw argv so executable paths and
+// arguments survive cmd.exe parsing without shell:true interpolation.
 import { existsSync as fsExistsSync } from "fs";
 import * as pathModule from "path";
 import { homedir as osHomedir } from "os";
@@ -87,17 +83,4 @@ export function resolveCursorAgentBinaryStrict(deps: BinaryDeps = {}): string {
 
   // Non-win32: delegate to the plain resolver (no throw).
   return resolveCursorAgentBinary(deps);
-}
-
-export function formatShellCommandForPlatform(
-  command: string,
-  platform: NodeJS.Platform = process.platform,
-): string {
-  if (platform !== "win32") {
-    return command;
-  }
-  if (command.startsWith("\"") && command.endsWith("\"")) {
-    return command;
-  }
-  return `"${command}"`;
 }

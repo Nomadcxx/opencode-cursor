@@ -18,7 +18,12 @@ describe("proxy health reuse guard", () => {
 
   test("accepts matching workspace identity", () => {
     const workspace = "/tmp/project";
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace }, workspace)).toBe(true);
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace)).toBe(true);
+  });
+
+  test("rejects a different or missing backend preference", () => {
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: "/tmp/project", backendPreference: "sdk" }, "/tmp/project")).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: "/tmp/project" }, "/tmp/project")).toBe(false);
   });
 
   test("rejects mismatched workspace identity", () => {

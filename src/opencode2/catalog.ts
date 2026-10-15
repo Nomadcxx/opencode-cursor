@@ -78,7 +78,7 @@ export function applyCursorProviderInventory(
       settings: {
         baseURL,
         // Placeholder only — the proxy resolves the real key from env /
-        // integration credentials via setStoredApiKey on each Cursor turn.
+        // the Authorization header set on each Cursor model request.
         apiKey: "cursor-agent",
       },
     },
