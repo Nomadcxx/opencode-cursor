@@ -98,6 +98,7 @@ import {
 import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
 import { createCursorAgentPoolNodeChild, isAgentPoolEnabled } from "./client/cursor-agent-child.js";
 import {
+  isUsableSdkApiKey,
   parseCursorBackendPreference,
   resolveSdkApiKey,
   selectBackendForRequest,
@@ -266,12 +267,19 @@ function resolveBackendForRequest(sdkApiKey: string | undefined, preferSdk = fal
     });
   }
 
-  return selectBackendForRequest({
+  const cursorAgentAvailable = parsed.preference === "sdk"
+    || (preferSdk && isUsableSdkApiKey(sdkApiKey))
+    || isCursorAgentAvailable();
+  const backend = selectBackendForRequest({
     preference: parsed.preference,
-    cursorAgentAvailable: preferSdk || parsed.preference === "sdk" || isCursorAgentAvailable(),
+    cursorAgentAvailable,
     sdkApiKey,
     preferSdk,
   });
+  if (preferSdk && backend === "cursor-agent" && !cursorAgentAvailable) {
+    throw new Error("Cursor CLI is unavailable; install cursor-agent or connect a Cursor API key to use the SDK backend.");
+  }
+  return backend;
 }
 
 
@@ -312,8 +320,7 @@ export function buildCursorAgentCommand(
   if (process.env.CURSOR_ACP_TRUST_WORKSPACE === "true") {
     cmd.push("--trust");
   }
-  const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
-  return [command, ...args];
+  return cmd;
 }
 
 /**
@@ -571,8 +578,10 @@ function createCursorAgentBunChild(
     throw new Error("This provider requires Bun runtime.");
   }
 
+  const cmd = buildCursorAgentCommand(model, workspaceDirectory, resumeChatId);
+  const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
   const child = bunAny.Bun.spawn({
-    cmd: buildCursorAgentCommand(model, workspaceDirectory, resumeChatId),
+    cmd: [command, ...args],
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
@@ -623,7 +632,8 @@ function createCursorAgentNodeChild(
   resumeChatId?: string,
 ): any {
   const cmd = buildCursorAgentCommand(model, workspaceDirectory, resumeChatId);
-  const child = spawn(cmd[0], cmd.slice(1), {
+  const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
+  const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "pipe"],
   });
 
@@ -1357,8 +1367,11 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
       const sdkApiKey = resolveRequestSdkApiKey(authHeader);
       const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
         req.headers.get(OPENCODE_DIRECTORY_HEADER),
-        workspaceDirectory,
+        privateProxy ? "" : workspaceDirectory,
       );
+      if (!requestWorkspaceDirectory) {
+        return new Response(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }), { status: 400 });
+      }
       const backend = resolveBackendForRequest(sdkApiKey, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
@@ -2006,8 +2019,13 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
       const sdkApiKeyNode = resolveRequestSdkApiKey(authHeaderNode);
       const requestWorkspaceDirectory = resolveRequestWorkspaceDirectory(
         req.headers[OPENCODE_DIRECTORY_HEADER] as string | undefined,
-        workspaceDirectory,
+        privateProxy ? "" : workspaceDirectory,
       );
+      if (!requestWorkspaceDirectory) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }));
+        return;
+      }
       const backend = resolveBackendForRequest(sdkApiKeyNode, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({

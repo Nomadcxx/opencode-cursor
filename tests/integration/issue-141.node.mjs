@@ -47,7 +47,7 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
     const legacy=createServer((req,res)=>{
       legacyRequests++;
       res.setHeader('content-type','application/json');
-      res.end(JSON.stringify({ok:true,workspaceDirectory:projectA,backendPreference:'auto'}));
+      res.end(JSON.stringify({ok:true,workspaceDirectory:projectA}));
     });
     // A running OpenCode may own this port; leave that process alone.
     await new Promise((resolve,reject)=>{
@@ -61,6 +61,8 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
     assert.equal(a,b,'concurrent 2.0 locations must share their private proxy');
     assert.notEqual(a,'http://127.0.0.1:32124/v1');
     assert.equal(legacyRequests,0,'private startup must not even probe the legacy proxy');
+    const missingWorkspace=await fetch(a+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'auto',messages:[]})});
+    assert.equal(missingWorkspace.status,400,'private requests must not silently use another project fallback');
     setStoredApiKey('another-host-key');
     const request=async(key,directory,stream=false)=>{
       const headers={'content-type':'application/json','x-opencode-directory':encodeURIComponent(directory)};
@@ -90,6 +92,12 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
     process.env.CURSOR_ACP_BACKEND='sdk';
     assert.equal((await request(undefined,projectA)).status,401,'private proxy must ignore another host stored key');
     process.env.CURSOR_ACP_BACKEND='auto';
+    process.env.CURSOR_AGENT_EXECUTABLE=${JSON.stringify(join(dir, "missing-cursor-agent.exe"))};
+    const unavailable=await request(undefined,projectA);
+    assert.equal(unavailable.status,500);
+    assert.match((await unavailable.json()).error,/install cursor-agent or connect a Cursor API key/i);
+    const upgraded=await ensureCursorProxyServer(projectA);
+    assert.notEqual(upgraded,'http://127.0.0.1:32124/v1','older health payloads must fall back to a new port');
     const c=await ensureCursorProxyServer(resolve('issue-141-project-c'));
     const d=await ensureCursorProxyServer(resolve('issue-141-project-d'));
     assert.notEqual(c,d,'1.x workspace fallback must belong to its own proxy');
@@ -114,7 +122,8 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
   for (const pooled of [false, true]) {
     run(`
       import assert from 'node:assert/strict';
-      const {ensureCursorProxyServer}=await import(${JSON.stringify(pluginURL)});
+      const {ensureCursorProxyServer,buildCursorAgentCommand}=await import(${JSON.stringify(pluginURL)});
+      assert.equal(buildCursorAgentCommand('auto',${JSON.stringify(workspace)})[0],${JSON.stringify(cmd)},'logical argv must retain the selected binary');
       const url=await ensureCursorProxyServer(${JSON.stringify(workspace)});
       const response=await fetch(url+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'auto',messages:[{role:'user',content:'test'}]})});
       assert.equal(response.status,200);

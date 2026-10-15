@@ -123,6 +123,12 @@ stop at Cursor's trust prompt. Trust the workspace in Cursor first, or set
 This opt-in also applies to the pooled runner. The plugin does not grant
 workspace trust by default.
 
+On Windows, the plugin invokes an installed `cursor-agent.ps1` sibling with
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File`, matching the flags
+in Cursor's batch launcher. This bypass applies to that child process; it does
+not change the machine's execution policy. Arguments stay separate from the
+script path. Skipping the batch launcher preserves literal `!` in workspace paths.
+
 ## Safe transition from next-era / dump-era builds
 
 If you previously used the dual-export root entry against OpenCode 2 **next**
