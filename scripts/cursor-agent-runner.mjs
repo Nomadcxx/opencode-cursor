@@ -13,7 +13,8 @@
  * Diagnostics go to stderr only.
  */
 
-import { spawn } from "node:child_process";
+import spawn from "cross-spawn";
+import { buildCursorAgentSpawnCommand } from "../src/utils/cursor-agent-command.mjs";
 import { pathToFileURL } from "node:url";
 
 const RESUME_CHAT_ID_SAFE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -87,15 +88,14 @@ async function handleRequest(request) {
   if (force) {
     args.push("--force");
   }
+  if (process.env.CURSOR_ACP_TRUST_WORKSPACE === "true") args.push("--trust");
 
   console.error(`[cursor-agent-runner] Request ${id}: model=${model}, cwd=${cwd}, resume=${!!resumeChatId}`);
 
   await new Promise((resolve) => {
-    const shell = process.platform === "win32";
-    const cmd = shell && binary.includes(" ") ? `"${binary}"` : binary;
-    const child = spawn(cmd, args, {
+    const [command, spawnArgs] = buildCursorAgentSpawnCommand(binary, args);
+    const child = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
-      shell,
     });
     currentRequest = id;
     currentChild = child;

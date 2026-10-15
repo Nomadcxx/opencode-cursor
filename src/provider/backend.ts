@@ -18,6 +18,7 @@ export interface SelectBackendForRequestInput {
   preference: CursorBackendPreference;
   cursorAgentAvailable: boolean;
   sdkApiKey?: string;
+  preferSdk?: boolean;
 }
 
 export function parseCursorBackendPreference(
@@ -61,7 +62,7 @@ export function selectBackendForRequest(
 
   if (
     input.preference === "auto" &&
-    !input.cursorAgentAvailable &&
+    (input.preferSdk || !input.cursorAgentAvailable) &&
     isUsableSdkApiKey(input.sdkApiKey)
   ) {
     return "sdk";

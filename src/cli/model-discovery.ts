@@ -1,6 +1,7 @@
-import { execFileSync } from "child_process";
+import spawn from "cross-spawn";
 import { stripAnsi } from "../utils/errors.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "../utils/binary.js";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs";
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
 
@@ -33,28 +34,27 @@ export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
 
 export type DiscoverDeps = {
   platform?: NodeJS.Platform;
-  execFileSync?: typeof execFileSync;
+  spawnSync?: typeof spawn.sync;
   resolveBinary?: () => string;
 };
 
 export function discoverModelsFromCursorAgent(deps: DiscoverDeps = {}): DiscoveredModel[] {
   const platform = deps.platform ?? process.platform;
-  const exec = deps.execFileSync ?? execFileSync;
+  const exec = deps.spawnSync ?? spawn.sync;
   const resolveBinary = deps.resolveBinary ?? resolveCursorAgentBinary;
 
-  // On Windows cursor-agent is a .cmd shim, which requires shell mode when
-  // spawned from Node (execFileSync of a bare .cmd fails with EINVAL). Shell
-  // mode hands the command to cmd.exe unquoted, so the resolved path must go
-  // through formatShellCommandForPlatform() or a profile name containing a
-  // space splits the command. See the contract in utils/binary.ts.
-  const raw = exec(formatShellCommandForPlatform(resolveBinary(), platform), ["models"], {
+  const [command, args] = buildCursorAgentSpawnCommand(resolveBinary(), ["models"], { platform });
+  const result = exec(command, args, {
     encoding: "utf8",
-    shell: platform === "win32",
     ...(platform !== "win32" && { killSignal: "SIGTERM" as const }),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: MODEL_DISCOVERY_TIMEOUT_MS,
   });
-  const models = parseCursorModelsOutput(raw);
+  if (result.error) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`cursor-agent models failed (${result.status}): ${result.stderr}`);
+  }
+  const models = parseCursorModelsOutput(String(result.stdout));
   if (models.length === 0) {
     throw new Error("No models parsed from cursor-agent output");
   }

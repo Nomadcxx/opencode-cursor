@@ -11,6 +11,7 @@ const previousEnv = {
   CURSOR_ACP_MODEL_AUTO_REFRESH: process.env.CURSOR_ACP_MODEL_AUTO_REFRESH,
   CURSOR_ACP_REUSE_EXISTING_PROXY: process.env.CURSOR_ACP_REUSE_EXISTING_PROXY,
   CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY: process.env.CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY,
+  CURSOR_API_KEY: process.env.CURSOR_API_KEY,
 };
 
 process.env.XDG_CONFIG_HOME = configHome;
@@ -19,6 +20,7 @@ process.env.CURSOR_ACP_MCP_BRIDGE = "false";
 process.env.CURSOR_ACP_MODEL_AUTO_REFRESH = "false";
 process.env.CURSOR_ACP_REUSE_EXISTING_PROXY = "false";
 process.env.CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY = "1";
+delete process.env.CURSOR_API_KEY;
 
 const pluginModule = await import("../../src/plugin.js") as typeof import("../../src/plugin.js") & {
   getStoredApiKey?: () => string | undefined;
@@ -172,6 +174,7 @@ describe("opencode 2.0 stable adapter", () => {
     expect(latest.info.package).toBe(CURSOR_AISDK_PACKAGE);
     expect(latest.info.package).toBe("aisdk:@ai-sdk/openai-compatible");
     expect(latest.info.settings.baseURL).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/v1$/);
+    expect(latest.info.settings.baseURL).not.toBe("http://127.0.0.1:32124/v1");
     expect(latest.models.length).toBeGreaterThan(0);
     expect(latest.models[0]).toEqual(
       expect.objectContaining({
@@ -292,7 +295,35 @@ describe("opencode 2.0 stable adapter", () => {
     await cleanup?.();
   });
 
-  test("resolves Cursor credentials only for cursor-acp turns", async () => {
+  test("model.request overrides stale config routing and keeps credentials on their own requests", async () => {
+    const fixture = createContext();
+    const cleanup = await opencode2.default.setup(fixture.context);
+    const request = () => ({ sessionID: "ses_a", model: { providerID: "cursor-acp" },
+      baseURL: "http://127.0.0.1:32124/v1", headers: {} as Record<string, string> });
+    try {
+      pluginModule.setStoredApiKey("other-host-key");
+      fixture.setCredential({ type: "key", key: "key-a" });
+      const first = request();
+      await fixture.modelRequestHook()!(first);
+      fixture.setCredential({ type: "key", key: "key-b" });
+      const second = request();
+      await fixture.modelRequestHook()!(second);
+      expect(first.baseURL).toBe(fixture.providerAdds.at(-1).info.settings.baseURL);
+      expect(first.baseURL).not.toBe("http://127.0.0.1:32124/v1");
+      expect(first.headers.authorization).toBe("Bearer key-a");
+      expect(second.headers.authorization).toBe("Bearer key-b");
+      expect(pluginModule.getStoredApiKey!()).toBe("other-host-key");
+      fixture.setCredential(undefined);
+      const keyless = request();
+      await fixture.modelRequestHook()!(keyless);
+      expect(keyless.headers.authorization).toBe("Bearer cursor-agent");
+    } finally {
+      await cleanup?.();
+      pluginModule.setStoredApiKey(undefined);
+    }
+  });
+
+  test("context hooks leave the shared credential cache untouched", async () => {
     const fixture = createContext();
     const cleanup = await opencode2.default.setup(fixture.context);
     expect(fixture.hookOptions.context).toEqual({ providerID: "cursor-acp" });
@@ -312,7 +343,7 @@ describe("opencode 2.0 stable adapter", () => {
       system,
       tools: {},
     });
-    expect(pluginModule.getStoredApiKey!()).toBe("cursor-key");
+    expect(pluginModule.getStoredApiKey!()).toBeUndefined();
     // No MCP domain → no direct-MCP guidance and no local tool advertisement.
     expect(system).toEqual([]);
 

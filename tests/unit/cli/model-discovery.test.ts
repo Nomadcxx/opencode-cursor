@@ -33,44 +33,49 @@ auto - Auto
 });
 
 describe("cli/model-discovery discoverModelsFromCursorAgent", () => {
-  it("runs cursor-agent with shell mode on Windows", () => {
+  it("passes the raw binary and arguments to the escaped spawn implementation on Windows", () => {
     const calls: Array<{ cmd: string; args: string[]; opts: any }> = [];
     const exec = (cmd: string, args: string[], opts: any) => {
       calls.push({ cmd, args, opts });
-      return "auto - Auto\n";
+      return { status: 0, stdout: "auto - Auto\n", stderr: "" };
     };
 
     const models = discoverModelsFromCursorAgent({
       platform: "win32",
-      execFileSync: exec as any,
+      spawnSync: exec as any,
       resolveBinary: () => "C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd",
     });
 
     expect(models).toEqual([{ id: "auto", name: "Auto" }]);
     expect(calls).toHaveLength(1);
-    // shell mode hands the command to cmd.exe unquoted, so a profile path with
-    // a space must arrive quoted or cmd.exe splits it at the space.
-    expect(calls[0].cmd).toBe("\"C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd\"");
+    expect(calls[0].cmd).toBe("C:\\Users\\Walter Meier\\AppData\\Local\\cursor-agent\\cursor-agent.cmd");
     expect(calls[0].args).toEqual(["models"]);
-    expect(calls[0].opts.shell).toBe(true);
+    expect(calls[0].opts.shell).toBeUndefined();
   });
 
   it("does not use shell mode on non-Windows platforms", () => {
     const calls: Array<{ cmd: string; args: string[]; opts: any }> = [];
     const exec = (cmd: string, args: string[], opts: any) => {
       calls.push({ cmd, args, opts });
-      return "auto - Auto\n";
+      return { status: 0, stdout: "auto - Auto\n", stderr: "" };
     };
 
     discoverModelsFromCursorAgent({
       platform: "linux",
-      execFileSync: exec as any,
+      spawnSync: exec as any,
       resolveBinary: () => "/home/walter meier/.cursor-agent/cursor-agent",
     });
 
     // no shell on posix, so the path is passed through unquoted
     expect(calls[0].cmd).toBe("/home/walter meier/.cursor-agent/cursor-agent");
-    expect(calls[0].opts.shell).toBe(false);
+    expect(calls[0].opts.shell).toBeUndefined();
     expect(calls[0].opts.killSignal).toBe("SIGTERM");
+  });
+
+  it("reports nonzero exit status instead of parsing partial model output", () => {
+    expect(() => discoverModelsFromCursorAgent({
+      spawnSync: (() => ({ status: 1, stdout: "auto - Auto\n", stderr: "workspace trust required" })) as any,
+      resolveBinary: () => "cursor-agent",
+    })).toThrow("workspace trust required");
   });
 });

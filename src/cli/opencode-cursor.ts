@@ -20,7 +20,9 @@ import {
   discoverModelsFromCursorAgent,
   fallbackModels,
 } from "./model-discovery.js";
-import { formatShellCommandForPlatform, resolveCursorAgentBinary } from "../utils/binary.js";
+import spawn from "cross-spawn";
+import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs";
 import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
 import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent-child.js";
@@ -117,10 +119,12 @@ export function checkBun(): CheckResult {
 
 export function checkCursorAgent(): CheckResult {
   try {
-    const output = execFileSync(formatShellCommandForPlatform(resolveCursorAgentBinary()), ["--version"], {
+    const [command, args] = buildCursorAgentSpawnCommand(resolveCursorAgentBinary(), ["--version"]);
+    const result = spawn.sync(command, args, {
       encoding: "utf8",
-      shell: process.platform === "win32",
-    }).trim();
+    });
+    if (result.error || result.status !== 0) throw result.error ?? new Error(String(result.stderr));
+    const output = String(result.stdout).trim();
     const version = output.split("\n")[0] || "installed";
     return { name: "cursor-agent", passed: true, message: version };
   } catch {
@@ -136,12 +140,13 @@ export function checkCursorAgentLogin(): CheckResult {
   try {
     // cursor-agent stores credentials in ~/.cursor-agent or similar
     // Try running a command that requires auth
-    execFileSync(formatShellCommandForPlatform(resolveCursorAgentBinary()), ["models"], {
+    const [command, args] = buildCursorAgentSpawnCommand(resolveCursorAgentBinary(), ["models"]);
+    const result = spawn.sync(command, args, {
       encoding: "utf8",
-      shell: process.platform === "win32",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 3000,
     });
+    if (result.error || result.status !== 0) throw result.error ?? new Error(String(result.stderr));
     return { name: "cursor-agent login", passed: true, message: "logged in" };
   } catch {
     return {
