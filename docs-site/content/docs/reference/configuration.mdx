@@ -84,6 +84,7 @@ MCP calls run through the shell-facing `mcptool` command. Read
 | `CURSOR_ACP_NODE_BIN` | `node` | Selects the Node executable used for runner processes. | Node is installed under a non-standard executable path. |
 | `CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH` | packaged runner | Overrides `cursor-agent-runner.mjs`; a missing path is an error. | Developing or packaging the runner. |
 | `CURSOR_ACP_SDK_RUNNER_PATH` | packaged runner | Overrides `sdk-runner.mjs`; a missing path is an error. | Developing or packaging the SDK runner. |
+| `CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY` | off | Disables background model discovery on 2.0 when set to `1`. | Running deterministic adapter tests without network discovery. |
 
 These path overrides are development and packaging controls. A normal
 installation should leave them unset.
