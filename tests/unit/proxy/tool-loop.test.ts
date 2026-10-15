@@ -551,4 +551,62 @@ describe("extractOpenAiToolCall with pass-through", () => {
     expect(result.toolCall).toBeDefined();
     expect(result.toolCall!.function.name).toBe("mcp__engram__mem_save");
   });
+
+  describe("body-less Cursor edit calls", () => {
+    // OpenCode 2 host tool names
+    const allowed = new Set(["edit", "write", "read"]);
+
+    it("passes the Cursor SDK's path-only edit through to Cursor", () => {
+      // sdk-runner shape: { tool_call: { edit: { args: { path }, result } } }
+      const result = extractOpenAiToolCall(
+        createToolCallEvent("edit", { path: "C:/repo/combine_invoices.py" }),
+        allowed,
+      );
+      expect(result.action).toBe("passthrough");
+      expect(result.passthroughName).toBe("edit");
+      expect(result.toolCall).toBeUndefined();
+    });
+
+    it("passes the completed SDK edit event (with result) through too", () => {
+      const event: any = {
+        type: "tool_call",
+        call_id: "call_sdk_edit",
+        tool_call: {
+          edit: {
+            args: { path: "combine_invoices.py" },
+            result: { status: "success", value: { diffString: "+print('hi')" } },
+          },
+        },
+      };
+      expect(extractOpenAiToolCall(event, allowed).action).toBe("passthrough");
+    });
+
+    it("treats filePath-only edits as body-less", () => {
+      const result = extractOpenAiToolCall(
+        createToolCallEvent("editToolCall", { filePath: "README.md" }),
+        allowed,
+      );
+      expect(result.action).toBe("passthrough");
+    });
+
+    it("still intercepts edits that carry a body", () => {
+      const withStrings = extractOpenAiToolCall(
+        createToolCallEvent("editToolCall", { path: "a.ts", old_string: "a", new_string: "b" }),
+        allowed,
+      );
+      expect(withStrings.action).toBe("intercept");
+      expect(withStrings.toolCall!.function.name).toBe("edit");
+
+      const withStreamContent = extractOpenAiToolCall(
+        createToolCallEvent("editToolCall", { path: "a.ts", streamContent: "full body" }),
+        allowed,
+      );
+      expect(withStreamContent.action).toBe("intercept");
+    });
+
+    it("does not pass through other path-only tools", () => {
+      const result = extractOpenAiToolCall(createToolCallEvent("read", { path: "a.ts" }), allowed);
+      expect(result.action).toBe("intercept");
+    });
+  });
 });
