@@ -13,9 +13,14 @@
  * - default: {"id","model","cwd","prompt"} -> runs a fresh Agent per request
  *   (no caching: conversation state must stay in OpenCode, see handleRequest)
  * - {"id","op":"listModels"} -> emits {"type":"models","models":[{id,name}]}
+ * - {"id","op":"cancel"} -> cancels the in-flight run for request <id>; that
+ *   request then finishes with {"id","done":true,"exitCode":130}
  *
  * ENVIRONMENT VARIABLES:
  * - CURSOR_API_KEY: Required. API key from cursor.com/settings.
+ * - CURSOR_ACP_SDK_STATE_ROOT: (optional) Directory for the SDK's local agent
+ *   store. Defaults to the SDK's own location, except on Windows (see
+ *   resolveStateRoot).
  * - CURSOR_ACP_SETTING_SOURCES: (optional) CSV of setting sources to load.
  *   Defaults to empty (isolated mode: no Cursor env rules/skills/MCP per request).
  *   Examples: "all" (load everything), "user,project" (load user + project rules).
@@ -30,11 +35,15 @@
  * Lifecycle: reads stdin indefinitely; on EOF, disposes agents and exits 0.
  */
 
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { join, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Import Agent and Cursor dynamically after API key check to accelerate boot time
 let Agent;
 let Cursor;
+let SqliteLocalAgentStore;
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -218,6 +227,136 @@ async function handleListModels(id) {
   }
 }
 
+// ─── Cancellation ───────────────────────────────────────────────────────────
+//
+// The proxy "kills" a request once it has handed a tool call back to OpenCode.
+// The SDK Agent runs autonomously in agent mode, so unless its Run is
+// cancelled here it keeps working (and may run the tool itself) long after
+// nobody is reading its output.
+
+/** Exit code reported in the done marker of a cancelled request. */
+export const CANCELLED_EXIT_CODE = 130;
+
+/** How long a cancel for a not-yet-registered request is remembered. */
+const PENDING_CANCEL_TTL_MS = 60_000;
+
+/** In-flight runs by request id. */
+const activeRuns = new Map();
+/** Request ids whose cancel arrived before their run was registered. */
+const pendingCancels = new Set();
+
+async function cancelRun(id, run) {
+  try {
+    if (typeof run?.supports === "function" && !run.supports("cancel")) {
+      console.error(`[sdk-runner] Request ${id}: run does not support cancel`);
+      return;
+    }
+    await run?.cancel?.();
+  } catch (err) {
+    console.error(`[sdk-runner] Request ${id}: cancel failed: ${err?.message ?? err}`);
+  }
+}
+
+/**
+ * Track a run for request id. Returns a state object whose `cancelled` flag the
+ * stream loop checks. A cancel that arrived before registration applies now.
+ */
+export function registerRun(id, run) {
+  const state = { run, cancelled: false };
+  activeRuns.set(id, state);
+  if (pendingCancels.delete(id)) {
+    state.cancelled = true;
+    void cancelRun(id, run);
+  }
+  return state;
+}
+
+export function unregisterRun(id) {
+  activeRuns.delete(id);
+  pendingCancels.delete(id);
+}
+
+/**
+ * Cancel request id. Returns true when a registered run was cancelled, false
+ * when the cancel was queued for a run that has not been registered yet.
+ */
+export async function cancelRequest(id) {
+  const state = activeRuns.get(id);
+  if (!state) {
+    pendingCancels.add(id);
+    // The request may already have finished; don't hold its id forever.
+    setTimeout(() => pendingCancels.delete(id), PENDING_CANCEL_TTL_MS).unref?.();
+    return false;
+  }
+  if (state.cancelled) return true;
+  state.cancelled = true;
+  console.error(`[sdk-runner] Cancelling request ${id}`);
+  await cancelRun(id, state.run);
+  return true;
+}
+
+/** @internal Exported for testing only. */
+export function isCancelPending(id) {
+  return pendingCancels.has(id);
+}
+
+// ─── Local agent store ──────────────────────────────────────────────────────
+//
+// The SDK's default store lives at
+//   ~/.cursor/projects/<cwd with separators as dashes>/sdk-agent-store/<64 hex>/agents/agent-<64 hex>/store.db
+// which passes Windows' 260-character MAX_PATH for any moderately deep
+// workspace (a OneDrive project reaches ~310). SQLite then fails with
+// "unable to open database file" after the model has answered, and the SDK
+// retries the whole turn several times (minutes) before the run errors.
+
+/**
+ * Short state root for the SDK's local store, or undefined to keep the SDK
+ * default. On Windows: ~/.cursor/oc-sdk/<16 hex of cwd>.
+ * Exported for unit testing.
+ */
+export function resolveStateRoot(cwd, env = process.env, platform = process.platform, home = homedir()) {
+  const override = env.CURSOR_ACP_SDK_STATE_ROOT?.trim();
+  const workspace = platform === "win32" ? win32.normalize(cwd).toLowerCase() : cwd;
+  // ponytail: 64-bit suffix limits path length; widen if collision risk becomes material.
+  const workspaceKey = createHash("sha256").update(workspace).digest("hex").slice(0, 16);
+  if (override) return join(override, workspaceKey);
+  if (platform !== "win32") return undefined;
+  return join(home, ".cursor", "oc-sdk", workspaceKey);
+}
+
+/** Share each root across active requests, then dispose it before reporting done. */
+const stores = new Map();
+
+export async function acquireStore(cwd, Store = SqliteLocalAgentStore, stateRoot = resolveStateRoot(cwd)) {
+  if (!stateRoot || !Store) return undefined;
+  let entry = stores.get(stateRoot);
+  if (entry?.closing) {
+    await entry.closing.catch(() => {});
+    return acquireStore(cwd, Store, stateRoot);
+  }
+  if (!entry) {
+    console.error(`[sdk-runner] Local agent store: ${stateRoot}`);
+    entry = { refs: 0, opening: Promise.resolve().then(() => Store.open({ workspaceRef: cwd, stateRoot })) };
+    stores.set(stateRoot, entry);
+  }
+  entry.refs++;
+  let store;
+  try {
+    store = await entry.opening;
+  } catch (error) {
+    if (--entry.refs === 0) stores.delete(stateRoot);
+    throw new Error(`Cannot open SDK store at ${stateRoot}: ${error?.message ?? error}. Check directory permissions or set CURSOR_ACP_SDK_STATE_ROOT to a writable short path.`, { cause: error });
+  }
+  return {
+    store,
+    async release() {
+      if (--entry.refs !== 0) return;
+      entry.closing = Promise.resolve().then(() => store.dispose()).finally(() => stores.delete(stateRoot));
+      await entry.closing;
+    },
+  };
+}
+
 // ─── Model selection ────────────────────────────────────────────────────────
 
 /**
@@ -254,7 +393,7 @@ export function buildUserMessage(prompt, images) {
 /**
  * Handle a single request: execute the prompt and emit wrapped events.
  */
-async function handleRequest(apiKey, request) {
+export async function handleRequest(apiKey, request, AgentClass = Agent) {
   const { id, model, cwd, prompt, params, images } = request;
 
   // Validate required fields
@@ -276,24 +415,34 @@ async function handleRequest(apiKey, request) {
   // shared Agent would also interleave. The persistent process still saves
   // the Node boot + SDK import cost (~2-3s) on every request after the first.
   let agent = null;
+  let runState = null;
+  let storeLease;
+  let exitCode = 1;
   const timelineStart = Date.now();
   try {
     // Timing: Agent.create
     const createStart = Date.now();
     const modelSelection = buildModelSelection(model, params);
-    agent = await Agent.create({
+    storeLease = await acquireStore(cwd);
+    agent = await AgentClass.create({
       apiKey,
       model: modelSelection,
       mode: "agent",
-      local: { cwd, settingSources: SETTING_SOURCES },
+      local: { cwd, settingSources: SETTING_SOURCES, ...(storeLease ? { store: storeLease.store } : {}) },
     });
     const createMs = Date.now() - createStart;
+    if (isCancelPending(id)) {
+      console.error(`[sdk-runner] Request ${id} cancelled before send`);
+      exitCode = CANCELLED_EXIT_CODE;
+      return;
+    }
     console.error(`[sdk-runner] Agent ready, sending prompt for request ${id}`);
 
     // Timing: agent.send() until first event
     const sendStart = Date.now();
     const message = buildUserMessage(prompt, images);
     const run = await agent.send(message);
+    runState = registerRun(id, run);
 
     let sawFinished = false;
     let eventCount = 0;
@@ -301,6 +450,7 @@ async function handleRequest(apiKey, request) {
 
     console.error(`[sdk-runner] Streaming events for request ${id}...`);
     for await (const msg of run.stream()) {
+      if (runState.cancelled) break;
       // Capture timing of first event
       if (firstEventMs === null) {
         firstEventMs = Date.now() - sendStart;
@@ -315,6 +465,12 @@ async function handleRequest(apiKey, request) {
       emitEvent(id, event);
     }
 
+    if (runState.cancelled) {
+      console.error(`[sdk-runner] Request ${id} cancelled after ${eventCount} events`);
+      exitCode = CANCELLED_EXIT_CODE;
+      return;
+    }
+
     // Ensure we emit a result event
     if (!sawFinished) {
       const successEvent = { type: "result", subtype: "success" };
@@ -324,18 +480,34 @@ async function handleRequest(apiKey, request) {
     const totalMs = Date.now() - timelineStart;
     console.error(`[sdk-runner] Request ${id} complete (${eventCount} events)`);
     console.error(`[sdk-runner] timings ${id}: create=${createMs}ms firstEvent=${firstEventMs ?? "N/A"}ms total=${totalMs}ms`);
-    emitDone(id, 0);
+    exitCode = 0;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (runState?.cancelled) {
+      // A cancelled run may end its stream by throwing; nobody is listening.
+      console.error(`[sdk-runner] Request ${id} cancelled (${message})`);
+      exitCode = CANCELLED_EXIT_CODE;
+      return;
+    }
     const totalMs = Date.now() - timelineStart;
     console.error(`[sdk-runner] Request ${id} error: ${message}`);
     console.error(`[sdk-runner] timings ${id}: total=${totalMs}ms (error)`);
     emitErrorEvent(id, message);
-    emitDone(id, 1);
   } finally {
-    if (agent) {
-      await agent[Symbol.asyncDispose]?.().catch(() => {});
+    unregisterRun(id);
+    try {
+      await agent?.[Symbol.asyncDispose]?.();
+    } catch (error) {
+      emitErrorEvent(id, `SDK agent cleanup failed: ${error?.message ?? error}`);
+      exitCode = 1;
     }
+    try {
+      await storeLease?.release();
+    } catch (error) {
+      emitErrorEvent(id, `SDK store cleanup failed: ${error?.message ?? error}`);
+      exitCode = 1;
+    }
+    emitDone(id, exitCode);
   }
 }
 
@@ -367,6 +539,14 @@ async function main() {
       process.exit(1);
     }
 
+    if (resolveStateRoot(process.cwd())) {
+      try {
+        ({ SqliteLocalAgentStore } = await import("@cursor/sdk/sqlite"));
+      } catch (err) {
+        console.error(`[sdk-runner] Short store root unavailable, using SDK default: ${err.message}`);
+      }
+    }
+
     // Persistent loop: dispatch each NDJSON line from stdin AS IT ARRIVES.
     // Requests run concurrently (OpenCode fires e.g. title-gen + chat at once).
     console.error("[sdk-runner] Waiting for requests on stdin...");
@@ -374,6 +554,11 @@ async function main() {
     const inFlight = new Set();
 
     const dispatch = (request) => {
+      if (request.op === "cancel") {
+        // Not tracked in inFlight: the cancelled request's own promise is.
+        void cancelRequest(request.id);
+        return;
+      }
       let p;
       if (request.op === "listModels") {
         // Handle listModels operation

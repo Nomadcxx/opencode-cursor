@@ -11,6 +11,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -45,6 +48,9 @@ jobs:
       CURSOR_ACP_EMIT_TOOL_UPDATES: "false"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -82,3 +88,5 @@ jobs:
       - run: bun install
       - name: Verify Node proxy isolation and Windows CLI arguments
         run: bun run verify:issue-141
+      - name: Verify SDK stores and cancellation helpers
+        run: bun test tests/unit/sdk-store.test.ts tests/unit/sdk-runner.test.ts

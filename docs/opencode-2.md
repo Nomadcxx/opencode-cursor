@@ -153,3 +153,18 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 | Only Auto / Composer models after `/connect` | Discovery reruns on credential events; restart the daemon if the host did not emit one. |
 | Cursor cannot find an MCP tool | The server sets `"codemode": true`, so its tools stay inside `execute`. Remove it to put them on the direct catalog. See [MCP tools](#mcp-tools). |
 | Cursor edits files in the wrong project | The `model.request` hook sets `x-opencode-directory` per session; check the proxy log for the header and restart the daemon. |
+
+## SDK runtime and local state
+
+The SDK backend requires Node 22.13 or newer. The plugin checks the executable
+selected by `CURSOR_ACP_NODE_BIN` (default `node`) before starting the SDK runner.
+The CLI backend does not inherit that SDK requirement.
+
+On Windows, SDK state lives under `~/.cursor/oc-sdk/<workspace hash>` to keep
+SQLite paths short. `CURSOR_ACP_SDK_STATE_ROOT` selects another short writable
+root on any platform. Workspace tools continue to use the original project path.
+Concurrent requests share a store; the runner closes it after the final request
+finishes agent cleanup. An open failure stops the turn with the path and a
+remediation message, before the agent can run. The runner does not silently
+fall back to another data directory. If the SDK lacks the SQLite export, the
+compatibility path keeps the SDK default and logs that limitation.

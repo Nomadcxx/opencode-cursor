@@ -83,6 +83,8 @@ MCP calls run through the shell-facing `mcptool` command. Read
 | `CURSOR_ACP_HOME_DIR` | OS home | Overrides the home directory used to find Cursor authentication files. | Tests or a managed environment use an alternate home. |
 | `CURSOR_ACP_NODE_BIN` | `node` | Selects the Node executable used for runner processes. | Node is installed under a non-standard executable path. |
 | `CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH` | packaged runner | Overrides `cursor-agent-runner.mjs`; a missing path is an error. | Developing or packaging the runner. |
+| `CURSOR_ACP_SDK_STATE_ROOT` | short per-workspace root on Windows | Overrides the SDK store root; other platforms keep the SDK default unless set. | You need a short writable location for Windows SQLite state. |
+| `CURSOR_ACP_SETTING_SOURCES` | empty | Selects Cursor setting sources such as `user,project`; empty keeps SDK requests isolated. | You want the SDK to load Cursor rules or skills. |
 | `CURSOR_ACP_SDK_RUNNER_PATH` | packaged runner | Overrides `sdk-runner.mjs`; a missing path is an error. | Developing or packaging the SDK runner. |
 | `CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY` | off | Disables background model discovery on 2.0 when set to `1`. | Running deterministic adapter tests without network discovery. |
 
@@ -91,6 +93,6 @@ installation should leave them unset.
 
 ## Complete variable list
 
-The tables above document the variables read from `src/`. The docs build
+The tables above document the variables read by the plugin and its packaged runners. The docs build
 compares this page with the source tree and fails if either side gains or loses
 a `CURSOR_ACP_*` name.

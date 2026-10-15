@@ -96,7 +96,7 @@ assert.ok(existsSync(configurationPath), 'configuration reference is missing');
 
 const variablePattern = /CURSOR_ACP_[A-Z0-9_]+/g;
 const sourceVariables = new Set(
-  files(sourceRoot)
+  [...files(sourceRoot), ...['sdk-runner.mjs', 'cursor-agent-runner.mjs'].map((name) => join(sourceRoot, '../scripts', name))]
     .flatMap((path) => readFileSync(path, 'utf8').match(variablePattern) ?? []),
 );
 const documentedVariables = new Set(readFileSync(configurationPath, 'utf8').match(variablePattern) ?? []);
