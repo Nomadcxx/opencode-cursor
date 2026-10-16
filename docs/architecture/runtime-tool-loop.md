@@ -113,6 +113,10 @@ When tool-hook execution is used, path/cwd defaults are normalized against tool 
 
 In default `opencode` mode, OpenCode owns the native `write` tool. The plugin does not register its own native-name `write` hook in that mode, because duplicate native `write` handling can turn a successful OpenCode write into a plugin guard error. The plugin still exposes `oc_write` for compatibility paths and direct local-tool execution.
 
+For native edit previews, the plugin routes validated targeted `oc_edit` calls to OpenCode's `edit` when its schema supports `replaceAll` and accepts the converted arguments. It sets `replaceAll: true` to preserve replacement of repeated matches. OpenCode then owns execution, permissions, matching, and formatting; its native edit requires an existing file. If the native schema cannot accept the call, the plugin keeps `oc_edit`.
+
+The plugin keeps `oc_write` on its compatibility handler so partial-overwrite protection and explicit `force: true` still apply. Other `oc_` tools keep their exact names when exposed; this preview mapping only selects native `edit`.
+
 When debugging tool loops, isolate the failing boundary before changing behavior: the model may emit a malformed tool call, `cursor-agent` may transport an unexpected shape, the plugin may normalize or intercept it incorrectly, or OpenCode may execute/report it differently than the model expects. For post-tool stalls, first verify that a second turn containing the prior `role: "tool"` result can reach a normal assistant `stop`.
 
 ## Usage Metrics

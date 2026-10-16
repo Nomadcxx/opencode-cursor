@@ -127,6 +127,28 @@ export function applyToolSchemaCompat(
     },
   };
 
+  // ponytail: oc_write keeps its local overwrite guard. Only validated targeted
+  // edits switch executors, with replaceAll preserving the alias's behavior.
+  const nativeEditProperties = getSchemaPropertyNames(toolSchemaMap.get("edit"));
+  if (
+    toolCall.function.name === "oc_edit"
+    && validation.hasSchema && validation.ok
+    && typeof sanitization.args.old_string === "string" && sanitization.args.old_string.length > 0
+    && typeof sanitization.args.new_string === "string"
+    && ["filePath", "oldString", "newString", "replaceAll"].every((key) => nativeEditProperties.has(key))
+  ) {
+    const native = applyToolSchemaCompat({
+      ...normalizedToolCall,
+      function: {
+        name: "edit",
+        arguments: JSON.stringify({ ...sanitization.args, replaceAll: true }),
+      },
+    }, toolSchemaMap);
+    if (native.validation.ok) {
+      return { ...native, originalArgs: parsedArgs, originalArgKeys, collisionKeys };
+    }
+  }
+
   return {
     toolCall: normalizedToolCall,
     normalizedArgs: sanitization.args,

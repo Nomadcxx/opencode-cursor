@@ -309,16 +309,6 @@ function normalizeToolName(raw: string): string {
 }
 
 function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): string | null {
-  // The plugin registers `oc_<tool>` compatibility aliases. When OpenCode also
-  // exposes the native tool, report the native name so the host can render its
-  // own UI for it (for example the desktop patch preview for `edit`).
-  if (name.startsWith("oc_")) {
-    const nativeName = name.slice(3);
-    if (nativeName.length > 0 && allowedToolNames.has(nativeName)) {
-      return nativeName;
-    }
-  }
-
   if (allowedToolNames.has(name)) {
     return name;
   }

@@ -90,7 +90,7 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.arguments).toBe("{\"path\":\"foo.txt\",\"streamContent\":\"body\"}");
   });
 
-  it("presents oc_edit calls as native edit when OpenCode exposes edit", () => {
+  it("keeps oc_edit until schema compatibility can check the native contract", () => {
     const event: any = {
       type: "tool_call",
       call_id: "call_alias_edit",
@@ -104,11 +104,11 @@ describe("proxy/tool-loop", () => {
 
     const result = extractOpenAiToolCall(event, new Set(["edit", "oc_edit", "write", "oc_write"]));
     expect(result.action).toBe("intercept");
-    expect(result.toolCall?.function.name).toBe("edit");
+    expect(result.toolCall?.function.name).toBe("oc_edit");
     expect(result.toolCall?.function.arguments).toBe("{\"filePath\":\"foo.txt\",\"oldString\":\"a\",\"newString\":\"b\"}");
   });
 
-  it("presents oc_write calls as native write when OpenCode exposes write", () => {
+  it("keeps oc_write on its guarded handler when native write is exposed", () => {
     const event: any = {
       type: "tool_call",
       call_id: "call_alias_write",
@@ -121,7 +121,7 @@ describe("proxy/tool-loop", () => {
 
     const result = extractOpenAiToolCall(event, new Set(["write", "oc_write"]));
     expect(result.action).toBe("intercept");
-    expect(result.toolCall?.function.name).toBe("write");
+    expect(result.toolCall?.function.name).toBe("oc_write");
   });
 
   it("keeps oc_edit when native edit is not exposed", () => {
@@ -138,6 +138,12 @@ describe("proxy/tool-loop", () => {
 
     const result = extractOpenAiToolCall(event, new Set(["oc_edit", "oc_write"]));
     expect(result.toolCall?.function.name).toBe("oc_edit");
+  });
+
+  it("preserves exact custom tool names when an unprefixed tool also exists", () => {
+    const event = createToolCallEvent("oc_custom", { query: "test" });
+    const result = extractOpenAiToolCall(event, new Set(["oc_custom", "custom"]));
+    expect(result.toolCall?.function.name).toBe("oc_custom");
   });
 
   it("extracts args from flat payload without args wrapper", () => {
