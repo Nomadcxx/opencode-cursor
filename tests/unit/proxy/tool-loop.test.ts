@@ -90,6 +90,62 @@ describe("proxy/tool-loop", () => {
     expect(result.toolCall?.function.arguments).toBe("{\"path\":\"foo.txt\",\"streamContent\":\"body\"}");
   });
 
+  it("keeps oc_edit until schema compatibility can check the native contract", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_edit",
+      name: "oc_edit",
+      tool_call: {
+        oc_edit: {
+          args: { filePath: "foo.txt", oldString: "a", newString: "b" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["edit", "oc_edit", "write", "oc_write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("oc_edit");
+    expect(result.toolCall?.function.arguments).toBe("{\"filePath\":\"foo.txt\",\"oldString\":\"a\",\"newString\":\"b\"}");
+  });
+
+  it("keeps oc_write on its guarded handler when native write is exposed", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_write",
+      tool_call: {
+        oc_write: {
+          args: { filePath: "foo.txt", content: "body" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["write", "oc_write"]));
+    expect(result.action).toBe("intercept");
+    expect(result.toolCall?.function.name).toBe("oc_write");
+  });
+
+  it("keeps oc_edit when native edit is not exposed", () => {
+    const event: any = {
+      type: "tool_call",
+      call_id: "call_alias_only",
+      name: "oc_edit",
+      tool_call: {
+        oc_edit: {
+          args: { filePath: "foo.txt", oldString: "a", newString: "b" },
+        },
+      },
+    };
+
+    const result = extractOpenAiToolCall(event, new Set(["oc_edit", "oc_write"]));
+    expect(result.toolCall?.function.name).toBe("oc_edit");
+  });
+
+  it("preserves exact custom tool names when an unprefixed tool also exists", () => {
+    const event = createToolCallEvent("oc_custom", { query: "test" });
+    const result = extractOpenAiToolCall(event, new Set(["oc_custom", "custom"]));
+    expect(result.toolCall?.function.name).toBe("oc_custom");
+  });
+
   it("extracts args from flat payload without args wrapper", () => {
     const event: any = {
       type: "tool_call",

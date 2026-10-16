@@ -127,6 +127,70 @@ function editToolCall(args: Record<string, unknown>, id = "c_edit"): OpenAiToolC
 }
 
 describe("tool schema compatibility", () => {
+  describe("native edit previews for compatibility aliases", () => {
+    function aliasSchemas() {
+      const schemas = buildOpencodeEditWriteSchemaMap();
+      schemas.set("oc_edit", buildEditWriteSchemaMap().get("edit"));
+      schemas.set("oc_write", buildEditWriteSchemaMap().get("write"));
+      return schemas;
+    }
+
+    function aliasCall(args: Record<string, unknown>): OpenAiToolCall {
+      return { id: "alias-edit", type: "function", function: { name: "oc_edit", arguments: JSON.stringify(args) } };
+    }
+
+    it("normalizes an alias before selecting native edit and preserves replace-all behavior", () => {
+      for (const args of [
+        { path: "a.txt", old_string: "old", new_string: "new" },
+        { filePath: "a.txt", oldString: "old", newString: "new" },
+      ]) {
+        const call = aliasCall(args);
+        const result = applyToolSchemaCompat(call, aliasSchemas());
+        expect(result.toolCall.id).toBe(call.id);
+        expect(result.toolCall.function.name).toBe("edit");
+        expect(result.normalizedArgs).toEqual({ filePath: "a.txt", oldString: "old", newString: "new", replaceAll: true });
+        expect(result.validation.ok).toBe(true);
+        expect(result.originalArgs).toEqual(args);
+        expect(call.function.name).toBe("oc_edit");
+      }
+    });
+
+    it("keeps the alias when native edit cannot preserve its contract", () => {
+      for (const native of [undefined, { type: "object", properties: {} }, {
+        type: "object", properties: { replaceAll: { type: "boolean" } }, additionalProperties: false,
+      }, {
+        ...(buildOpencodeEditWriteSchemaMap().get("edit") as Record<string, unknown>),
+        required: ["filePath", "oldString", "newString", "extra"],
+      }]) {
+        const schemas = aliasSchemas();
+        if (native) schemas.set("edit", native);
+        else schemas.delete("edit");
+        const result = applyToolSchemaCompat(aliasCall({ path: "a.txt", old_string: "old", new_string: "new" }), schemas);
+        expect(result.toolCall.function.name).toBe("oc_edit");
+        expect(result.validation.ok).toBe(true);
+      }
+    });
+
+    it("keeps malformed and full-file alias edits on their existing validation path", () => {
+      for (const args of [
+        { path: "a.txt" },
+        { path: "a.txt", old_string: "", new_string: "replacement" },
+        { path: "a.txt", streamContent: "replacement" },
+        { old_string: "old", new_string: "new" },
+      ]) {
+        const result = applyToolSchemaCompat(aliasCall(args), aliasSchemas());
+        expect(result.toolCall.function.name).toBe("oc_edit");
+        expect(result.validation.ok).toBe(false);
+      }
+    });
+
+    it("does not change native edit replacement behavior", () => {
+      const result = applyToolSchemaCompat(editToolCall({ filePath: "a.txt", oldString: "old", newString: "new" }), aliasSchemas());
+      expect(result.toolCall.function.name).toBe("edit");
+      expect(result.normalizedArgs.replaceAll).toBeUndefined();
+    });
+  });
+
   it("normalizes common argument aliases to canonical keys", () => {
     const result = applyToolSchemaCompat(
       {

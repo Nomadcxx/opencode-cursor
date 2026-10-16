@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import type { OpenAiToolCall } from "../../src/proxy/tool-loop";
 import { createProviderBoundary } from "../../src/provider/boundary";
 import { createToolLoopGuard } from "../../src/provider/tool-loop-guard";
+import { ToolRegistry } from "../../src/tools/core/registry";
+import { registerDefaultTools } from "../../src/tools/defaults";
 import {
   handleToolLoopEventLegacy,
   handleToolLoopEventV1,
@@ -159,6 +161,72 @@ function createEditPathContentRerouteOverrides(
 }
 
 describe("provider runtime interception parity", () => {
+  for (const mode of ["legacy", "v1"] as const) {
+    const intercept = (options: EventOptions) => mode === "legacy"
+      ? handleToolLoopEventLegacy(options)
+      : handleToolLoopEventV1({ ...options, boundary: createProviderBoundary("v1", "cursor-acp") });
+
+    it(`${mode}: routes targeted oc_edit to native edit with replaceAll`, async () => {
+      const registry = new ToolRegistry();
+      registerDefaultTools(registry);
+      const intercepted: OpenAiToolCall[] = [];
+      const result = await intercept(createBaseOptions({
+        event: {
+          type: "tool_call", call_id: "alias-edit",
+          tool_call: { oc_edit: { args: { path: "a.txt", old_string: "old", new_string: "new" } } },
+        } as any,
+        allowedToolNames: new Set(["oc_edit", "edit"]),
+        toolSchemaMap: new Map([
+          ...OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+          ["oc_edit", registry.getTool("edit")!.parameters],
+        ]),
+        onInterceptedToolCall: async (call) => { intercepted.push(call); },
+      }));
+      expect(result).toEqual({ intercepted: true, skipConverter: true });
+      expect(intercepted).toHaveLength(1);
+      expect(intercepted[0].function.name).toBe("edit");
+      expect(JSON.parse(intercepted[0].function.arguments)).toEqual({
+        filePath: "a.txt", oldString: "old", newString: "new", replaceAll: true,
+      });
+    });
+
+    it(`${mode}: keeps oc_write's overwrite guard and explicit force option`, async () => {
+      const registry = new ToolRegistry();
+      registerDefaultTools(registry);
+      const dir = mkdtempSync(join(tmpdir(), "alias-write-"));
+      const path = join(dir, "a.txt");
+      const original = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+      writeFileSync(path, original);
+      try {
+        for (const force of [false, true]) {
+          const intercepted: OpenAiToolCall[] = [];
+          await intercept(createBaseOptions({
+            event: {
+              type: "tool_call", call_id: `alias-write-${force}`,
+              tool_call: { oc_write: { args: { path, content: "tiny", force } } },
+            } as any,
+            allowedToolNames: new Set(["oc_write", "write"]),
+            toolSchemaMap: new Map([
+              ...OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+              ["oc_write", registry.getTool("write")!.parameters],
+            ]),
+            onInterceptedToolCall: async (call) => { intercepted.push(call); },
+          }));
+          expect(intercepted).toHaveLength(1);
+          expect(intercepted[0].function.name).toBe("oc_write");
+          const args = JSON.parse(intercepted[0].function.arguments);
+          expect(args.force).toBe(force);
+          const execution = registry.getHandler("write")!(args);
+          if (force) await execution;
+          else await expect(execution).rejects.toThrow("refusing suspicious partial overwrite");
+          expect(readFileSync(path, "utf8")).toBe(force ? "tiny" : original);
+        }
+      } finally {
+        rmSync(dir, { recursive: true });
+      }
+    });
+  }
+
   it("produces equivalent interception results for legacy and v1 in opencode mode", async () => {
     const legacyOptions = createBaseOptions();
     const v1Options = {
