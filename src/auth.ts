@@ -27,7 +27,14 @@ export interface ResolveSdkApiKeyInput {
   authorizationHeader?: string | null;
 }
 
-const PLACEHOLDER_API_KEYS = new Set(["cursor-agent"]);
+// Values older installers and 1.x login flows stored in place of a real key.
+// OpenCode 2.0 imports the 1.x auth store, so they also arrive on v2 requests.
+const PLACEHOLDER_API_KEYS = new Set([
+  "cursor-agent",
+  "cursor-auth",
+  "cursor-agent-auth",
+  "cursor-agent-handles-auth-separately",
+]);
 
 function getHomeDir(): string {
   const override = process.env.CURSOR_ACP_HOME_DIR;
@@ -102,6 +109,18 @@ export function isUsableSdkApiKey(value: string | undefined | null): value is st
   }
 
   return !PLACEHOLDER_API_KEYS.has(trimmed.toLowerCase());
+}
+
+// Keys Cursor refused during this process. Auto mode routes around them when
+// cursor-agent can serve the request; an explicit `sdk` preference still uses them.
+const rejectedSdkApiKeys = new Set<string>();
+
+export function markSdkApiKeyRejected(key: string): void {
+  rejectedSdkApiKeys.add(key.trim());
+}
+
+export function isSdkApiKeyRejected(key: string): boolean {
+  return rejectedSdkApiKeys.has(key.trim());
 }
 
 export function normalizeAuthorizationHeader(value: string | null | undefined): string | undefined {

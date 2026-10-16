@@ -32,6 +32,14 @@ describe("provider backend compatibility", () => {
     expect(isUsableSdkApiKey("sk-real-key")).toBe(true);
   });
 
+  it("rejects placeholders written by older 1.x login flows and the installer", () => {
+    // OpenCode 2.0 imports the 1.x auth store, so these reach the v2 request hook.
+    expect(isUsableSdkApiKey("cursor-auth")).toBe(false);
+    expect(isUsableSdkApiKey("cursor-agent-auth")).toBe(false);
+    expect(isUsableSdkApiKey("cursor-agent-handles-auth-separately")).toBe(false);
+    expect(resolveSdkApiKey({ env: {}, storedApiKey: "cursor-auth", authorizationHeader: "Bearer cursor-auth" })).toBeUndefined();
+  });
+
   it("resolves SDK keys from env, stored auth, then Authorization header", () => {
     expect(
       resolveSdkApiKey({
@@ -81,6 +89,13 @@ describe("provider backend compatibility", () => {
     expect(shouldFallbackToSdk("auto", "cursor-agent")).toBe(false);
     expect(shouldFallbackToSdk("cursor-agent", "cursor_123")).toBe(false);
     expect(shouldFallbackToSdk("sdk", "cursor_123")).toBe(false);
+  });
+
+  it("routes a key Cursor rejected to cursor-agent in auto mode, but not under an explicit sdk preference", () => {
+    const base = { cursorAgentAvailable: true, sdkApiKey: "cursor_123", preferSdk: true };
+    expect(selectBackendForRequest({ ...base, preference: "auto" })).toBe("sdk");
+    expect(selectBackendForRequest({ ...base, preference: "auto", sdkApiKeyRejected: true })).toBe("cursor-agent");
+    expect(selectBackendForRequest({ ...base, preference: "sdk", sdkApiKeyRejected: true })).toBe("sdk");
   });
 
   it("uses SDK in auto mode only when cursor-agent is unavailable and SDK auth is real", () => {

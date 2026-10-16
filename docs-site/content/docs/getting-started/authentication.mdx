@@ -29,14 +29,20 @@ Cursor accepts your login and shows which models your account can use.
 
 ## OpenCode auth
 
-You can also store Cursor credentials through OpenCode:
+You can also log in from OpenCode. On OpenCode 2.x:
 
 ```bash
-opencode auth login --provider cursor-acp
+opencode auth login
 ```
 
-This matters when you select the SDK backend or when automatic backend
-selection needs an SDK fallback.
+Choose **Cursor**, then **Log in with cursor-agent** (runs `cursor-agent login`
+and stores nothing secret) or **API key**. On OpenCode 1.x,
+`opencode auth login --provider cursor-acp` stores an API key.
+
+A stored key selects the SDK backend on OpenCode 2.x. Use a real key: if Cursor
+rejects it and `cursor-agent` is installed, open-cursor falls back to
+`cursor-agent` and logs a warning. Remove a bad key with
+`opencode auth logout cursor-acp`.
 
 ## SDK backend
 

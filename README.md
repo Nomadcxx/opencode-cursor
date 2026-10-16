@@ -23,38 +23,24 @@ by `@cursor/sdk`).
 
 > **Kilo Code users:** [chiarelli/kilocode-cursor](https://github.com/chiarelli/kilocode-cursor) is a downstream port of this plugin to Kilo Code, with Kilo-native auth, MCP passthrough, and session resume.
 
-## OpenCode versions
-
-| Host | Plugin entry |
-|---|---|
-| **OpenCode 1.x** | `"plugin": ["@rama_nigg/open-cursor"]` (installer below) |
-| **OpenCode 2.0** | `"plugins": ["@rama_nigg/open-cursor"]` — see [OpenCode 2.0 setup](docs/opencode-2.md) |
-
 ## Installation
 
-You need OpenCode, a Cursor subscription, and Node.js ≥ 20 (for the SDK runner).
+You need OpenCode, a Cursor subscription, the
+[`cursor-agent` CLI](https://cursor.com/cli), and Node.js 20 or newer.
 
-Install the package and configure OpenCode 1.x:
-
-```bash
-npm install -g @rama_nigg/open-cursor
-open-cursor install
-```
-
-Authenticate and verify the provider:
+### 1. Sign in to Cursor
 
 ```bash
-# Set CURSOR_API_KEY from https://cursor.com/settings, or:
-opencode auth login --provider cursor-acp
-opencode models | grep cursor-acp
+cursor-agent login
 ```
 
-The final command should list `cursor-acp/auto`. The installer backs up your
-existing OpenCode configuration before writing it and does not touch `.cursor`
-by default.
+That login is all open-cursor needs. An API key is optional (see
+[Authentication](#authentication)).
 
-For OpenCode 2.0, skip the 1.x installer and add the package to `plugins`
-(bare package name — OpenCode 2.0 does not resolve `exports` subpaths):
+### 2. Add the plugin
+
+**OpenCode 2.x** (the current default). Add the package to `plugins` in
+`~/.config/opencode/opencode.json` and restart OpenCode:
 
 ```json
 {
@@ -62,12 +48,61 @@ For OpenCode 2.0, skip the 1.x installer and add the package to `plugins`
 }
 ```
 
-Details: [OpenCode 2.0 setup](docs/opencode-2.md).
+Use the bare package name. OpenCode installs and updates it for you.
 
-For shell, manual, and source installation, see the
-[installation guide](https://nomadcxx.github.io/opencode-cursor/docs/getting-started/installation/).
+<details>
+<summary><b>OpenCode 1.x</b></summary>
 
-Upgrade with `npm update -g @rama_nigg/open-cursor`, then restart OpenCode.
+```bash
+npm install -g @rama_nigg/open-cursor
+open-cursor install
+```
+
+The installer adds the plugin and a `cursor-acp` provider block to your
+OpenCode config, backing up the existing file first. Upgrade with
+`npm update -g @rama_nigg/open-cursor`.
+
+</details>
+
+### 3. Check it works
+
+```bash
+opencode models | grep cursor-acp
+opencode run -m cursor-acp/auto "Reply with PONG"
+```
+
+## Authentication
+
+open-cursor uses your `cursor-agent` login by default. You do not need to
+store anything in OpenCode.
+
+| You want to | Do this |
+|---|---|
+| Use your Cursor login (default) | `cursor-agent login` |
+| Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent** |
+| Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
+
+API keys come from [cursor.com/settings](https://cursor.com/settings). With a
+key stored, OpenCode 2.x runs requests through the Cursor SDK. If Cursor
+rejects the key and `cursor-agent` is logged in, open-cursor switches to
+`cursor-agent` and logs a warning. Do not enter a placeholder key to get past
+the login prompt; choose **Log in with cursor-agent** instead.
+
+### Moving from OpenCode 1.x to 2.x
+
+OpenCode 2.x reads the same `opencode.json`, so 1.x entries carry over. To
+switch cleanly:
+
+1. Replace `"cursor-acp"` (or `@rama_nigg/open-cursor`) in the 1.x `plugin`
+   list with the `plugins` entry above.
+2. Delete the `provider.cursor-acp` block. On 2.x the plugin supplies models
+   itself.
+3. Remove `~/.config/opencode/plugin/cursor-acp.js` if the 1.x installer
+   created it.
+4. If requests fail with `Cursor rejected the API key`, remove the old stored
+   key with `opencode auth logout cursor-acp`.
+
+More detail: [OpenCode 2.0 setup](docs/opencode-2.md).
 
 ## Usage
 

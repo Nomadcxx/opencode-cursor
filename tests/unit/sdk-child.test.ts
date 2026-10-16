@@ -3,11 +3,13 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  createSdkBunChild,
   createSdkNodeChild,
   listModelsViaRunner,
   resolveRunnerPath,
   stopSdkRunner,
 } from "../../src/client/sdk-child.js";
+import { isSdkApiKeyRejected } from "../../src/auth.js";
 
 const FAKE_RUNNER = `#!/usr/bin/env node
 process.stdin.setEncoding("utf8");
@@ -95,6 +97,24 @@ process.stdin.on("data", (chunk) => {
   buffer = lines.pop() || "";
   for (const line of lines) {
     if (line.trim()) handle(line);
+  }
+});
+`;
+
+// Fails every request the way @cursor/sdk does for a key Cursor refuses.
+const REJECTING_RUNNER = `#!/usr/bin/env node
+process.stdin.setEncoding("utf8");
+let buffer = "";
+process.stdin.on("data", (chunk) => {
+  buffer += chunk;
+  const lines = buffer.split("\\n");
+  buffer = lines.pop() || "";
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const { id } = JSON.parse(line);
+    const event = { type: "result", subtype: "error", is_error: true, error: { message: "Invalid User API Key" } };
+    process.stdout.write(JSON.stringify({ id, event }) + "\\n");
+    process.stdout.write(JSON.stringify({ id, done: true, exitCode: 1 }) + "\\n");
   }
 });
 `;
@@ -223,6 +243,46 @@ describe("sdk-child cancellation", () => {
       expect(await closed).toBe(130);
       // Anything the runner streamed between kill() and done is dropped.
       expect(received.length).toBe(killedAt);
+    } finally {
+      stopSdkRunner();
+      if (originalRunnerPath === undefined) {
+        delete process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+      } else {
+        process.env.CURSOR_ACP_SDK_RUNNER_PATH = originalRunnerPath;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
+});
+
+describe("sdk-child runner errors", () => {
+  it("reports runner error events as request stderr and marks rejected keys", async () => {
+    const originalRunnerPath = process.env.CURSOR_ACP_SDK_RUNNER_PATH;
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-rejecting-runner-"));
+    const runnerPath = join(dir, "rejecting-runner.mjs");
+    writeFileSync(runnerPath, REJECTING_RUNNER, "utf8");
+    process.env.CURSOR_ACP_SDK_RUNNER_PATH = runnerPath;
+    const request = { model: "auto", prompt: "hello", cwd: dir };
+
+    try {
+      const nodeChild = createSdkNodeChild({ ...request, apiKey: "cursor_node_bad" });
+      const [, nodeStderr, nodeExit] = await Promise.all([
+        streamToString(nodeChild.stdout),
+        streamToString(nodeChild.stderr),
+        waitForClose(nodeChild),
+      ]);
+      expect(nodeExit).toBe(1);
+      expect(nodeStderr).toBe("Invalid User API Key\n");
+      expect(isSdkApiKeyRejected("cursor_node_bad")).toBe(true);
+
+      const bunChild = createSdkBunChild({ ...request, apiKey: "cursor_bun_bad" });
+      const [, bunExit] = await Promise.all([new Response(bunChild.stdout).text(), bunChild.exited]);
+      expect(bunExit).toBe(1);
+      expect(await new Response(bunChild.stderr).text()).toBe("Invalid User API Key\n");
+
+      await expect(listModelsViaRunner("cursor_list_bad")).rejects.toThrow();
+      expect(isSdkApiKeyRejected("cursor_list_bad")).toBe(true);
+      expect(isSdkApiKeyRejected("cursor_never_used")).toBe(false);
     } finally {
       stopSdkRunner();
       if (originalRunnerPath === undefined) {
