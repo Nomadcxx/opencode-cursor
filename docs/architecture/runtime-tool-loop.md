@@ -26,6 +26,19 @@ This document describes the current runtime architecture on `main`, with the def
 
 ### Cursor-native tool side effects
 
+The SDK also executes native edits inside Cursor. Its `edit` event carries
+`{path}` without replacement text. The SDK adapter marks its events with
+`source: "cursor-sdk"`; the proxy passes through an SDK `edit` only when its
+arguments contain exactly one nonempty, NUL-free string `path`. CLI calls,
+compatibility aliases, malformed arguments, and edits with replacement text
+keep the normal interception and validation path.
+
+OpenCode does not execute these SDK edits, so its edit permission prompts and
+native patch preview do not cover them. The source marker distinguishes event
+formats; it is not an authorization check. Enforcing host permissions before a
+Cursor mutation requires control before tool execution, rather than replaying
+an observed edit event.
+
 The `cursor-agent --print --output-format stream-json` path can still execute Cursor-native tools inside the Cursor subprocess. Live tracing on Cursor Agent `2026.06.26-7079533` showed the Cursor child process opening the target file with `O_WRONLY|O_CREAT|O_TRUNC` while OpenCode only read it. The plugin can prevent a suspicious Cursor `streamContent` edit from being rerouted into an OpenCode `write`, but it cannot prevent Cursor's subprocess from mutating the file first.
 
 Prompt shape does not change that ownership boundary. A richer `LOCAL OPENCODE TOOL RESULT` prompt, with SDK-shaped completed tool-result data, still produced a Cursor `editToolCall` and a direct file mutation in live Composer 2.5 testing. That format may improve continuation quality, but it should not be treated as a write-control mechanism.

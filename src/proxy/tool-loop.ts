@@ -161,7 +161,7 @@ export function extractOpenAiToolCall(
   // applies the change itself and never exposes the file body. Handing that to
   // OpenCode can only fail schema validation (no oldString/newString), and the
   // retries trip the loop guard, so let Cursor run its own edit instead.
-  if (isBodylessNativeEdit(name, args)) {
+  if (event.source === "cursor-sdk" && isBodylessNativeEdit(name, args)) {
     log.debug("Body-less Cursor edit; passing through to cursor-agent", {
       argKeys: isRecord(args) ? Object.keys(args) : [],
     });
@@ -371,19 +371,13 @@ function resolveAllowedToolName(name: string, allowedToolNames: Set<string>): st
   return null;
 }
 
-const EDIT_PATH_ARG_KEYS = new Set(["path", "filepath", "filename", "file", "targetfile", "targetpath"]);
-
 function isBodylessNativeEdit(name: string, args: unknown): boolean {
-  if (normalizeAliasKey(name) !== "edit") {
-    return false;
-  }
-  if (args === undefined) {
-    return true;
-  }
-  if (!isRecord(args)) {
-    return false;
-  }
-  return Object.keys(args).every((key) => EDIT_PATH_ARG_KEYS.has(normalizeAliasKey(key)));
+  return name === "edit"
+    && isRecord(args)
+    && Object.keys(args).length === 1
+    && typeof args.path === "string"
+    && args.path.trim().length > 0
+    && !args.path.includes("\0");
 }
 
 function normalizeAliasKey(value: string): string {

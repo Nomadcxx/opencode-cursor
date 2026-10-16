@@ -138,6 +138,7 @@ export function sdkMessageToStreamJson(msg) {
       }
       return {
         type: "tool_call",
+        source: "cursor-sdk",
         call_id: msg.call_id,
         tool_call: {
           [name]: {
