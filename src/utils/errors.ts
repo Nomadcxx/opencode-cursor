@@ -36,6 +36,11 @@ export function stripAnsi(str: string): string {
   return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
+/** True when Cursor refused an SDK API key (as opposed to a missing CLI login). */
+export function isApiKeyRejection(message: string): boolean {
+  return /invalid (?:user )?api key/i.test(message);
+}
+
 /**
  * Parse cursor-agent error output into structured format
  */
@@ -61,6 +66,17 @@ export function parseAgentError(stderr: string | unknown): ParsedError {
       userMessage: "You've hit your Cursor usage limit",
       details,
       suggestion: "Switch to a different model or set a Spend Limit in Cursor settings",
+    };
+  }
+
+  if (isApiKeyRejection(clean)) {
+    return {
+      type: "auth",
+      recoverable: false,
+      message: clean,
+      userMessage: "Cursor rejected the API key",
+      details: {},
+      suggestion: "Use a key from cursor.com/settings, or remove it (opencode auth logout cursor-acp) to use cursor-agent login",
     };
   }
 

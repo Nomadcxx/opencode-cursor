@@ -31,6 +31,8 @@ import { existsSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { createLogger } from "../utils/logger.js";
+import { isApiKeyRejection } from "../utils/errors.js";
+import { markSdkApiKeyRejected } from "../auth.js";
 import { randomBytes } from "node:crypto";
 import type { SdkImageLike } from "../proxy/image-extract.js";
 
@@ -135,12 +137,16 @@ interface PendingRequest {
   controller: ReadableStreamDefaultController<Uint8Array>;
   promiseResolver: (code: number) => void;
   promiseRejector: (err: Error) => void;
+  /** Receives the message of a runner error event (the request's stderr). */
+  onError?: (message: string) => void;
 }
 
 /**
  * Manages the persistent runner process and per-request demultiplexing.
  */
 class SdkRunnerSingleton {
+  constructor(private readonly apiKey: string) {}
+
   private runnerProcess: ReturnType<typeof spawn> | null = null;
   private pendingRequests = new Map<string, PendingRequest>();
   /** Pending requests whose consumer is gone; their events are dropped. */
@@ -322,6 +328,11 @@ class SdkRunnerSingleton {
         } else if (this.cancelledRequests.has(requestId)) {
           // Consumer already stopped reading; drop the run's trailing output.
         } else if (wrapped.event) {
+          const errorMessage = wrapped.event.is_error ? wrapped.event.error?.message : undefined;
+          if (typeof errorMessage === "string") {
+            if (isApiKeyRejection(errorMessage)) markSdkApiKeyRejected(this.apiKey);
+            pending.onError?.(errorMessage);
+          }
           const eventJson = extractEventJson(line);
           pending.controller.enqueue(textEncoder.encode(eventJson + "\n"));
         }
@@ -341,9 +352,10 @@ class SdkRunnerSingleton {
     controller: ReadableStreamDefaultController<Uint8Array>,
     promiseResolver: (code: number) => void,
     promiseRejector: (err: Error) => void,
+    onError?: (message: string) => void,
   ): string {
     const id = generateRequestId();
-    this.pendingRequests.set(id, { controller, promiseResolver, promiseRejector });
+    this.pendingRequests.set(id, { controller, promiseResolver, promiseRejector, onError });
     return id;
   }
 
@@ -395,7 +407,7 @@ function getSdkRunner(apiKey: string): SdkRunnerSingleton {
   }
   let runner = runners.get(apiKey);
   if (!runner) {
-    runner = new SdkRunnerSingleton();
+    runner = new SdkRunnerSingleton(apiKey);
     runners.set(apiKey, runner);
   }
   return runner;
@@ -445,6 +457,25 @@ export function createSdkBunChild(options: {
     rejectExited = reject;
   });
 
+  // Runner error events become this request's stderr, which the proxy reports
+  // when the request exits non-zero. Diagnostics stay global to the runner.
+  let stderrController!: ReadableStreamDefaultController<Uint8Array>;
+  let stderrClosed = false;
+  const stderr = new ReadableStream<Uint8Array>({
+    start(controller) {
+      stderrController = controller;
+    },
+  });
+  const writeStderr = (message: string) => {
+    if (!stderrClosed) stderrController.enqueue(textEncoder.encode(message + "\n"));
+  };
+  const closeStderr = () => {
+    if (stderrClosed) return;
+    stderrClosed = true;
+    stderrController.close();
+  };
+  exited.then(closeStderr, closeStderr);
+
   const cancel = () => {
     killed = true;
     if (requestId) singleton.cancelRequest(requestId);
@@ -462,7 +493,7 @@ export function createSdkBunChild(options: {
           close: () => { if (!stdoutCancelled) controller.close(); },
           error: (error: Error) => { if (!stdoutCancelled) controller.error(error); },
         } as ReadableStreamDefaultController<Uint8Array>;
-        requestId = singleton.registerPending(requestController, resolveExited, rejectExited);
+        requestId = singleton.registerPending(requestController, resolveExited, rejectExited, writeStderr);
         log.info(`request ${requestId} registered (bun)`);
 
         // Send the request to the runner
@@ -479,14 +510,6 @@ export function createSdkBunChild(options: {
       stdoutCancelled = true;
       log.debug(`request ${requestId} cancelled (bun)`);
       cancel();
-    },
-  });
-
-  // Stub stderr (runner diagnostics go to parent stderr via logger)
-  const stderr = new ReadableStream<Uint8Array>({
-    start(controller) {
-      // No stderr for individual requests; it's global to the runner process
-      controller.close();
     },
   });
 
@@ -559,6 +582,8 @@ export class SdkNodeChild extends EventEmitter {
         this.stderr.end();
         this.emit("error", err);
         rejectExited(err);
+      }, (message) => {
+        this.stderr.write(message + "\n");
       });
 
       this.requestId = requestId;

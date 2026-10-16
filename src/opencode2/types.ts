@@ -94,10 +94,13 @@ export type ProviderDomain = {
 
 export type IntegrationKeyMethod = { type: "key"; label?: string };
 export type IntegrationEnvMethod = { type: "env"; names: string[] };
+/** The host runs `command`, shows its stderr, and stores trimmed stdout as the credential. */
+export type IntegrationCommandMethod = { id: string; type: "command"; label: string; command: string[] };
 
 export type IntegrationMethodRegistration =
   | { readonly integrationID: string; readonly method: IntegrationKeyMethod }
-  | { readonly integrationID: string; readonly method: IntegrationEnvMethod };
+  | { readonly integrationID: string; readonly method: IntegrationEnvMethod }
+  | { readonly integrationID: string; readonly method: IntegrationCommandMethod };
 
 export type IntegrationRef = { id: string; name: string };
 

@@ -95,7 +95,8 @@ import {
   parseToolLoopMaxRepeat,
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
-import { createSdkBunChild, createSdkNodeChild } from "./client/sdk-child.js";
+import { createSdkBunChild, createSdkNodeChild, listModelsViaRunner } from "./client/sdk-child.js";
+import { isEnvSdkApiKey, isSdkApiKeyRejected } from "./auth.js";
 import { createCursorAgentPoolNodeChild, isAgentPoolEnabled } from "./client/cursor-agent-child.js";
 import {
   isUsableSdkApiKey,
@@ -270,16 +271,58 @@ function resolveBackendForRequest(sdkApiKey: string | undefined, preferSdk = fal
   const cursorAgentAvailable = parsed.preference === "sdk"
     || (preferSdk && isUsableSdkApiKey(sdkApiKey))
     || isCursorAgentAvailable();
+  // Probe for real: on 2.0 `cursorAgentAvailable` is assumed whenever a key exists.
+  // An env key stays on the SDK: cursor-agent reads CURSOR_API_KEY too and would
+  // fail on it, hiding the precise rejection message.
+  const sdkApiKeyRejected = isUsableSdkApiKey(sdkApiKey)
+    && isSdkApiKeyRejected(sdkApiKey)
+    && !isEnvSdkApiKey(sdkApiKey)
+    && isCursorAgentAvailable();
   const backend = selectBackendForRequest({
     preference: parsed.preference,
     cursorAgentAvailable,
     sdkApiKey,
     preferSdk,
+    sdkApiKeyRejected,
   });
   if (preferSdk && backend === "cursor-agent" && !cursorAgentAvailable) {
     throw new Error("Cursor CLI is unavailable; install cursor-agent or connect a Cursor API key to use the SDK backend.");
   }
   return backend;
+}
+
+// Keys whose check is in flight or succeeded. A failed check is dropped so the
+// key is checked again: after a transient error, or once a rejection expires.
+const sdkApiKeyChecks = new Map<string, Promise<void>>();
+
+/**
+ * OpenCode 2.0 prefers the SDK whenever a key is stored, so a stale or dummy key
+ * fails every request even when cursor-agent is logged in. Before a key's first
+ * SDK request, list models with it once; a key Cursor refuses is marked rejected
+ * and resolveBackendForRequest routes to cursor-agent. OpenCode 1.x (preferSdk
+ * false) is CLI-first under auto and never waits on this check.
+ */
+async function checkSdkApiKeyOnce(sdkApiKey: string | undefined, preferSdk: boolean): Promise<void> {
+  if (!preferSdk || !isUsableSdkApiKey(sdkApiKey)) return;
+  if (parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference !== "auto") return;
+  // Already ruled out (model discovery marks keys too), or an env key that
+  // resolveBackendForRequest keeps on the SDK regardless of the outcome.
+  if (isSdkApiKeyRejected(sdkApiKey) || isEnvSdkApiKey(sdkApiKey)) return;
+  if (!isCursorAgentAvailable()) return;
+  let check = sdkApiKeyChecks.get(sdkApiKey);
+  if (!check) {
+    check = listModelsViaRunner(sdkApiKey).then(
+      () => {},
+      () => {
+        sdkApiKeyChecks.delete(sdkApiKey);
+        if (isSdkApiKeyRejected(sdkApiKey)) {
+          log.warn("Cursor rejected the stored API key; using cursor-agent instead");
+        }
+      },
+    );
+    sdkApiKeyChecks.set(sdkApiKey, check);
+  }
+  await check;
 }
 
 
@@ -1372,6 +1415,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
       if (!requestWorkspaceDirectory) {
         return new Response(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }), { status: 400 });
       }
+      await checkSdkApiKeyOnce(sdkApiKey, privateProxy);
       const backend = resolveBackendForRequest(sdkApiKey, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({
@@ -2026,6 +2070,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
         res.end(JSON.stringify({ error: "Private Cursor requests require an absolute x-opencode-directory header." }));
         return;
       }
+      await checkSdkApiKeyOnce(sdkApiKeyNode, privateProxy);
       const backend = resolveBackendForRequest(sdkApiKeyNode, privateProxy);
       reqPerf.mark("backend-resolved");
       const resolvedPrompt = resolvePromptForBackend({

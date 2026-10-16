@@ -9,6 +9,13 @@ import {
 } from "../../src/utils/errors.js";
 
 describe("parseAgentError", () => {
+  it("classifies a refused SDK API key as an auth error with a key-specific message", () => {
+    const parsed = parseAgentError("Invalid User API Key");
+    expect(parsed.type).toBe("auth");
+    expect(parsed.userMessage).toBe("Cursor rejected the API key");
+    expect(parsed.suggestion).toContain("opencode auth logout cursor-acp");
+  });
+
   it("classifies quota errors as non-recoverable", () => {
     const err = parseAgentError("You've hit your usage limit for claude-3.5-sonnet");
     expect(err.type).toBe("quota");

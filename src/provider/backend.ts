@@ -19,6 +19,8 @@ export interface SelectBackendForRequestInput {
   cursorAgentAvailable: boolean;
   sdkApiKey?: string;
   preferSdk?: boolean;
+  /** Cursor refused this key and cursor-agent is installed to take over. */
+  sdkApiKeyRejected?: boolean;
 }
 
 export function parseCursorBackendPreference(
@@ -63,7 +65,8 @@ export function selectBackendForRequest(
   if (
     input.preference === "auto" &&
     (input.preferSdk || !input.cursorAgentAvailable) &&
-    isUsableSdkApiKey(input.sdkApiKey)
+    isUsableSdkApiKey(input.sdkApiKey) &&
+    !input.sdkApiKeyRejected
   ) {
     return "sdk";
   }

@@ -47,7 +47,8 @@
     "dist",
     "src",
     "scripts/sdk-runner.mjs",
-    "scripts/cursor-agent-runner.mjs"
+    "scripts/cursor-agent-runner.mjs",
+    "scripts/cursor-agent-login.mjs"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
