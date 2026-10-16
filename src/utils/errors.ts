@@ -36,14 +36,14 @@ export function stripAnsi(str: string): string {
   return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
 }
 
-/**
- * Parse cursor-agent error output into structured format
- */
 /** True when Cursor refused an SDK API key (as opposed to a missing CLI login). */
 export function isApiKeyRejection(message: string): boolean {
   return /invalid (?:user )?api key/i.test(message);
 }
 
+/**
+ * Parse cursor-agent error output into structured format
+ */
 export function parseAgentError(stderr: string | unknown): ParsedError {
   const input = typeof stderr === "string" ? stderr : String(stderr ?? "");
   const clean = stripAnsi(input).trim();

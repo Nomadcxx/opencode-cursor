@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { applyCursorIntegration, resolveLoginScriptPath } from "../../../src/opencode2/integration.js";
 
 const LOGIN_SCRIPT = resolve(import.meta.dir, "../../../scripts/cursor-agent-login.mjs");
@@ -69,4 +69,31 @@ describe("cursor-agent-login.mjs", () => {
     expect(result.stdout).toBe("");
     expect(result.stderr).toContain("Login cancelled");
   });
+
+  it.skipIf(process.platform === "win32")("stops cursor-agent login when the login is cancelled", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-login-cancel-"));
+    const agent = join(dir, "cursor-agent");
+    const marker = join(dir, "agent-exited");
+    writeFileSync(
+      agent,
+      `#!/usr/bin/env node\nconst fs = require("node:fs");\n` +
+        `process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(marker)}, "term"); process.exit(0); });\n` +
+        `console.log("waiting for browser");\nsetInterval(() => {}, 1000);\n`,
+      "utf8",
+    );
+    chmodSync(agent, 0o755);
+    try {
+      const login = spawn(process.env.CURSOR_ACP_NODE_BIN || "node", [LOGIN_SCRIPT, agent], { stdio: ["ignore", "pipe", "pipe"] });
+      await new Promise<void>((done) => login.stderr.on("data", (chunk) => {
+        if (String(chunk).includes("waiting for browser")) done();
+      }));
+      const exited = new Promise<number | null>((done) => login.on("close", done));
+      login.kill("SIGTERM");
+      expect(await exited).not.toBe(0);
+      for (let i = 0; i < 50 && !existsSync(marker); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(existsSync(marker)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 10_000);
 });

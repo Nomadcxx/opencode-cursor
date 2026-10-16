@@ -21,6 +21,13 @@ const [command, args] = buildCursorAgentSpawnCommand(binary, ["login"]);
 const child = spawn(command, args, { stdio: ["ignore", "pipe", "inherit"] });
 
 child.stdout.pipe(process.stderr);
+// A cancelled login must not leave `cursor-agent login` waiting on the browser.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  process.on(signal, () => {
+    child.kill(signal);
+    process.exit(1);
+  });
+}
 child.on("error", (error) => {
   process.stderr.write(`Could not run ${binary}: ${error.message}\n`);
   process.exit(1);

@@ -96,7 +96,7 @@ import {
   type ToolLoopGuard,
 } from "./provider/tool-loop-guard.js";
 import { createSdkBunChild, createSdkNodeChild, listModelsViaRunner } from "./client/sdk-child.js";
-import { isSdkApiKeyRejected } from "./auth.js";
+import { isEnvSdkApiKey, isSdkApiKeyRejected } from "./auth.js";
 import { createCursorAgentPoolNodeChild, isAgentPoolEnabled } from "./client/cursor-agent-child.js";
 import {
   isUsableSdkApiKey,
@@ -272,8 +272,11 @@ function resolveBackendForRequest(sdkApiKey: string | undefined, preferSdk = fal
     || (preferSdk && isUsableSdkApiKey(sdkApiKey))
     || isCursorAgentAvailable();
   // Probe for real: on 2.0 `cursorAgentAvailable` is assumed whenever a key exists.
+  // An env key stays on the SDK: cursor-agent reads CURSOR_API_KEY too and would
+  // fail on it, hiding the precise rejection message.
   const sdkApiKeyRejected = isUsableSdkApiKey(sdkApiKey)
     && isSdkApiKeyRejected(sdkApiKey)
+    && !isEnvSdkApiKey(sdkApiKey)
     && isCursorAgentAvailable();
   const backend = selectBackendForRequest({
     preference: parsed.preference,
@@ -288,6 +291,8 @@ function resolveBackendForRequest(sdkApiKey: string | undefined, preferSdk = fal
   return backend;
 }
 
+// Keys whose check is in flight or succeeded. A failed check is dropped so the
+// key is checked again: after a transient error, or once a rejection expires.
 const sdkApiKeyChecks = new Map<string, Promise<void>>();
 
 /**
@@ -300,16 +305,21 @@ const sdkApiKeyChecks = new Map<string, Promise<void>>();
 async function checkSdkApiKeyOnce(sdkApiKey: string | undefined, preferSdk: boolean): Promise<void> {
   if (!preferSdk || !isUsableSdkApiKey(sdkApiKey)) return;
   if (parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference !== "auto") return;
+  // Already ruled out (model discovery marks keys too), or an env key that
+  // resolveBackendForRequest keeps on the SDK regardless of the outcome.
+  if (isSdkApiKeyRejected(sdkApiKey) || isEnvSdkApiKey(sdkApiKey)) return;
   if (!isCursorAgentAvailable()) return;
   let check = sdkApiKeyChecks.get(sdkApiKey);
   if (!check) {
-    check = listModelsViaRunner(sdkApiKey)
-      .then(() => {}, () => {})
-      .then(() => {
+    check = listModelsViaRunner(sdkApiKey).then(
+      () => {},
+      () => {
+        sdkApiKeyChecks.delete(sdkApiKey);
         if (isSdkApiKeyRejected(sdkApiKey)) {
           log.warn("Cursor rejected the stored API key; using cursor-agent instead");
         }
-      });
+      },
+    );
     sdkApiKeyChecks.set(sdkApiKey, check);
   }
   await check;

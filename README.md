@@ -21,8 +21,6 @@ by `@cursor/sdk`).
 
 > **Also worth a look:** [oakimov/cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider) takes a different approach, speaking Cursor's native agent protocol directly so OpenCode owns the tool loop. [opencode-plugin-compat](https://github.com/oakimov/opencode-plugin-compat) runs it unchanged on Kilo Code, MiMo Code, pi, oh-my-pi, and DeepSeek Harness. Excellent work.
 
-> **Kilo Code users:** [chiarelli/kilocode-cursor](https://github.com/chiarelli/kilocode-cursor) is a downstream port of this plugin to Kilo Code, with Kilo-native auth, MCP passthrough, and session resume.
-
 ## Installation
 
 You need OpenCode, a Cursor subscription, the
@@ -79,14 +77,15 @@ store anything in OpenCode.
 | You want to | Do this |
 |---|---|
 | Use your Cursor login (default) | `cursor-agent login` |
-| Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent** |
+| Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)** |
 | Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
 
 API keys come from [cursor.com/settings](https://cursor.com/settings). With a
 key stored, OpenCode 2.x runs requests through the Cursor SDK. If Cursor
-rejects the key and `cursor-agent` is logged in, open-cursor switches to
-`cursor-agent` and logs a warning. Do not enter a placeholder key to get past
-the login prompt; choose **Log in with cursor-agent** instead.
+rejects the key and `cursor-agent` is installed, open-cursor switches to
+`cursor-agent` and logs a warning (keys set in `CURSOR_API_KEY` excepted:
+`cursor-agent` reads that variable too, so unset a bad one). Do not enter a placeholder key to get past
+the login prompt; choose **Log in with cursor-agent (browser)** instead.
 
 ### Moving from OpenCode 1.x to 2.x
 

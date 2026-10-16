@@ -34,7 +34,7 @@ A logged-in `cursor-agent` (`cursor-agent login`) is enough; nothing needs to
 be stored in OpenCode. To log in from OpenCode instead, run `opencode auth login`
 (or `/connect`), choose **Cursor**, then either:
 
-- **Log in with cursor-agent** — runs `cursor-agent login` (the browser link
+- **Log in with cursor-agent (browser)** — runs `cursor-agent login` (the browser link
   appears as progress) and stores the `cursor-agent` placeholder, so requests
   use the CLI login; or
 - **API key** — a key from [cursor.com/settings](https://cursor.com/settings).
@@ -47,9 +47,10 @@ older 1.x logins (`cursor-agent`, `cursor-auth`, `cursor-agent-auth`,
 With `CURSOR_ACP_BACKEND=auto` (the default), a key selects the SDK backend
 on 2.0 even when `cursor-agent` is installed. Before a key's first SDK request
 the plugin lists models with it once; if Cursor rejects it and `cursor-agent`
-is installed, requests use `cursor-agent` and the log records a warning.
-`CURSOR_API_KEY` set in the environment is also read by `cursor-agent` itself,
-so a rejected env key breaks both backends — unset it. Set `CURSOR_ACP_BACKEND=cursor-agent`
+is installed, requests use `cursor-agent` and the log records a warning. A
+rejection expires after 10 minutes, then the key is checked again. A key from
+`CURSOR_API_KEY` is not checked and never falls back: `cursor-agent` reads that
+variable too, so a rejected env key fails both backends — unset it. Set `CURSOR_ACP_BACKEND=cursor-agent`
 to force the CLI, or `sdk` to require a key. OpenCode 1.x keeps its CLI-first
 `auto` behavior. The plugin sends credentials with each request to its private
 proxy; it does not share the 1.x stored-key cache.
@@ -170,7 +171,7 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 |---|---|
 | `failed to load plugin … NpmInstallFailedError … ENOENT … package.json` | The specifier is an `exports` subpath (`…/plugin/opencode2`). Use the bare `@rama_nigg/open-cursor`. |
 | `TypeError: … 'ctx.catalog.transform'` | The installed package is 2.5.9 or older. Upgrade (`opencode plugin update`). |
-| `cursor-acp error: Cursor rejected the API key` | The stored key is invalid. `opencode auth logout cursor-acp`, then log in with **Log in with cursor-agent** or a real key. With `CURSOR_ACP_BACKEND=auto` and `cursor-agent` installed this only shows when `CURSOR_ACP_BACKEND=sdk` or the key is in `CURSOR_API_KEY`. |
+| `cursor-acp error: Cursor rejected the API key` | The stored key is invalid. `opencode auth logout cursor-acp`, then log in with **Log in with cursor-agent (browser)** or a real key. With `CURSOR_ACP_BACKEND=auto` and `cursor-agent` installed this only shows when `CURSOR_ACP_BACKEND=sdk` or the key is in `CURSOR_API_KEY` (unset it). |
 | No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Filter by provider **Cursor** (`time.released` is `0`). |
 | Requests hit a stale proxy port | Restart after plugin reload so `settings.baseURL` matches the live proxy. Remove conflicting `providers.cursor-acp` overlays. |
 | Only Auto / Composer models after `/connect` | Discovery reruns on credential events; restart the daemon if the host did not emit one. |

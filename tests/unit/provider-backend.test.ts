@@ -7,6 +7,7 @@ import {
   selectInitialBackend,
   shouldFallbackToSdk,
 } from "../../src/provider/backend";
+import { isEnvSdkApiKey, isSdkApiKeyRejected, markSdkApiKeyRejected } from "../../src/auth";
 
 describe("provider backend compatibility", () => {
   it("prefers SDK for keyed 2.0 requests under auto while respecting explicit CLI selection", () => {
@@ -38,6 +39,20 @@ describe("provider backend compatibility", () => {
     expect(isUsableSdkApiKey("cursor-agent-auth")).toBe(false);
     expect(isUsableSdkApiKey("cursor-agent-handles-auth-separately")).toBe(false);
     expect(resolveSdkApiKey({ env: {}, storedApiKey: "cursor-auth", authorizationHeader: "Bearer cursor-auth" })).toBeUndefined();
+  });
+
+  it("expires a key rejection so a re-enabled key recovers without a restart", () => {
+    const now = 1_000_000;
+    markSdkApiKeyRejected("cursor_ttl", now);
+    expect(isSdkApiKeyRejected("cursor_ttl", now + 9 * 60 * 1000)).toBe(true);
+    expect(isSdkApiKeyRejected("cursor_ttl", now + 10 * 60 * 1000)).toBe(false);
+    expect(isSdkApiKeyRejected("cursor_ttl", now)).toBe(false);
+  });
+
+  it("recognises the CURSOR_API_KEY env key, which cursor-agent also reads", () => {
+    expect(isEnvSdkApiKey("cursor_env", { CURSOR_API_KEY: " cursor_env " })).toBe(true);
+    expect(isEnvSdkApiKey("cursor_stored", { CURSOR_API_KEY: "cursor_env" })).toBe(false);
+    expect(isEnvSdkApiKey("cursor_stored", {})).toBe(false);
   });
 
   it("resolves SDK keys from env, stored auth, then Authorization header", () => {

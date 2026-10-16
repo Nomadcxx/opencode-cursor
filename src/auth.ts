@@ -111,16 +111,28 @@ export function isUsableSdkApiKey(value: string | undefined | null): value is st
   return !PLACEHOLDER_API_KEYS.has(trimmed.toLowerCase());
 }
 
-// Keys Cursor refused during this process. Auto mode routes around them when
-// cursor-agent can serve the request; an explicit `sdk` preference still uses them.
-const rejectedSdkApiKeys = new Set<string>();
+// Keys Cursor refused recently. Auto mode routes around them when cursor-agent can
+// serve the request; an explicit `sdk` preference still uses them. A rejection
+// expires so a key re-enabled in the Cursor dashboard recovers without a restart.
+const SDK_KEY_REJECTION_TTL_MS = 10 * 60 * 1000;
+const rejectedSdkApiKeys = new Map<string, number>();
 
-export function markSdkApiKeyRejected(key: string): void {
-  rejectedSdkApiKeys.add(key.trim());
+export function markSdkApiKeyRejected(key: string, now = Date.now()): void {
+  rejectedSdkApiKeys.set(key.trim(), now + SDK_KEY_REJECTION_TTL_MS);
 }
 
-export function isSdkApiKeyRejected(key: string): boolean {
-  return rejectedSdkApiKeys.has(key.trim());
+export function isSdkApiKeyRejected(key: string, now = Date.now()): boolean {
+  const trimmed = key.trim();
+  const expiresAt = rejectedSdkApiKeys.get(trimmed);
+  if (expiresAt === undefined) return false;
+  if (now < expiresAt) return true;
+  rejectedSdkApiKeys.delete(trimmed);
+  return false;
+}
+
+/** True when the key is the CURSOR_API_KEY env var, which cursor-agent also reads. */
+export function isEnvSdkApiKey(key: string, env: Readonly<Record<string, string | undefined>> = process.env): boolean {
+  return env.CURSOR_API_KEY?.trim() === key.trim();
 }
 
 export function normalizeAuthorizationHeader(value: string | null | undefined): string | undefined {
