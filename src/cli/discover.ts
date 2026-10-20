@@ -6,12 +6,13 @@ import {
   discoverModelsFromCursorAgent,
   fallbackModels,
 } from "./model-discovery.js";
+import { appendIdeEnabledModels } from "../models/ide-catalog.js";
 
 async function main() {
   console.log("Discovering Cursor models...");
   let models = fallbackModels();
   try {
-    models = discoverModelsFromCursorAgent();
+    models = appendIdeEnabledModels(discoverModelsFromCursorAgent());
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`Warning: cursor-agent model discovery failed, using fallback list (${message})`);

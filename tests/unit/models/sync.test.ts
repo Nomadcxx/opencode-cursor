@@ -56,6 +56,7 @@ describe("models/sync", () => {
       ],
       resolveApiKey,
       discoverViaSdk,
+      readIdeCatalog: () => null,
     });
 
     expect(models).toEqual([
@@ -77,6 +78,7 @@ describe("models/sync", () => {
       },
       resolveApiKey: () => "real-key",
       discoverViaSdk,
+      readIdeCatalog: () => null,
     });
 
     expect(models).toEqual([
@@ -95,6 +97,7 @@ describe("models/sync", () => {
       },
       resolveApiKey: () => undefined,
       discoverViaSdk,
+      readIdeCatalog: () => null,
     })).rejects.toBe(agentError);
 
     expect(discoverViaSdk).not.toHaveBeenCalled();

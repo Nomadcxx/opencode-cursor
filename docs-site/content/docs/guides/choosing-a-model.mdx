@@ -9,12 +9,18 @@ description: "Use Cursor's CLI model list, understand Auto, and keep model cost 
 cursor-agent models
 ```
 
-This output is the source of truth for the default backend. If an ID is absent,
-open-cursor cannot route a request to it.
+This output is the default catalog. Cursor's picker can also enable models
+that `cursor-agent models` does not print. open-cursor merges those enabled
+IDE models in, using the ids Cursor actually accepts.
 
-A model shown in the Cursor IDE may still be absent from the CLI. Cursor gates
-the two surfaces per account and plan. Adding an unlisted ID to
-`opencode.json` does not make the CLI accept it.
+GLM 5.3 is the reported case. The picker label is "GLM 5.3", but the id is
+`glm-5p3` (and `glm-5p3-flash` for Flash), not `glm-5.3`. `cursor-agent
+--model glm-5p3` accepts it even when `cursor-agent models` only lists GLM
+5.2. Guessing the dotted docs id does not.
+
+A model that is neither in the CLI list nor enabled in Cursor Settings →
+Models still cannot be routed. Adding that id to `opencode.json` does not
+make the CLI accept it.
 
 Refresh OpenCode after Cursor changes the list:
 

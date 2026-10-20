@@ -14,6 +14,7 @@ import {
 import { resolveSdkApiKey } from "../auth.js";
 import { listModelsViaRunner } from "../client/sdk-child.js";
 import { discoverModelsFromCursorAgent } from "../cli/model-discovery.js";
+import { appendIdeEnabledModels, type IdeCatalog } from "./ide-catalog.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
 import { mergeCursorModelEntries } from "./variants.js";
@@ -39,17 +40,22 @@ export async function discoverModelsForRefresh(
     discoverFromCursorAgent?: () => DiscoveredModel[];
     resolveApiKey?: () => string | undefined;
     discoverViaSdk?: (apiKey: string) => Promise<DiscoveredModel[]>;
+    /** Test seam. Production reads Cursor's IDE picker catalog. */
+    readIdeCatalog?: () => IdeCatalog | null;
   } = {},
 ): Promise<DiscoveredModel[]> {
+  const withIdeModels = (models: DiscoveredModel[]) =>
+    appendIdeEnabledModels(models, deps.readIdeCatalog);
+
   try {
-    return (deps.discoverFromCursorAgent ?? discoverModelsFromCursorAgent)();
+    return withIdeModels((deps.discoverFromCursorAgent ?? discoverModelsFromCursorAgent)());
   } catch (agentError) {
     const apiKey = (deps.resolveApiKey ?? (() => resolveSdkApiKey({ env: process.env })))();
     if (!apiKey) throw agentError;
 
-    if (deps.discoverViaSdk) return deps.discoverViaSdk(apiKey);
+    if (deps.discoverViaSdk) return withIdeModels(await deps.discoverViaSdk(apiKey));
     const models = await listModelsViaRunner(apiKey);
-    return models.map((model) => ({ id: model.id, name: model.name }));
+    return withIdeModels(models.map((model) => ({ id: model.id, name: model.name })));
   }
 }
 

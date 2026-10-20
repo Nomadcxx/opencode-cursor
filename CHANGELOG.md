@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Picker-only Cursor models:** models enabled in Cursor Settings → Models but omitted from `cursor-agent models` are merged into the OpenCode catalog. GLM 5.3 and GLM 5.3 Flash are `glm-5p3` and `glm-5p3-flash` (the dot is encoded as `p`); the dotted docs ids are rejected by `cursor-agent`.
+
 ### Added
 
 - **OpenCode 2.0 stable support:** `"plugins": ["@rama_nigg/open-cursor"]` loads a `setup()` that uses `ctx.provider.transform` + in-memory model inventory (no `opencode.json` dump, no removed `ctx.catalog`). Same local proxy + `@cursor/sdk` backend as OpenCode 1.x. See `docs/opencode-2.md`.

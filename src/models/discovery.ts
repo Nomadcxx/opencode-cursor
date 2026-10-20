@@ -1,6 +1,7 @@
 import type { ModelInfo, DiscoveryConfig } from "./types.js";
 import { listModelsViaRunner } from "../client/sdk-child.js";
 import { discoverModelsFromCursorAgent } from "../cli/model-discovery.js";
+import { appendIdeEnabledModels } from "./ide-catalog.js";
 import { resolveSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
 
@@ -50,7 +51,7 @@ export class ModelDiscoveryService {
 
   async queryCursorAgent(apiKey?: string): Promise<ModelInfo[]> {
     void apiKey;
-    return discoverModelsFromCursorAgent().map((model) => ({
+    return appendIdeEnabledModels(discoverModelsFromCursorAgent()).map((model) => ({
       id: model.id,
       name: model.name,
       description: `Cursor ${model.name} model`,
