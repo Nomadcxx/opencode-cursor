@@ -98,13 +98,13 @@ function selectableIds(model: IdeCatalogModel): string[] {
   return [...ids];
 }
 
+// Only an explicit opt-in counts. `defaultOn` entries linger in a stale state DB
+// (e.g. `gpt-5`) after Cursor has retired the id, and `cursor-agent` rejects them.
 function isEnabled(model: IdeCatalogModel, catalog: IdeCatalog): boolean {
   const name = model.name;
   if (!name) return false;
-  const disabled = new Set(catalog.aiSettings?.modelOverrideDisabled ?? []);
-  if (disabled.has(name)) return false;
-  const enabled = new Set(catalog.aiSettings?.modelOverrideEnabled ?? []);
-  return enabled.has(name) || model.defaultOn === true;
+  if (catalog.aiSettings?.modelOverrideDisabled?.includes(name)) return false;
+  return catalog.aiSettings?.modelOverrideEnabled?.includes(name) === true;
 }
 
 /**
@@ -165,10 +165,19 @@ type SqliteDatabase = {
   close: () => void;
 };
 
-function readViaNodeSqlite(dbPath: string): string | null {
+function openEmbeddedSqlite(dbPath: string): SqliteDatabase {
+  // OpenCode runs plugins in Bun, which ships bun:sqlite but not node:sqlite.
+  if (process.versions.bun) {
+    const { Database } = require("bun:sqlite") as { Database: new (path: string, options?: { readonly?: boolean }) => SqliteDatabase };
+    return new Database(dbPath, { readonly: true });
+  }
+  const { DatabaseSync } = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase };
+  return new DatabaseSync(dbPath, { readOnly: true });
+}
+
+function readViaEmbeddedSqlite(dbPath: string): string | null {
   try {
-    const sqlite = require("node:sqlite") as { DatabaseSync: new (path: string, options?: { readOnly?: boolean }) => SqliteDatabase };
-    const db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const db = openEmbeddedSqlite(dbPath);
     try {
       const row = db.prepare("SELECT value FROM ItemTable WHERE key = ?").get(APPLICATION_USER_KEY);
       return typeof row?.value === "string" ? row.value : null;
@@ -183,7 +192,6 @@ function readViaNodeSqlite(dbPath: string): string | null {
 function readViaSqliteCli(dbPath: string): string | null {
   const candidates = [
     "sqlite3",
-    "/usr/bin/sqlite3",
     "/opt/homebrew/bin/sqlite3",
   ];
   const sql = `SELECT value FROM ItemTable WHERE key = '${APPLICATION_USER_KEY}'`;
@@ -213,7 +221,7 @@ export function readCursorIdeCatalog(deps: ReadIdeCatalogDeps = {}): IdeCatalog 
 
   const raw = deps.readApplicationUser
     ? deps.readApplicationUser(dbPath)
-    : readViaNodeSqlite(dbPath) ?? readViaSqliteCli(dbPath);
+    : readViaEmbeddedSqlite(dbPath) ?? readViaSqliteCli(dbPath);
   if (!raw) return null;
 
   try {

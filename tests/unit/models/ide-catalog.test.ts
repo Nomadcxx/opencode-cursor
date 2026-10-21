@@ -117,6 +117,19 @@ describe("models/ide-catalog", () => {
     expect(merged).toEqual([]);
   });
 
+  it("ignores default-on models the user never enabled", () => {
+    // A stale state DB still lists `gpt-5` as default-on; cursor-agent rejects it.
+    const merged = mergeIdeEnabledModels([{ id: "auto", name: "Auto" }], {
+      availableDefaultModels2: [
+        { name: "default", supportsAgent: true, defaultOn: false },
+        { name: "gpt-5", supportsAgent: true, defaultOn: true },
+      ],
+      aiSettings: { modelOverrideEnabled: [], modelOverrideDisabled: [] },
+    });
+
+    expect(merged).toEqual([{ id: "auto", name: "Auto" }]);
+  });
+
   it("reads an injected catalog and ignores a missing database", () => {
     expect(readCursorIdeCatalog({
       dbPath: "/missing/state.vscdb",
