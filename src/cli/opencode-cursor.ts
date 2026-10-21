@@ -26,6 +26,7 @@ import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs"
 import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
 import { isAgentPoolEnabled, parseAgentPoolIdleMs } from "../client/cursor-agent-child.js";
+import { appendIdeEnabledModels } from "../models/ide-catalog.js";
 import { groupCursorModels, mergeCursorModelEntries } from "../models/variants.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { isSessionResumeEnabled } from "../proxy/session-resume.js";
@@ -613,7 +614,7 @@ function ensurePluginLink(pluginSource: string, pluginPath: string, copyMode: bo
 
 function discoverModelsSafe() {
   try {
-    return discoverModelsFromCursorAgent();
+    return appendIdeEnabledModels(discoverModelsFromCursorAgent());
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.warn(`Warning: cursor-agent models failed; using fallback models (${message})`);
@@ -1188,7 +1189,7 @@ export function runDeepDoctorChecks(configPath: string): CheckResult[] {
 
   let discoveredModels: DiscoveredModel[];
   try {
-    discoveredModels = discoverModelsFromCursorAgent();
+    discoveredModels = appendIdeEnabledModels(discoverModelsFromCursorAgent());
     checks.push({
       name: "Cursor model discovery",
       passed: true,
