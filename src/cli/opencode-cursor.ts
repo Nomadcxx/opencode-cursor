@@ -253,15 +253,31 @@ function checkOpenCode(): CheckResult {
   }
 }
 
-function isNpmDirectInstalled(config: unknown): boolean {
+/** `plugin` is the OpenCode 1.x list; 2.x reads `plugins` and supplies models in memory. */
+function listsNpmPackage(config: unknown, key: "plugin" | "plugins"): boolean {
   if (!config || typeof config !== "object") return false;
-  const plugins = (config as Record<string, unknown>).plugin;
+  const plugins = (config as Record<string, unknown>)[key];
   if (!Array.isArray(plugins)) return false;
   return plugins.some((p) => typeof p === "string" && p.startsWith(NPM_PACKAGE_PREFIX));
 }
 
+const isNpmDirectInstalled = (config: unknown) => listsNpmPackage(config, "plugin");
+const isOpenCode2Installed = (config: unknown) => listsNpmPackage(config, "plugins");
+
 function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
   try {
+    if (isOpenCode2Installed(config)) {
+      // 2.x still loads files in the config `plugin/` directory, so a 1.x
+      // symlink runs a second, often older, copy beside the npm package.
+      // lstat: a link left dangling by `npm rm -g` still needs deleting.
+      return lstatSync(pluginPath, { throwIfNoEntry: false })
+        ? {
+            name: "Plugin file",
+            passed: false,
+            message: `${pluginPath} is a 1.x plugin file and OpenCode 2.x loads it beside the plugins entry - delete it`,
+          }
+        : { name: "Plugin file", passed: true, message: "OpenCode 2.x loads the npm package" };
+    }
     if (!existsSync(pluginPath)) {
       if (isNpmDirectInstalled(config)) {
         return {
@@ -291,8 +307,11 @@ function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
   }
 }
 
-function checkProviderConfig(configPath: string): CheckResult {
+function checkProviderConfig(configPath: string, loadedConfig: unknown): CheckResult {
   try {
+    if (isOpenCode2Installed(loadedConfig)) {
+      return { name: "Provider config", passed: true, message: "OpenCode 2.x supplies models in memory" };
+    }
     if (!existsSync(configPath)) {
       return {
         name: "Provider config",
@@ -320,8 +339,11 @@ function checkProviderConfig(configPath: string): CheckResult {
   }
 }
 
-function checkAiSdk(opencodeDir: string): CheckResult {
+function checkAiSdk(opencodeDir: string, config: unknown): CheckResult {
   try {
+    if (isOpenCode2Installed(config)) {
+      return { name: "AI SDK", passed: true, message: "resolved by OpenCode 2.x" };
+    }
     const sdkPath = join(opencodeDir, "node_modules", "@ai-sdk", "openai-compatible");
     if (existsSync(sdkPath)) {
       return { name: "AI SDK", passed: true, message: "@ai-sdk/openai-compatible installed" };
@@ -355,8 +377,8 @@ export function runDoctorChecks(configPath: string, pluginPath: string): CheckRe
     checkSdkApiKey(config),
     checkOpenCode(),
     checkPluginFile(pluginPath, config),
-    checkProviderConfig(configPath),
-    checkAiSdk(opencodeDir),
+    checkProviderConfig(configPath, config),
+    checkAiSdk(opencodeDir, config),
   ];
 }
 

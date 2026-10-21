@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { resolveSdkApiKey } from "../auth.js";
 import { listModelsViaRunner } from "../client/sdk-child.js";
-import { discoverModelsFromCursorAgent } from "../cli/model-discovery.js";
+import { discoverModelsFromCursorAgentAsync } from "../cli/model-discovery.js";
 import { appendIdeEnabledModels, type IdeCatalog } from "./ide-catalog.js";
 import { resolveOpenCodeConfigPath } from "../plugin-toggle.js";
 import { createLogger, type Logger } from "../utils/logger.js";
@@ -37,7 +37,7 @@ export type DiscoveredModel = {
 
 export async function discoverModelsForRefresh(
   deps: {
-    discoverFromCursorAgent?: () => DiscoveredModel[];
+    discoverFromCursorAgent?: () => DiscoveredModel[] | Promise<DiscoveredModel[]>;
     resolveApiKey?: () => string | undefined;
     discoverViaSdk?: (apiKey: string) => Promise<DiscoveredModel[]>;
     /** Test seam. Production reads Cursor's IDE picker catalog. */
@@ -48,7 +48,7 @@ export async function discoverModelsForRefresh(
     appendIdeEnabledModels(models, deps.readIdeCatalog);
 
   try {
-    return withIdeModels((deps.discoverFromCursorAgent ?? discoverModelsFromCursorAgent)());
+    return withIdeModels(await (deps.discoverFromCursorAgent ?? discoverModelsFromCursorAgentAsync)());
   } catch (agentError) {
     const apiKey = (deps.resolveApiKey ?? (() => resolveSdkApiKey({ env: process.env })))();
     if (!apiKey) throw agentError;

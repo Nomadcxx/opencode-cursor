@@ -42,7 +42,9 @@ and stores nothing secret) or **API key**. On OpenCode 1.x,
 A stored key selects the SDK backend on OpenCode 2.x. Use a real key: if Cursor
 rejects it and `cursor-agent` is installed, open-cursor falls back to
 `cursor-agent` and logs a warning. Remove a bad key with
-`opencode auth logout cursor-acp`.
+`opencode auth logout cursor-acp`. Without an interactive terminal, add the
+credential label from `opencode auth list`, for example
+`opencode auth logout cursor-acp Cursor`.
 
 ## SDK backend
 
