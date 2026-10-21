@@ -51,10 +51,62 @@ export function discoverModelsFromCursorAgent(deps: DiscoverDeps = {}): Discover
     timeout: MODEL_DISCOVERY_TIMEOUT_MS,
   });
   if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`cursor-agent models failed (${result.status}): ${result.stderr}`);
+  return modelsFromExit(result.status, String(result.stdout), String(result.stderr));
+}
+
+export type DiscoverAsyncDeps = Omit<DiscoverDeps, "spawnSync"> & {
+  spawn?: typeof spawn;
+  timeoutMs?: number;
+};
+
+/**
+ * Non-blocking `cursor-agent models`. OpenCode 2 runs plugins inside its server
+ * process, so the sync variant (~2s) freezes the server and can push a cold
+ * start past the host's 5s plugin-activation limit. CLI commands keep the sync one.
+ */
+export function discoverModelsFromCursorAgentAsync(deps: DiscoverAsyncDeps = {}): Promise<DiscoveredModel[]> {
+  const platform = deps.platform ?? process.platform;
+  const run = deps.spawn ?? spawn;
+  const resolveBinary = deps.resolveBinary ?? resolveCursorAgentBinary;
+  const timeoutMs = deps.timeoutMs ?? MODEL_DISCOVERY_TIMEOUT_MS;
+
+  return new Promise((resolve, reject) => {
+    const [command, args] = buildCursorAgentSpawnCommand(resolveBinary(), ["models"], { platform });
+    const child = run(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      finish();
+    };
+    const timer = setTimeout(() => {
+      settle(() => reject(new Error(`cursor-agent models timed out after ${timeoutMs}ms`)));
+      child.kill("SIGTERM");
+    }, timeoutMs);
+
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr?.on("data", (chunk: string) => { stderr += chunk; });
+    child.on("error", (error) => settle(() => reject(error)));
+    child.on("close", (status) => settle(() => {
+      try {
+        resolve(modelsFromExit(status, stdout, stderr));
+      } catch (error) {
+        reject(error);
+      }
+    }));
+  });
+}
+
+function modelsFromExit(status: number | null, stdout: string, stderr: string): DiscoveredModel[] {
+  if (status !== 0) {
+    throw new Error(`cursor-agent models failed (${status}): ${stderr}`);
   }
-  const models = parseCursorModelsOutput(String(result.stdout));
+  const models = parseCursorModelsOutput(stdout);
   if (models.length === 0) {
     throw new Error("No models parsed from cursor-agent output");
   }

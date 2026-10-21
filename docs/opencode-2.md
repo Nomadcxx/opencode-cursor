@@ -159,7 +159,9 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 `opencode.json`:
 
 1. Upgrade the package and use the bare `@rama_nigg/open-cursor` specifier
-   under `plugins`.
+   under `plugins`. Delete `~/.config/opencode/plugin/cursor-acp.js` if the
+   1.x installer created it: 2.x still loads that file, so a second (often
+   older) copy runs beside the npm package.
 2. Remove any leftover `providers.cursor-acp` (or `provider.cursor-acp`) model
    dump from the 2.0 config file so it cannot fight the in-memory inventory.
 3. Restart the OpenCode 2.0 daemon / TUI.
@@ -171,6 +173,9 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 |---|---|
 | `failed to load plugin … NpmInstallFailedError … ENOENT … package.json` | The specifier is an `exports` subpath (`…/plugin/opencode2`). Use the bare `@rama_nigg/open-cursor`. |
 | `TypeError: … 'ctx.catalog.transform'` | The installed package is 2.5.9 or older. Upgrade (`opencode plugin update`). |
+| `cursor-agent exited with code 1 and no output` | A second copy is loaded from `~/.config/opencode/plugin/cursor-acp.js`. Delete it (`open-cursor doctor` flags it). |
+| `Location plugins did not finish activating` | OpenCode 2.x gives plugins 5 seconds to activate after the background service starts. Run the command again once the service is up (`opencode service status`). A leftover 1.x plugin file makes the cold start slower. |
+| `Pass a credential ID or label when running without an interactive terminal` | Name the credential: `opencode auth logout cursor-acp <label>`, with the label from `opencode auth list`. |
 | `cursor-acp error: Cursor rejected the API key` | The stored key is invalid. `opencode auth logout cursor-acp`, then log in with **Log in with cursor-agent (browser)** or a real key. With `CURSOR_ACP_BACKEND=auto` and `cursor-agent` installed this only shows when `CURSOR_ACP_BACKEND=sdk` or the key is in `CURSOR_API_KEY` (unset it). |
 | No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Filter by provider **Cursor** (`time.released` is `0`). |
 | Requests hit a stale proxy port | Restart after plugin reload so `settings.baseURL` matches the live proxy. Remove conflicting `providers.cursor-acp` overlays. |

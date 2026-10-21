@@ -24,7 +24,8 @@ by `@cursor/sdk`).
 ## Installation
 
 You need OpenCode, a Cursor subscription, the
-[`cursor-agent` CLI](https://cursor.com/cli), and Node.js 20 or newer.
+[`cursor-agent` CLI](https://cursor.com/cli), and Node.js 20 or newer
+(22.13 or newer if you use an API key, which runs the Cursor SDK).
 
 ### 1. Sign in to Cursor
 
@@ -47,6 +48,11 @@ That login is all open-cursor needs. An API key is optional (see
 ```
 
 Use the bare package name. OpenCode installs and updates it for you.
+
+Coming from OpenCode 1.x? Delete `~/.config/opencode/plugin/cursor-acp.js`
+first. OpenCode 2.x still loads files in that folder, so the old copy runs
+next to the new one and requests can fail. See
+[Moving from OpenCode 1.x to 2.x](#moving-from-opencode-1x-to-2x).
 
 <details>
 <summary><b>OpenCode 1.x</b></summary>
@@ -71,14 +77,15 @@ opencode run -m cursor-acp/auto "Reply with PONG"
 
 ## Authentication
 
-open-cursor uses your `cursor-agent` login by default. You do not need to
-store anything in OpenCode.
+If `cursor-agent login` worked, you are done. open-cursor uses that login,
+and you do not need to store anything in OpenCode.
 
 | You want to | Do this |
 |---|---|
 | Use your Cursor login (default) | `cursor-agent login` |
 | Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)** |
 | Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
+| Remove a stored key (2.x) | `opencode auth logout cursor-acp`. Without an interactive terminal, add the credential label from `opencode auth list`: `opencode auth logout cursor-acp Cursor` |
 
 API keys come from [cursor.com/settings](https://cursor.com/settings). With a
 key stored, OpenCode 2.x runs requests through the Cursor SDK. If Cursor
@@ -86,18 +93,22 @@ rejects the key and `cursor-agent` is installed, open-cursor switches to
 `cursor-agent` and logs a warning (keys set in `CURSOR_API_KEY` excepted:
 `cursor-agent` reads that variable too, so unset a bad one). Do not enter a placeholder key to get past
 the login prompt; choose **Log in with cursor-agent (browser)** instead.
+On 2.x the newest login becomes the active account, so this also replaces a
+stored key; `opencode auth switch cursor-acp <label>` switches back.
 
 ### Moving from OpenCode 1.x to 2.x
 
 OpenCode 2.x reads the same `opencode.json`, so 1.x entries carry over. To
 switch cleanly:
 
-1. Replace `"cursor-acp"` (or `@rama_nigg/open-cursor`) in the 1.x `plugin`
+1. Delete `~/.config/opencode/plugin/cursor-acp.js` if the 1.x installer
+   created it. OpenCode 2.x still loads it, so an old copy runs beside the
+   new one and requests can fail with `cursor-agent exited with code 1 and
+   no output`. `open-cursor doctor` flags the file.
+2. Replace `"cursor-acp"` (or `@rama_nigg/open-cursor`) in the 1.x `plugin`
    list with the `plugins` entry above.
-2. Delete the `provider.cursor-acp` block. On 2.x the plugin supplies models
+3. Delete the `provider.cursor-acp` block. On 2.x the plugin supplies models
    itself.
-3. Remove `~/.config/opencode/plugin/cursor-acp.js` if the 1.x installer
-   created it.
 4. If requests fail with `Cursor rejected the API key`, remove the old stored
    key with `opencode auth logout cursor-acp`.
 

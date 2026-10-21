@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode 2 cold starts:** model discovery runs `cursor-agent models` without blocking. OpenCode 2 hosts plugins in its server process, so the old synchronous call (~2s) froze the server and could push a cold start past the 5-second plugin-activation limit (`Location plugins did not finish activating`).
+- **Two copies on OpenCode 2:** a 1.x `plugin/cursor-acp.js` left beside the 2.x `plugins` entry no longer sets up a second proxy for the same location; the extra copy logs a warning and stays idle (copies older than this release still run). `open-cursor doctor` flags the leftover file and no longer asks 2.x users for the 1.x provider block or AI SDK.
 - **Picker-only Cursor models:** models enabled in Cursor Settings → Models but omitted from `cursor-agent models` are merged into the OpenCode catalog. GLM 5.3 and GLM 5.3 Flash are `glm-5p3` and `glm-5p3-flash` (the dot is encoded as `p`); the dotted docs ids are rejected by `cursor-agent`.
 
 ### Added

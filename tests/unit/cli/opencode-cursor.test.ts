@@ -1,6 +1,6 @@
 // tests/unit/cli/opencode-cursor.test.ts
 import { describe, expect, it } from "bun:test";
-import { closeSync, mkdtempSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -118,6 +118,43 @@ describe("cli/opencode-cursor commandDoctor", () => {
       }
     }
   });
+});
+
+describe("cli/opencode-cursor doctor on OpenCode 2.x", () => {
+  function doctorFor(config: object, withLegacyPluginFile: boolean) {
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-doctor2-"));
+    const configPath = join(dir, "opencode.json");
+    const pluginPath = join(dir, "plugin", "cursor-acp.js");
+    writeFileSync(configPath, JSON.stringify(config));
+    if (withLegacyPluginFile) {
+      mkdirSync(join(dir, "plugin"));
+      writeFileSync(pluginPath, "export default {};\n");
+    }
+    try {
+      const results = runDoctorChecks(configPath, pluginPath);
+      return (name: string) => results.find((result) => result.name === name);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("fails when a 1.x plugin file would load a second copy", () => {
+    const check = doctorFor({ plugins: ["@rama_nigg/open-cursor"] }, true);
+    expect(check("Plugin file")?.passed).toBe(false);
+    expect(check("Plugin file")?.message).toContain("1.x plugin file");
+  }, 10000);
+
+  it("does not ask for the 1.x provider block, plugin file or AI SDK", () => {
+    const check = doctorFor({ plugins: ["@rama_nigg/open-cursor"] }, false);
+    expect(check("Plugin file")?.passed).toBe(true);
+    expect(check("Provider config")).toMatchObject({ passed: true, message: "OpenCode 2.x supplies models in memory" });
+    expect(check("AI SDK")?.passed).toBe(true);
+  }, 10000);
+
+  it("keeps the 1.x checks when only the plugin list is set", () => {
+    const check = doctorFor({ plugin: ["@rama_nigg/open-cursor"] }, false);
+    expect(check("Provider config")?.passed).toBe(false);
+  }, 10000);
 });
 
 describe("cli/opencode-cursor plugin symlink", () => {
