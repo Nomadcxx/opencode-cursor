@@ -35,8 +35,11 @@ You can also log in from OpenCode. On OpenCode 2.x:
 opencode auth login
 ```
 
-Choose **Cursor**, then **Log in with cursor-agent (browser)** (runs `cursor-agent login`
-and stores nothing secret) or **API key**. On OpenCode 1.x,
+Choose **Cursor**, then **Log in with cursor-agent (browser)** or **API key**.
+The cursor-agent option connects at once when `cursor-agent` is already logged
+in; otherwise it runs `cursor-agent login` and shows Cursor's sign-in link. It
+stores nothing secret, and it works from `/connect` in the TUI and in OpenCode
+Desktop. On OpenCode 1.x,
 `opencode auth login --provider cursor-acp` stores an API key.
 
 A stored key selects the SDK backend on OpenCode 2.x. Use a real key: if Cursor

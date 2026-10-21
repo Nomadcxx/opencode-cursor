@@ -83,7 +83,7 @@ and you do not need to store anything in OpenCode.
 | You want to | Do this |
 |---|---|
 | Use your Cursor login (default) | `cursor-agent login` |
-| Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)** |
+| Log in from inside OpenCode 2.x | `opencode auth login` or `/connect` (TUI and Desktop) → **Cursor** → **Log in with cursor-agent (browser)**. Connects at once if `cursor-agent` is already logged in; otherwise shows Cursor's sign-in link |
 | Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
 | Remove a stored key (2.x) | `opencode auth logout cursor-acp`. Without an interactive terminal, add the credential label from `opencode auth list`: `opencode auth logout cursor-acp Cursor` |
 

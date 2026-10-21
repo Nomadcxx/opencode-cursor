@@ -34,9 +34,12 @@ A logged-in `cursor-agent` (`cursor-agent login`) is enough; nothing needs to
 be stored in OpenCode. To log in from OpenCode instead, run `opencode auth login`
 (or `/connect`), choose **Cursor**, then either:
 
-- **Log in with cursor-agent (browser)** — runs `cursor-agent login` (the browser link
-  appears as progress) and stores the `cursor-agent` placeholder, so requests
-  use the CLI login; or
+- **Log in with cursor-agent (browser)** — if `cursor-agent` is already logged
+  in, this connects at once. Otherwise it runs `cursor-agent login` and OpenCode
+  shows Cursor's sign-in link (open it with Enter or `o` in the TUI). It stores
+  a marker labelled `cursor-agent (<email>)`, not a token: cursor-agent keeps
+  and renews its own login, and requests run through it. This is an `oauth`
+  method, so OpenCode Desktop offers it too; or
 - **API key** — a key from [cursor.com/settings](https://cursor.com/settings).
   `CURSOR_API_KEY` is also picked up via the integration `env` method.
 
