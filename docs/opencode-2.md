@@ -30,9 +30,9 @@ export OPENCODE_CONFIG_DIR=~/.config/opencode2
 
 ## Authenticate
 
-A logged-in `cursor-agent` (`cursor-agent login`) is enough; nothing needs to
-be stored in OpenCode. To log in from OpenCode instead, run `opencode auth login`
-(or `/connect`), choose **Cursor**, then either:
+Run `cursor-agent login` first. A logged-in `cursor-agent` is enough; nothing
+needs to be stored in OpenCode. To connect Cursor from OpenCode as well, run
+`/connect` (or `opencode auth login`), choose **Cursor**, then either:
 
 - **Log in with cursor-agent (browser)** — if `cursor-agent` is already logged
   in, this connects at once. Otherwise it runs `cursor-agent login` and OpenCode
