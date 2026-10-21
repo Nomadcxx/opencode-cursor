@@ -28,6 +28,7 @@ import {
 import { discoverModelsForRefresh, type DiscoveredModel } from "./models/sync.js";
 import { ModelDiscoveryService } from "./models/discovery.js";
 import { applyCursorProviderInventory, CURSOR_INTEGRATION_ID } from "./opencode2/catalog.js";
+import { createCursorAgentLogin } from "./opencode2/cursor-agent-login.js";
 import { applyCursorIntegration, resolveCursorApiKey } from "./opencode2/integration.js";
 import { exposeDirectMcpTools, rememberDirectMcpNamespaces } from "./opencode2/mcp-direct.js";
 import type { Cleanup, ConnectionInfo, Plugin2, PluginContext } from "./opencode2/types.js";
@@ -152,7 +153,10 @@ const plugin: Plugin2 = {
     log.debug("OpenCode 2.0 plugin initializing", { workspaceDirectory });
 
     // ── Credentials ─────────────────────────────────────────
-    await track(ctx.integration.transform(applyCursorIntegration));
+    // Outside the transform: transforms replay, the running login must not.
+    const login = createCursorAgentLogin();
+    registrations.push({ dispose: () => login.dispose() });
+    await track(ctx.integration.transform((draft) => applyCursorIntegration(draft, login)));
 
     let sourceConnection: ConnectionInfo | undefined;
     const refreshSourceConnection = async (): Promise<void> => {

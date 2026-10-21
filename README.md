@@ -80,10 +80,14 @@ opencode run -m cursor-acp/auto "Reply with PONG"
 If `cursor-agent login` worked, you are done. open-cursor uses that login,
 and you do not need to store anything in OpenCode.
 
+On OpenCode 2.x, run `cursor-agent login` before you use `/connect`. The
+**Log in with cursor-agent (browser)** option then picks up that login and
+connects straight away.
+
 | You want to | Do this |
 |---|---|
 | Use your Cursor login (default) | `cursor-agent login` |
-| Log in from inside OpenCode 2.x | `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)** |
+| Connect Cursor in OpenCode 2.x | After `cursor-agent login`: `/connect` (TUI and Desktop) or `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)**. If `cursor-agent` is not logged in yet, it shows Cursor's sign-in link instead |
 | Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
 | Remove a stored key (2.x) | `opencode auth logout cursor-acp`. Without an interactive terminal, add the credential label from `opencode auth list`: `opencode auth logout cursor-acp Cursor` |
 

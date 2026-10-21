@@ -73,7 +73,16 @@ export type CredentialKey = {
   metadata?: Record<string, unknown>;
 };
 
-export type CredentialValue = CredentialKey | { type: string; key?: string; access?: string };
+export type CredentialOAuth = {
+  type: "oauth";
+  methodID: string;
+  access: string;
+  refresh: string;
+  expires: number;
+  metadata?: Record<string, unknown>;
+};
+
+export type CredentialValue = CredentialKey | CredentialOAuth | { type: string; key?: string; access?: string };
 
 export type ConnectionInfo =
   | { type: "credential"; id: string; label: string }
@@ -94,13 +103,28 @@ export type ProviderDomain = {
 
 export type IntegrationKeyMethod = { type: "key"; label?: string };
 export type IntegrationEnvMethod = { type: "env"; names: string[] };
-/** The host runs `command`, shows its stderr, and stores trimmed stdout as the credential. */
-export type IntegrationCommandMethod = { id: string; type: "command"; label: string; command: string[] };
+export type IntegrationOAuthMethod = { id: string; type: "oauth"; label: string };
+
+/** `auto`: the host shows `url` and `instructions`, then stores what `callback` resolves to. */
+export type IntegrationOAuthAuthorization = {
+  url: string;
+  instructions: string;
+  expiresAt?: number;
+  mode: "auto";
+  callback: Promise<CredentialOAuth>;
+};
 
 export type IntegrationMethodRegistration =
   | { readonly integrationID: string; readonly method: IntegrationKeyMethod }
   | { readonly integrationID: string; readonly method: IntegrationEnvMethod }
-  | { readonly integrationID: string; readonly method: IntegrationCommandMethod };
+  | {
+      readonly integrationID: string;
+      readonly method: IntegrationOAuthMethod;
+      readonly authorize: (answer: Record<string, unknown>) => Promise<IntegrationOAuthAuthorization>;
+      /** Omitted: the host returns the stored credential as-is and never refreshes it. */
+      readonly refresh?: (credential: CredentialOAuth) => Promise<CredentialOAuth>;
+      readonly label?: (credential: CredentialOAuth) => string | undefined;
+    };
 
 export type IntegrationRef = { id: string; name: string };
 
