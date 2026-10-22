@@ -1,21 +1,71 @@
 ---
 title: "Installation"
-description: "Install open-cursor and add the cursor-acp provider to OpenCode."
+description: "Install open-cursor on OpenCode 2.x or 1.x and sign in to Cursor."
 ---
 
 ## Before you start
 
-You need OpenCode, a Cursor subscription, and the `cursor-agent` command.
-Confirm both commands resolve before installing the plugin:
+You need OpenCode, a Cursor subscription, the `cursor-agent` command, and
+Node.js 20 or newer. Confirm both commands resolve before installing the
+plugin, then sign in to Cursor:
 
 ```bash
 opencode --version
 cursor-agent --version
+cursor-agent login
 ```
 
-## Install with npm
+`opencode --version` tells you which section below to follow.
 
-This is the normal path on Linux, macOS, and Windows:
+## OpenCode 2.x
+
+```bash
+opencode plugin add @rama_nigg/open-cursor
+opencode service restart
+```
+
+`plugin add` downloads the package and adds it to `plugins` in your global
+`opencode.json`. OpenCode 2.x loads it and lists the Cursor models itself, so
+you need no provider block, no installer, and no `/connect`.
+
+Upgrade with:
+
+```bash
+opencode plugin update
+```
+
+You can also write the entry by hand:
+
+```json
+{
+  "plugins": ["@rama_nigg/open-cursor"]
+}
+```
+
+Use the bare package name. OpenCode downloads the package on its next start,
+and the download can take longer than the 5 seconds OpenCode gives plugins to
+activate. If the first command fails with
+`Location plugins did not finish activating`, run it again.
+
+Do not run `open-cursor install` on OpenCode 2.x. It writes the 1.x plugin
+file `~/.config/opencode/plugin/cursor-acp.js`, which 2.x loads as a second
+copy. Delete that file if an earlier install left it behind.
+
+See [OpenCode 2.0 setup](https://github.com/Nomadcxx/opencode-cursor/blob/main/docs/opencode-2.md)
+for authentication options, MCP tools, and 2.x troubleshooting.
+
+## Verify
+
+```bash
+opencode models | grep cursor-acp
+```
+
+If this prints at least `cursor-acp/auto`, continue to
+[Quick start](/docs/getting-started/quick-start).
+
+## OpenCode 1.x: install with npm
+
+This is the normal 1.x path on Linux, macOS, and Windows:
 
 ```bash
 npm install -g @rama_nigg/open-cursor
@@ -37,9 +87,10 @@ The default configuration lives at:
 - Linux and macOS: `~/.config/opencode/opencode.json`
 - Windows: `%USERPROFILE%\.config\opencode\opencode.json`
 
-Pass `--config <path>` if your configuration lives elsewhere.
+Pass `--config <path>` if your configuration lives elsewhere. Then run the
+[Verify](#verify) check.
 
-## Cursor bridge files are optional
+## OpenCode 1.x: Cursor bridge files
 
 The normal install does not touch `.cursor`.
 
@@ -62,17 +113,7 @@ Use `--cursor-bridge-scope user` to write under `~/.cursor`, or `both` to
 install the project and user copies. The scope flag implies
 `--install-cursor-bridge`.
 
-## Authenticate and verify
-
-```bash
-cursor-agent login
-opencode models | grep cursor-acp
-```
-
-If the second command prints at least `cursor-acp/auto`, continue to
-[Quick start](/docs/getting-started/quick-start).
-
-## Shell installer
+## OpenCode 1.x: shell installer
 
 The shell installer supports Linux and macOS:
 
@@ -83,7 +124,7 @@ curl -fsSL https://raw.githubusercontent.com/Nomadcxx/opencode-cursor/main/insta
 It prefers the npm package. If npm is unavailable, it falls back to the Go TUI
 or the shell-only installer path.
 
-## Manual OpenCode configuration
+## OpenCode 1.x: manual configuration
 
 Add this to your OpenCode configuration if you do not want to run the
 installer:
@@ -110,7 +151,7 @@ installer:
 
 Manual configuration does not install the optional Cursor bridge files.
 
-## Upgrade
+## OpenCode 1.x: upgrade
 
 ```bash
 npm update -g @rama_nigg/open-cursor

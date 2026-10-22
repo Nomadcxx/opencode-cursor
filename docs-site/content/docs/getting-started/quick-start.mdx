@@ -58,3 +58,10 @@ open-cursor doctor
 `status` reports the installed plugin, provider, model count, authentication
 sources, backend preference, session resume, agent pool, and logging settings.
 `doctor --deep` adds model and compact-variant checks.
+
+On OpenCode 2.x, `status` still describes the 1.x setup. Run `doctor`, through
+npx if you have no global install:
+
+```bash
+npx -p @rama_nigg/open-cursor open-cursor doctor
+```

@@ -38,16 +38,21 @@ That login is all open-cursor needs. An API key is optional (see
 
 ### 2. Add the plugin
 
-**OpenCode 2.x** (the current default). Add the package to `plugins` in
-`~/.config/opencode/opencode.json` and restart OpenCode:
+**OpenCode 2.x** (the current default):
 
-```json
-{
-  "plugins": ["@rama_nigg/open-cursor"]
-}
+```bash
+opencode plugin add @rama_nigg/open-cursor
+opencode service restart
 ```
 
-Use the bare package name. OpenCode installs and updates it for you.
+`plugin add` downloads the package and adds it to `plugins` in
+`~/.config/opencode/opencode.json`. Upgrade later with `opencode plugin update`.
+
+You can also add `"plugins": ["@rama_nigg/open-cursor"]` to that file by
+hand. Use the bare package name. OpenCode then downloads the package on its
+next start, and the download can outlast the 5 seconds it gives plugins to
+load. If you see `Location plugins did not finish activating`, run the
+command again.
 
 Coming from OpenCode 1.x? Delete `~/.config/opencode/plugin/cursor-acp.js`
 first. OpenCode 2.x still loads files in that folder, so the old copy runs
@@ -78,16 +83,17 @@ opencode run -m cursor-acp/auto "Reply with PONG"
 ## Authentication
 
 If `cursor-agent login` worked, you are done. open-cursor uses that login,
-and you do not need to store anything in OpenCode.
+and you do not need to store anything in OpenCode. `/connect` is optional on
+OpenCode 2.x.
 
-On OpenCode 2.x, run `cursor-agent login` before you use `/connect`. The
-**Log in with cursor-agent (browser)** option then picks up that login and
-connects straight away.
+If you do use `/connect`, run `cursor-agent login` first. The
+**Log in with cursor-agent (browser)** option then finds that login and
+connects in about a second.
 
 | You want to | Do this |
 |---|---|
 | Use your Cursor login (default) | `cursor-agent login` |
-| Connect Cursor in OpenCode 2.x | After `cursor-agent login`: `/connect` (TUI and Desktop) or `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)**. If `cursor-agent` is not logged in yet, it shows Cursor's sign-in link instead |
+| Connect Cursor in OpenCode 2.x (optional) | After `cursor-agent login`: `/connect` (TUI and Desktop) or `opencode auth login` → **Cursor** → **Log in with cursor-agent (browser)**. If `cursor-agent` is not logged in yet, it shows Cursor's sign-in link instead |
 | Use an API key instead | `opencode auth login` → **Cursor** → API key (1.x: `opencode auth login --provider cursor-acp`), or set `CURSOR_API_KEY` |
 | Remove a stored key (2.x) | `opencode auth logout cursor-acp`. Without an interactive terminal, add the credential label from `opencode auth list`: `opencode auth logout cursor-acp Cursor` |
 
@@ -109,8 +115,8 @@ switch cleanly:
    created it. OpenCode 2.x still loads it, so an old copy runs beside the
    new one and requests can fail with `cursor-agent exited with code 1 and
    no output`. `open-cursor doctor` flags the file.
-2. Replace `"cursor-acp"` (or `@rama_nigg/open-cursor`) in the 1.x `plugin`
-   list with the `plugins` entry above.
+2. Remove `"cursor-acp"` (or `@rama_nigg/open-cursor`) from the 1.x `plugin`
+   list, then run `opencode plugin add @rama_nigg/open-cursor`.
 3. Delete the `provider.cursor-acp` block. On 2.x the plugin supplies models
    itself.
 4. If requests fail with `Cursor rejected the API key`, remove the old stored

@@ -6,13 +6,27 @@ The package's default export serves both hosts: OpenCode 1.x calls its
 
 ## Install
 
+```bash
+opencode plugin add @rama_nigg/open-cursor
+opencode service restart
+```
+
+`plugin add` downloads the package and adds it to `plugins` in the global
+`opencode.json`:
+
 ```json
 {
   "plugins": ["@rama_nigg/open-cursor"]
 }
 ```
 
-Pin a version if you want: `"@rama_nigg/open-cursor@x.y.z"`.
+Pin a version if you want: `opencode plugin add @rama_nigg/open-cursor@x.y.z`.
+`opencode plugin update` upgrades an unpinned entry.
+
+If you write the entry by hand, OpenCode downloads the package on its next
+start. The download can take longer than the 5 seconds OpenCode gives plugins
+to activate, so the first command may fail with
+`Location plugins did not finish activating`. Run it again.
 
 Use the bare package name. OpenCode 2.0 installs plugin specifiers with npm and
 resolves the package's main export; it does not understand `exports` subpaths,
@@ -30,9 +44,9 @@ export OPENCODE_CONFIG_DIR=~/.config/opencode2
 
 ## Authenticate
 
-Run `cursor-agent login` first. A logged-in `cursor-agent` is enough; nothing
-needs to be stored in OpenCode. To connect Cursor from OpenCode as well, run
-`/connect` (or `opencode auth login`), choose **Cursor**, then either:
+Run `cursor-agent login` first. That login is enough: you do not need to
+store anything in OpenCode, and `/connect` is optional. To connect Cursor from
+OpenCode too, run `/connect` (or `opencode auth login`), choose **Cursor**, then either:
 
 - **Log in with cursor-agent (browser)** — if `cursor-agent` is already logged
   in, this connects at once. Otherwise it runs `cursor-agent login` and OpenCode
@@ -61,8 +75,8 @@ proxy; it does not share the 1.x stored-key cache.
 For a background service, set environment variables on the service and restart it:
 
 ```text
-opencode2 service set env CURSOR_ACP_BACKEND sdk
-opencode2 service restart
+opencode service set env CURSOR_ACP_BACKEND sdk
+opencode service restart
 ```
 
 ## How it differs from OpenCode 1.x
@@ -80,8 +94,10 @@ open-cursor still speaks openai-compatible HTTP to its local proxy. It does
 **not** own Cursor's Connect-RPC agent protocol — that is a different project
 ([cursor-opencode-provider](https://github.com/oakimov/cursor-opencode-provider)).
 
-After `/connect` or a credential switch, models are rediscovered with the
-active Cursor key; until then the picker shows a small static fallback list.
+The picker shows a three-model fallback list (Auto, Composer 2, Composer 1.5)
+until model discovery finishes, a few seconds after OpenCode starts. The
+plugin runs discovery again with the active Cursor key after `/connect` or a
+credential switch.
 
 ## Tools
 
@@ -168,7 +184,8 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 2. Remove any leftover `providers.cursor-acp` (or `provider.cursor-acp`) model
    dump from the 2.0 config file so it cannot fight the in-memory inventory.
 3. Restart the OpenCode 2.0 daemon / TUI.
-4. `/connect` → **Cursor** if models are missing after the switch.
+4. If models are missing after the switch, run `cursor-agent status` and
+   check [Troubleshooting](#troubleshooting).
 
 ## Troubleshooting
 
@@ -177,10 +194,10 @@ If you previously used the dual-export root entry against OpenCode 2 **next**
 | `failed to load plugin … NpmInstallFailedError … ENOENT … package.json` | The specifier is an `exports` subpath (`…/plugin/opencode2`). Use the bare `@rama_nigg/open-cursor`. |
 | `TypeError: … 'ctx.catalog.transform'` | The installed package is 2.5.9 or older. Upgrade (`opencode plugin update`). |
 | `cursor-agent exited with code 1 and no output` | A second copy is loaded from `~/.config/opencode/plugin/cursor-acp.js`. Delete it (`open-cursor doctor` flags it). |
-| `Location plugins did not finish activating` | OpenCode 2.x gives plugins 5 seconds to activate after the background service starts. Run the command again once the service is up (`opencode service status`). A leftover 1.x plugin file makes the cold start slower. |
+| `Location plugins did not finish activating` | OpenCode 2.x gives plugins 5 seconds to activate after the background service starts. Run the command again once the service is up (`opencode service status`). The first start after a hand-written `plugins` entry downloads the package and often hits this; `opencode plugin add` downloads it beforehand. A leftover 1.x plugin file also slows the cold start. |
 | `Pass a credential ID or label when running without an interactive terminal` | Name the credential: `opencode auth logout cursor-acp <label>`, with the label from `opencode auth list`. |
 | `cursor-acp error: Cursor rejected the API key` | The stored key is invalid. `opencode auth logout cursor-acp`, then log in with **Log in with cursor-agent (browser)** or a real key. With `CURSOR_ACP_BACKEND=auto` and `cursor-agent` installed this only shows when `CURSOR_ACP_BACKEND=sdk` or the key is in `CURSOR_API_KEY` (unset it). |
-| No Cursor models in the picker | Confirm `/connect` → **Cursor** (or `CURSOR_API_KEY`). Filter by provider **Cursor** (`time.released` is `0`). |
+| No Cursor models in the picker | Run `opencode plugin list` and check that `open-cursor` shows a version. Run `cursor-agent status` to confirm the login. Filter the picker by provider **Cursor** (`time.released` is `0`). |
 | Requests hit a stale proxy port | Restart after plugin reload so `settings.baseURL` matches the live proxy. Remove conflicting `providers.cursor-acp` overlays. |
 | Only Auto / Composer models after `/connect` | Discovery reruns on credential events; restart the daemon if the host did not emit one. |
 | Cursor cannot find an MCP tool | The server sets `"codemode": true`, so its tools stay inside `execute`. Remove it to put them on the direct catalog. See [MCP tools](#mcp-tools). |
