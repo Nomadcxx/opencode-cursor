@@ -550,9 +550,11 @@ function isSuccessfulResultEvent(event: StreamJsonEvent): boolean {
   return isResult(event) && event.is_error !== true && event.subtype !== "error";
 }
 
+/** A partial delta (timestamped, no model_call_id), so the converter appends it as-is. */
 function createAssistantTextEvent(text: string): StreamJsonEvent {
   return {
     type: "assistant",
+    timestamp_ms: Date.now(),
     message: {
       role: "assistant",
       content: [{ type: "text", text }],
@@ -1542,7 +1544,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
 
         const completion = extractCompletionFromStream(stdout);
         const bridgeToolCalls = bridgeJsonEnabled
-          ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
+          ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap)
           : null;
         if (bridgeToolCalls) {
           log.debug("Intercepted bridge JSON tool calls (non-stream)", {
@@ -1628,7 +1630,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
             const converter = new StreamToSseConverter(model, { id, created });
             const lineBuffer = new LineBuffer();
             const bridgeDetector = bridgeJsonEnabled
-              ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
+              ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap)
               : null;
             const emitToolCallAndTerminate = (toolCalls: OpenAiToolCall[]) => {
               log.debug("Intercepted OpenCode tool call (stream)", {
@@ -1676,19 +1678,16 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
               if (isThinking(event)) {
                 emitBridgeEvent(createAssistantThinkingEvent(event));
               }
+              // The detector owns assistant text: forwarding the raw event could leak
+              // text it is holding back while it decides whether a line is an envelope.
               const decision = bridgeDetector.push(event);
+              if (decision.action !== "buffer" && decision.text) {
+                emitBridgeText(decision.text);
+              }
               if (decision.action === "tool_call") {
                 emitToolCallAndTerminate(decision.toolCalls);
-                return true;
               }
-              if (decision.action === "buffer") {
-                return true;
-              }
-              if (decision.text !== undefined) {
-                emitBridgeText(decision.text);
-                return true;
-              }
-              return false;
+              return true;
             };
             const emitTerminalAssistantErrorAndTerminate = (message: string) => {
               if (streamTerminated) {
@@ -2204,7 +2203,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
 
           const completion = extractCompletionFromStream(stdout);
           const bridgeToolCalls = bridgeJsonEnabled
-            ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap.get("write"))
+            ? extractBridgeToolCallsFromStreamOutput(stdout, allowedToolNames, toolSchemaMap)
             : null;
           if (bridgeToolCalls) {
             log.debug("Intercepted bridge JSON tool calls (non-stream)", {
@@ -2276,7 +2275,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
         const converter = new StreamToSseConverter(model, { id, created });
         const lineBuffer = new LineBuffer();
         const bridgeDetector = bridgeJsonEnabled
-          ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap.get("write"))
+          ? new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap)
           : null;
         const toolMapper = new ToolMapper();
         const toolSessionId = id;
@@ -2377,19 +2376,16 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
           if (isThinking(event)) {
             emitBridgeEvent(createAssistantThinkingEvent(event));
           }
+          // The detector owns assistant text: forwarding the raw event could leak
+          // text it is holding back while it decides whether a line is an envelope.
           const decision = bridgeDetector.push(event);
+          if (decision.action !== "buffer" && decision.text) {
+            emitBridgeText(decision.text);
+          }
           if (decision.action === "tool_call") {
             emitToolCallAndTerminate(decision.toolCalls);
-            return true;
           }
-          if (decision.action === "buffer") {
-            return true;
-          }
-          if (decision.text !== undefined) {
-            emitBridgeText(decision.text);
-            return true;
-          }
-          return false;
+          return true;
         };
 
         const chunkQueue: Buffer[] = [];
