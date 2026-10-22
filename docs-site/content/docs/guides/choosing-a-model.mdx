@@ -22,7 +22,15 @@ A model that is neither in the CLI list nor enabled in Cursor Settings →
 Models still cannot be routed. Adding that id to `opencode.json` does not
 make the CLI accept it.
 
-Refresh OpenCode after Cursor changes the list:
+Refresh OpenCode after Cursor changes the list. On OpenCode 2.x, restart the
+service; the plugin discovers models on each start:
+
+```bash
+opencode service restart
+opencode models | grep cursor-acp
+```
+
+On OpenCode 1.x:
 
 ```bash
 open-cursor sync-models

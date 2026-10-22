@@ -26,8 +26,19 @@ Check Cursor first:
 cursor-agent models
 ```
 
-If that fails, run `cursor-agent login`. If it succeeds, repair the OpenCode
-configuration and model list:
+If that fails, run `cursor-agent login`. If it succeeds, check the plugin.
+
+On OpenCode 2.x:
+
+```bash
+opencode plugin list
+```
+
+`open-cursor` should show a version. If it does not, run
+`opencode plugin add @rama_nigg/open-cursor` and `opencode service restart`.
+Do not run `open-cursor install` on 2.x.
+
+On OpenCode 1.x, repair the configuration and model list:
 
 ```bash
 open-cursor install

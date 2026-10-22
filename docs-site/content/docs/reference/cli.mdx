@@ -9,6 +9,15 @@ The npm package installs `open-cursor`.
 open-cursor help
 ```
 
+Most commands manage OpenCode 1.x configuration. On OpenCode 2.x,
+`opencode plugin add` installs the plugin and the plugin discovers models
+itself, so skip `install`, `sync-models`, `status`, and `uninstall`. `doctor`
+checks both versions. Without a global install, run it through npx:
+
+```bash
+npx -p @rama_nigg/open-cursor open-cursor doctor
+```
+
 ## Commands
 
 | Command | What it does |
