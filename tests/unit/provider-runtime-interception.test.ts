@@ -225,6 +225,54 @@ describe("provider runtime interception parity", () => {
         rmSync(dir, { recursive: true });
       }
     });
+
+    // #114: a one-line streamContent fragment of a three-line file replaced the file.
+    it(`${mode}: leaves a short file alone when streamContent drops lines`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "short-stream-content-"));
+      const path = join(dir, "notes.txt");
+      const original = "alpha\nbeta\ngamma\n";
+      writeFileSync(path, original);
+      try {
+        const intercepted: OpenAiToolCall[] = [];
+        const result = await intercept(createBaseOptions({
+          event: {
+            type: "tool_call", call_id: `short-fragment-${mode}`,
+            tool_call: { editToolCall: { args: { path, streamContent: "BETA-EDITED" } } },
+          } as any,
+          allowedToolNames: new Set(["edit", "write"]),
+          toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+          onInterceptedToolCall: async (call) => { intercepted.push(call); },
+        }));
+        expect(result).toEqual({ intercepted: false, skipConverter: true });
+        expect(intercepted).toHaveLength(0);
+        expect(readFileSync(path, "utf8")).toBe(original);
+      } finally {
+        rmSync(dir, { recursive: true });
+      }
+    });
+
+    it(`${mode}: still reroutes a short-file streamContent that keeps every line`, async () => {
+      const dir = mkdtempSync(join(tmpdir(), "short-stream-content-full-"));
+      const path = join(dir, "notes.txt");
+      writeFileSync(path, "alpha\nbeta\ngamma\n");
+      try {
+        const intercepted: OpenAiToolCall[] = [];
+        await intercept(createBaseOptions({
+          event: {
+            type: "tool_call", call_id: `short-full-${mode}`,
+            tool_call: { editToolCall: { args: { path, streamContent: "alpha\nBETA-EDITED\ngamma\n" } } },
+          } as any,
+          allowedToolNames: new Set(["edit", "write"]),
+          toolSchemaMap: OPENCODE_EDIT_WRITE_SCHEMA_MAP,
+          onInterceptedToolCall: async (call) => { intercepted.push(call); },
+        }));
+        expect(intercepted).toHaveLength(1);
+        expect(intercepted[0].function.name).toBe("write");
+        expect(JSON.parse(intercepted[0].function.arguments).content).toBe("alpha\nBETA-EDITED\ngamma\n");
+      } finally {
+        rmSync(dir, { recursive: true });
+      }
+    });
   }
 
   it("produces equivalent interception results for legacy and v1 in opencode mode", async () => {

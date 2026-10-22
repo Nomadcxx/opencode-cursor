@@ -193,6 +193,10 @@ export async function handleToolLoopEventLegacy(
       toolSchemaMap,
     );
     if (reroutedWrite) {
+      const skipped = skipSuspiciousStreamContentReroute(event, compat, reroutedWrite, normalizedToolCall.function.name);
+      if (skipped) {
+        return skipped;
+      }
       log.debug("Rerouting full-file edit call to write (legacy)", {
         missing: compat.validation.missing,
       });
@@ -384,20 +388,9 @@ export async function handleToolLoopEventV1(
     toolSchemaMap,
   );
   if (reroutedWrite) {
-    const suspiciousOverwrite = detectSuspiciousStreamContentWrite(compat, reroutedWrite);
-    if (suspiciousOverwrite) {
-      const cursorOwnedMutation = detectCursorOwnedMutation(event, normalizedToolCall.function.name);
-      log.debug("Skipping suspicious streamContent edit-to-write reroute", {
-        filePath: suspiciousOverwrite.filePath,
-        existingLines: suspiciousOverwrite.existingLines,
-        nextLines: suspiciousOverwrite.nextLines,
-        ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
-      });
-      return {
-        intercepted: false,
-        skipConverter: true,
-        ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
-      };
+    const skipped = skipSuspiciousStreamContentReroute(event, compat, reroutedWrite, normalizedToolCall.function.name);
+    if (skipped) {
+      return skipped;
     }
     log.debug("Rerouting full-file edit call to write", {
       missing: compat.validation.missing,
@@ -794,6 +787,31 @@ function shouldTerminateOnSchemaValidation(
   return false;
 }
 
+/** Leave a fragment-shaped streamContent edit to Cursor instead of writing it over the file. */
+function skipSuspiciousStreamContentReroute(
+  event: StreamJsonToolCallEvent,
+  compat: ToolSchemaCompatResult,
+  reroutedWrite: OpenAiToolCall,
+  toolName: string,
+): HandleToolLoopEventResult | null {
+  const suspiciousOverwrite = detectSuspiciousStreamContentWrite(compat, reroutedWrite);
+  if (!suspiciousOverwrite) {
+    return null;
+  }
+  const cursorOwnedMutation = detectCursorOwnedMutation(event, toolName);
+  log.debug("Skipping suspicious streamContent edit-to-write reroute", {
+    filePath: suspiciousOverwrite.filePath,
+    existingLines: suspiciousOverwrite.existingLines,
+    nextLines: suspiciousOverwrite.nextLines,
+    ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
+  });
+  return {
+    intercepted: false,
+    skipConverter: true,
+    ...(cursorOwnedMutation ? { cursorOwnedMutation } : {}),
+  };
+}
+
 function detectSuspiciousStreamContentWrite(
   compat: ToolSchemaCompatResult,
   reroutedWrite: OpenAiToolCall,
@@ -834,8 +852,13 @@ function detectSuspiciousStreamContentWrite(
 
   const existingLines = countLogicalLines(existing);
   const nextLines = countLogicalLines(content);
+  // On an existing file streamContent is usually the changed lines plus some
+  // context, and cursor-agent applies the edit itself. The ratio test below
+  // misses that on a short file (one line of three passes it), so any line
+  // loss counts there: a skipped rewrite only hides the edit from OpenCode,
+  // while a wrong reroute replaces the file with the fragment (#114).
   if (existingLines < 5) {
-    return null;
+    return nextLines < existingLines ? { filePath, existingLines, nextLines } : null;
   }
 
   const lineShrink = nextLines <= Math.max(3, Math.floor(existingLines * 0.1));
