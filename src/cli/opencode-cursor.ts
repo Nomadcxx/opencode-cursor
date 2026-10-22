@@ -51,7 +51,7 @@ type CheckResult = {
 };
 
 type StatusResult = {
-  installMethod: "symlink" | "npm-direct" | "none";
+  installMethod: "symlink" | "npm-direct" | "opencode2" | "none";
   plugin: {
     path: string;
     type: "symlink" | "file" | "missing";
@@ -263,6 +263,25 @@ function listsNpmPackage(config: unknown, key: "plugin" | "plugins"): boolean {
 
 const isNpmDirectInstalled = (config: unknown) => listsNpmPackage(config, "plugin");
 const isOpenCode2Installed = (config: unknown) => listsNpmPackage(config, "plugins");
+
+/** Major version of the `opencode` on PATH, or undefined when it does not run. */
+function installedOpenCodeMajor(): number | undefined {
+  try {
+    const match = execFileSync("opencode", ["--version"], { encoding: "utf8" }).match(/(\d+)\.\d+/);
+    return match ? Number(match[1]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Commands that write 1.x files must not run against OpenCode 2.x: it loads a
+ * `plugin/` file as a second copy, and a provider block fights its in-memory
+ * models. 2.x also reads 1.x entries, so the PATH version counts as well.
+ */
+export function targetsOpenCode2(config: unknown, openCodeMajor = installedOpenCodeMajor): boolean {
+  return isOpenCode2Installed(config) || (openCodeMajor() ?? 0) >= 2;
+}
 
 function checkPluginFile(pluginPath: string, config: unknown): CheckResult {
   try {
@@ -937,13 +956,19 @@ function commandInstall(options: Options) {
   const { opencodeDir, configPath, pluginPath } = resolvePaths(options);
   const baseUrl = options.baseUrl || DEFAULT_BASE_URL;
   const copyMode = options.copy === true;
-  const pluginSource = resolvePluginSource();
+  const config = readConfig(configPath);
 
+  if (targetsOpenCode2(config)) {
+    installForOpenCode2(options, pluginPath);
+    installCursorBridge(options);
+    return;
+  }
+
+  const pluginSource = resolvePluginSource();
   if (!options.dryRun) {
     mkdirSync(opencodeDir, { recursive: true });
     ensurePluginLink(pluginSource, pluginPath, copyMode);
   }
-  const config = readConfig(configPath);
   ensureProvider(config, baseUrl);
 
   if (!options.skipModels) {
@@ -957,6 +982,29 @@ function commandInstall(options: Options) {
     writeConfig(configPath, config, options.noBackup === true);
     installAiSdk(opencodeDir);
   }
+  installCursorBridge(options);
+
+  console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);
+  console.log(`Plugin path: ${pluginPath}${copyMode ? " (copy)" : " (symlink)"}`);
+  console.log(`Config path: ${configPath}`);
+}
+
+/** OpenCode 2.x installs npm plugins itself and lists the models in memory. */
+function installForOpenCode2(options: Options, pluginPath: string) {
+  const args = ["plugin", "add", NPM_PACKAGE];
+  if (options.dryRun) {
+    console.log(`OpenCode 2.x: would run opencode ${args.join(" ")}`);
+  } else {
+    console.log(`OpenCode 2.x: running opencode ${args.join(" ")}`);
+    execFileSync("opencode", args, { stdio: "inherit" });
+  }
+  if (lstatSync(pluginPath, { throwIfNoEntry: false })) {
+    console.log(`Delete ${pluginPath}: OpenCode 2.x loads it as a second copy.`);
+  }
+  console.log("Restart OpenCode to load it: opencode service restart");
+}
+
+function installCursorBridge(options: Options) {
   if (shouldInstallCursorBridge(options)) {
     for (const target of getCursorBridgeRoots(options.cursorBridgeScope)) {
       const bridge = ensureCursorBridgeHook(target.root, {
@@ -969,15 +1017,16 @@ function commandInstall(options: Options) {
   } else {
     console.log("Cursor bridge hook and rule: not installed (.cursor files are opt-in)");
   }
-
-  console.log(`${options.dryRun ? "Would install" : "Installed"} ${PROVIDER_ID}`);
-  console.log(`Plugin path: ${pluginPath}${copyMode ? " (copy)" : " (symlink)"}`);
-  console.log(`Config path: ${configPath}`);
 }
 
 function commandSyncModels(options: Options) {
   const { configPath } = resolvePaths(options);
   const config = readConfig(configPath);
+  if (targetsOpenCode2(config)) {
+    const message = "OpenCode 2.x discovers Cursor models each time it starts. Refresh them with: opencode service restart";
+    console.log(options.json ? JSON.stringify({ opencode2: true, message }, null, 2) : message);
+    return;
+  }
   ensureProvider(config, options.baseUrl || DEFAULT_BASE_URL);
 
   const result = syncModelsIntoProvider(config, options);
@@ -1089,26 +1138,18 @@ function commandUninstall(options: Options) {
 }
 
 export function getStatusResult(configPath: string, pluginPath: string): StatusResult {
-  // Plugin
+  // Plugin. lstat, so a link left dangling by `npm rm -g` still shows.
   let pluginType: "symlink" | "file" | "missing" = "missing";
   let pluginTarget: string | undefined;
-  if (existsSync(pluginPath)) {
-    try {
-      const stat = lstatSync(pluginPath);
-      pluginType = stat.isSymbolicLink() ? "symlink" : "file";
-      if (pluginType === "symlink") {
-        try {
-          pluginTarget = readlinkSync(pluginPath);
-        } catch {
-          pluginTarget = undefined;
-        }
+  const pluginStat = lstatSync(pluginPath, { throwIfNoEntry: false });
+  if (pluginStat) {
+    pluginType = pluginStat.isSymbolicLink() ? "symlink" : "file";
+    if (pluginType === "symlink") {
+      try {
+        pluginTarget = readlinkSync(pluginPath);
+      } catch {
+        pluginTarget = undefined;
       }
-    } catch (error) {
-      if (!isErrnoException(error) || error.code !== "ENOENT") {
-        throw error;
-      }
-      pluginType = "missing";
-      pluginTarget = undefined;
     }
   }
 
@@ -1136,8 +1177,10 @@ export function getStatusResult(configPath: string, pluginPath: string): StatusR
   const sdkApiKeySource = resolveCliSdkAuthSource(config);
   const legacyCursorAuthFile = getPossibleAuthPaths().some((authPath) => existsSync(authPath));
 
-  let installMethod: "symlink" | "npm-direct" | "none" = "none";
-  if (pluginType !== "missing") {
+  let installMethod: StatusResult["installMethod"] = "none";
+  if (isOpenCode2Installed(config)) {
+    installMethod = "opencode2";
+  } else if (pluginType !== "missing") {
     installMethod = "symlink";
   } else if (isNpmDirectInstalled(config)) {
     installMethod = "npm-direct";
@@ -1287,6 +1330,45 @@ function commandStatus(options: Options) {
     return;
   }
 
+  if (result.installMethod === "opencode2") {
+    printOpenCode2Install(result);
+  } else {
+    printOpenCode1Install(result);
+  }
+
+  console.log("");
+  console.log("Authentication");
+  console.log(`  Legacy cursor-agent auth file: ${result.auth.legacyCursorAuthFile ? "found" : "not found"}`);
+  console.log(
+    `  Cursor SDK API key: ${result.auth.sdkApiKey ? `found via ${result.auth.sdkApiKeySource}` : "not configured"}`,
+  );
+
+  console.log("");
+  console.log("Runtime");
+  console.log(`  Backend preference: ${result.runtime.backend.preference}`);
+  console.log(`  Agent pool: ${result.runtime.agentPool.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Agent pool idle: ${result.runtime.agentPool.idleMs}ms`);
+  console.log(`  Session resume: ${result.runtime.sessionResume.enabled ? "enabled" : "disabled"}`);
+  console.log(`  Log level: ${result.runtime.logging.level}`);
+  console.log(`  Console logging: ${result.runtime.logging.console ? "enabled" : "disabled"}`);
+  console.log(`  Log dir: ${result.runtime.logging.dir}`);
+}
+
+function printOpenCode2Install(result: StatusResult) {
+  console.log("");
+  console.log("Plugin");
+  console.log(`  Install method: OpenCode 2.x plugins entry`);
+  console.log(`  Config: ${result.provider.configPath}`);
+  console.log(`  Models: discovered by OpenCode 2.x on each start`);
+  if (result.plugin.type !== "missing") {
+    console.log(`  1.x plugin file: ${result.plugin.path} - delete it, OpenCode 2.x loads it as a second copy`);
+  }
+  if (result.provider.enabled) {
+    console.log(`  1.x provider block: provider.${result.provider.name} - delete it, it overrides the in-memory models`);
+  }
+}
+
+function printOpenCode1Install(result: StatusResult) {
   console.log("");
   console.log("Plugin");
   console.log(`  Path: ${result.plugin.path}`);
@@ -1310,23 +1392,6 @@ function commandStatus(options: Options) {
   console.log("");
   console.log("AI SDK");
   console.log(`  @ai-sdk/openai-compatible: ${result.aiSdk.installed ? "installed" : "not installed"}`);
-
-  console.log("");
-  console.log("Authentication");
-  console.log(`  Legacy cursor-agent auth file: ${result.auth.legacyCursorAuthFile ? "found" : "not found"}`);
-  console.log(
-    `  Cursor SDK API key: ${result.auth.sdkApiKey ? `found via ${result.auth.sdkApiKeySource}` : "not configured"}`,
-  );
-
-  console.log("");
-  console.log("Runtime");
-  console.log(`  Backend preference: ${result.runtime.backend.preference}`);
-  console.log(`  Agent pool: ${result.runtime.agentPool.enabled ? "enabled" : "disabled"}`);
-  console.log(`  Agent pool idle: ${result.runtime.agentPool.idleMs}ms`);
-  console.log(`  Session resume: ${result.runtime.sessionResume.enabled ? "enabled" : "disabled"}`);
-  console.log(`  Log level: ${result.runtime.logging.level}`);
-  console.log(`  Console logging: ${result.runtime.logging.console ? "enabled" : "disabled"}`);
-  console.log(`  Log dir: ${result.runtime.logging.dir}`);
 }
 
 function commandDoctor(options: Options) {
