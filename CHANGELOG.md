@@ -9,10 +9,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **OpenCode 2 CLI:** `open-cursor install` runs `opencode plugin add @rama_nigg/open-cursor` on OpenCode 2.x instead of writing the 1.x `plugin/cursor-acp.js` file and `provider.cursor-acp` block, which 2.x loaded as a second copy and a stale model list. `open-cursor sync-models` writes nothing on 2.x, where the plugin discovers models on each start. `open-cursor status` reports the `plugins` entry and flags 1.x leftovers, dangling plugin links included. The CLI treats a config as 2.x when it lists the package under `plugins` or when the `opencode` on PATH is 2.x.
+
+## [2.5.16] - 2026-10-22
+
+### Fixed
+
 - **OpenCode 2 login:** **Log in with cursor-agent (browser)** is now an `oauth` method instead of a `command` method, so OpenCode Desktop offers it as well as the CLI and TUI. It connects at once when `cursor-agent` is already logged in; otherwise it runs `cursor-agent login` with `NO_OPEN_BROWSER` set and hands OpenCode Cursor's sign-in link. The stored credential is a marker labelled `cursor-agent (<email>)` instead of a placeholder API key; cursor-agent keeps owning and renewing the token. `scripts/cursor-agent-login.mjs` is removed.
 - **OpenCode 2 cold starts:** model discovery runs `cursor-agent models` without blocking. OpenCode 2 hosts plugins in its server process, so the old synchronous call (~2s) froze the server and could push a cold start past the 5-second plugin-activation limit (`Location plugins did not finish activating`).
 - **Two copies on OpenCode 2:** a 1.x `plugin/cursor-acp.js` left beside the 2.x `plugins` entry no longer sets up a second proxy for the same location; the extra copy logs a warning and stays idle (copies older than this release still run). `open-cursor doctor` flags the leftover file and no longer asks 2.x users for the 1.x provider block or AI SDK.
 - **Picker-only Cursor models:** models enabled in Cursor Settings → Models but omitted from `cursor-agent models` are merged into the OpenCode catalog. GLM 5.3 and GLM 5.3 Flash are `glm-5p3` and `glm-5p3-flash` (the dot is encoded as `p`); the dotted docs ids are rejected by `cursor-agent`.
+
+## [2.5.13] - 2026-10-15
+
+### Changed
+
+- Require Node >= 22.13 and `@cursor/sdk` >= 1.0.37 for the SDK backend. Select a Node runtime with `CURSOR_ACP_NODE_BIN`; CLI compatibility stays unchanged (#145).
+- Use a private proxy and prefer the SDK with a usable key on OpenCode 2.0; keep CLI-first selection on 1.x (#144).
+
+### Fixed
+
+- Preserve Windows workspace arguments through Cursor's launcher and isolate request credentials and workspaces (#144).
+- Cancel SDK runs when OpenCode takes over tools. Use short Windows SQLite paths and close stores after request cleanup (#142, #145). Thanks @mattcpenniman for the cancellation and Windows path fixes.
+
+### Known limitations
+
+- The SDK backend requires Node.js >= 22.13 in `PATH` or selected with `CURSOR_ACP_NODE_BIN`.
+
+## [2.5.10] - 2026-10-02
+
+### Fixed
+
+- **Issue #135 (OpenCode 2.0 `failed to load plugin … NpmInstallFailedError … ENOENT`):** OpenCode 2.0 installs plugin specifiers with npm and only resolves the package main export, so the documented `@rama_nigg/open-cursor/plugin/opencode2` subpath was treated as a local directory. The root default export now carries the stable 2.0 `setup()` (the catalog-era `ctx.catalog` preview module is removed); install with the bare package name under `plugins`. The 2.0 entry no longer consults the 1.x `plugin` array to decide whether to run — the host's `plugins` list is authoritative.
+
+## [2.5.9] - 2026-09-30
 
 ### Added
 
@@ -21,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - MCP servers come from OpenCode 2.0 itself; tools of servers that do not set `"codemode": true` join the direct catalog so Cursor can call them by name (`mcp__<server>__<tool>` maps to `<server>_<tool>`). The plugin's own MCP bridge is not used on 2.0.
   - Each Cursor request carries its session's workspace directory (`x-opencode-directory`), so a multi-project daemon runs Cursor in the right project.
   - Models are rediscovered with the connected Cursor key and again after `/connect` or a credential switch.
+
+## [2.4.7] - 2026-06-12
 
 ### BREAKING
 
@@ -36,26 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Issue #135 (OpenCode 2.0 `failed to load plugin … NpmInstallFailedError … ENOENT`):** OpenCode 2.0 installs plugin specifiers with npm and only resolves the package main export, so the documented `@rama_nigg/open-cursor/plugin/opencode2` subpath was treated as a local directory. The root default export now carries the stable 2.0 `setup()` (the catalog-era `ctx.catalog` preview module is removed); install with the bare package name under `plugins`. The 2.0 entry no longer consults the 1.x `plugin` array to decide whether to run — the host's `plugins` list is authoritative.
 - **Issue #76 (ECONNREFUSED on 127.0.0.1:32124):** the proxy failed to start because the plugin spawned the removed `cursor-agent` binary. The plugin now works without `cursor-agent` installed.
 - The system prompt no longer suggests an ambiguous `mcp` tool name; full tool names are listed explicitly, and a defensive guard logs any remaining bare `mcp` calls.
 
 ### Known limitations
 
 - Per-request latency is bound by `@cursor/sdk` itself (`Agent.create` + `send` take ~6s even standalone). Each request uses a fresh Agent by design: conversation state stays in OpenCode and is never persisted on Cursor's side.
-- The SDK backend requires Node.js >= 22.13 in `PATH` or selected with `CURSOR_ACP_NODE_BIN`.
-
-## [2.5.13] - 2026-10-15
-
-### Changed
-
-- Require Node >= 22.13 and `@cursor/sdk` >= 1.0.37 for the SDK backend. Select a Node runtime with `CURSOR_ACP_NODE_BIN`; CLI compatibility stays unchanged (#145).
-- Use a private proxy and prefer the SDK with a usable key on OpenCode 2.0; keep CLI-first selection on 1.x (#144).
-
-### Fixed
-
-- Preserve Windows workspace arguments through Cursor's launcher and isolate request credentials and workspaces (#144).
-- Cancel SDK runs when OpenCode takes over tools. Use short Windows SQLite paths and close stores after request cleanup (#142, #145). Thanks @mattcpenniman for the cancellation and Windows path fixes.
 
 ## [2.3.5] - 2026-02-17
 

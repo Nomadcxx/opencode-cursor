@@ -1,6 +1,6 @@
 // tests/unit/cli/opencode-cursor.test.ts
 import { describe, expect, it } from "bun:test";
-import { closeSync, mkdirSync, mkdtempSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +15,7 @@ import {
   summarizeModelSync,
   isCliEntrypoint,
   resolvePaths,
+  targetsOpenCode2,
 } from "../../../src/cli/opencode-cursor.js";
 
 describe("cli/opencode-cursor entrypoint", () => {
@@ -155,6 +156,71 @@ describe("cli/opencode-cursor doctor on OpenCode 2.x", () => {
     const check = doctorFor({ plugin: ["@rama_nigg/open-cursor"] }, false);
     expect(check("Provider config")?.passed).toBe(false);
   }, 10000);
+});
+
+describe("cli/opencode-cursor on OpenCode 2.x", () => {
+  it("targets 2.x from a plugins entry or a 2.x opencode on PATH", () => {
+    expect(targetsOpenCode2({ plugins: ["@rama_nigg/open-cursor"] }, () => undefined)).toBe(true);
+    expect(targetsOpenCode2({ plugin: ["cursor-acp"] }, () => 2)).toBe(true);
+    expect(targetsOpenCode2({ plugin: ["cursor-acp"] }, () => 1)).toBe(false);
+    expect(targetsOpenCode2({}, () => undefined)).toBe(false);
+  });
+
+  it("status reports the plugins entry and 1.x leftovers, dangling links included", () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-status2-"));
+    const configPath = join(dir, "opencode.json");
+    const pluginPath = join(dir, "cursor-acp.js");
+    writeFileSync(configPath, JSON.stringify({
+      plugins: ["@rama_nigg/open-cursor"],
+      provider: { "cursor-acp": { models: { auto: {} } } },
+    }));
+    symlinkSync(join(dir, "removed-by-npm-rm.js"), pluginPath);
+
+    try {
+      const result = getStatusResult(configPath, pluginPath);
+      expect(result.installMethod).toBe("opencode2");
+      expect(result.plugin.type).toBe("symlink");
+      expect(result.provider.enabled).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("install and sync-models leave the 1.x files alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "open-cursor-install2-"));
+    const bin = join(dir, "bin");
+    const callsPath = join(dir, "calls.log");
+    const configPath = join(dir, "opencode.json");
+    const pluginDir = join(dir, "plugin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "opencode"), [
+      "#!/bin/sh",
+      `echo "$@" >> "${callsPath}"`,
+      'if [ "$1" = "--version" ]; then echo "opencode v2.1.2"; fi',
+      "",
+    ].join("\n"), { mode: 0o755 });
+    const config = `${JSON.stringify({ plugin: ["cursor-acp"] })}\n`;
+    writeFileSync(configPath, config);
+    const run = (...args: string[]) =>
+      Bun.spawnSync(["bun", resolve("src/cli/opencode-cursor.ts"), ...args, "--config", configPath, "--plugin-dir", pluginDir], {
+        // bun test sets NODE_ENV=test, which keeps the CLI module from running main().
+        env: { ...process.env, NODE_ENV: "production", PATH: `${bin}:${process.env.PATH}` },
+      });
+
+    try {
+      const install = run("install");
+      expect(install.exitCode).toBe(0);
+      expect(readFileSync(callsPath, "utf8")).toContain("plugin add @rama_nigg/open-cursor");
+      expect(existsSync(pluginDir)).toBe(false);
+
+      const sync = run("sync-models");
+      expect(sync.exitCode).toBe(0);
+      expect(sync.stdout.toString()).toContain("opencode service restart");
+      expect(readFileSync(configPath, "utf8")).toBe(config);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30000);
 });
 
 describe("cli/opencode-cursor plugin symlink", () => {
