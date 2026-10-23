@@ -47,9 +47,10 @@ and the download can take longer than the 5 seconds OpenCode gives plugins to
 activate. If the first command fails with
 `Location plugins did not finish activating`, run it again.
 
-Do not run `open-cursor install` on OpenCode 2.x. It writes the 1.x plugin
-file `~/.config/opencode/plugin/cursor-acp.js`, which 2.x loads as a second
-copy. Delete that file if an earlier install left it behind.
+From 2.5.17, `open-cursor install` detects OpenCode 2.x and runs
+`opencode plugin add` for you. Older versions wrote the 1.x plugin file
+`~/.config/opencode/plugin/cursor-acp.js`, which 2.x loads as a second copy.
+Delete that file if an earlier install left it behind.
 
 See [Authentication](/docs/getting-started/authentication) for the login
 options and [Troubleshooting](/docs/getting-started/troubleshooting) if no

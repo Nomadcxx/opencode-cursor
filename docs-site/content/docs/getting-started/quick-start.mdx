@@ -59,9 +59,10 @@ open-cursor doctor
 sources, backend preference, session resume, agent pool, and logging settings.
 `doctor --deep` adds model and compact-variant checks.
 
-On OpenCode 2.x, `status` still describes the 1.x setup. Run `doctor`, through
-npx if you have no global install:
+On OpenCode 2.x, `status` shows the `plugins` entry and any 1.x leftovers
+(2.5.17 or later). Without a global install, run both through npx:
 
 ```bash
+npx -p @rama_nigg/open-cursor open-cursor status
 npx -p @rama_nigg/open-cursor open-cursor doctor
 ```
