@@ -8,6 +8,7 @@ import {
   type StreamJsonAssistantEvent,
 } from "../streaming/types.js";
 import type { OpenAiToolCall } from "./tool-loop.js";
+import { applyToolSchemaCompat } from "../provider/tool-schema-compat.js";
 import { createLogger } from "../utils/logger.js";
 
 const log = createLogger("proxy:bridge-json");
@@ -43,6 +44,13 @@ OpenCode owns the ${toolName} tool. Do not invoke Cursor's built-in Task tool; i
 Use this only when delegating through OpenCode. Otherwise answer normally.`;
 }
 
+function editBridgeContext(toolName: string): string {
+  return `SYSTEM: OpenCode edit bridge mode is active.
+For ${toolName} only, the envelope below overrides the earlier generic "standard OpenAI tool_call" instruction. To change part of an existing file through OpenCode, put one JSON object on its own line, with nothing after it:
+{"name":"edit","arguments":{"path":"relative/path","oldString":"exact text to replace","newString":"replacement text"}}
+oldString must match the file exactly, including whitespace, and appear once. To replace a whole file, use the write envelope instead.`;
+}
+
 type BridgePromptOptions = {
   allowedToolNames: Set<string>;
   env?: Record<string, string | undefined>;
@@ -50,14 +58,24 @@ type BridgePromptOptions = {
 
 export type BridgeStreamDecision =
   | { action: "buffer" }
-  | { action: "passthrough"; text?: string }
-  | { action: "tool_call"; toolCalls: OpenAiToolCall[] };
+  | { action: "passthrough"; text: string }
+  | { action: "tool_call"; toolCalls: OpenAiToolCall[]; text?: string };
 
+/**
+ * Splits streamed assistant text into prose and bridge envelopes. The detector
+ * owns the text it is fed: callers emit `text` and never the raw event, so text
+ * held while a line is being decided cannot leak through a cumulative snapshot.
+ * Every line start is checked, so an envelope after a sentence of prose still
+ * becomes a tool call (#114).
+ */
 export class BridgeJsonStreamDetector {
-  private state: "undecided" | "candidate" | "passthrough" = "undecided";
+  private state: "line-start" | "prose" | "candidate" = "line-start";
+  /** A line start still being decided, or the candidate envelope. */
   private buffer = "";
   /** True until a fenced candidate's info line is complete and accepted. */
   private fenceInfoPending = false;
+  /** Inside a non-JSON code fence, where lines starting with `{` are code. */
+  private inCodeFence = false;
   private readonly tracker = new MixedDeltaTracker();
   // Incremental bracket/string scan of the candidate. A parseable envelope must
   // end balanced and outside a string, so the full-buffer parse waits for that
@@ -68,104 +86,129 @@ export class BridgeJsonStreamDetector {
 
   constructor(
     private readonly allowedToolNames: Set<string>,
-    private readonly writeSchema?: unknown,
+    private readonly toolSchemaMap: Map<string, unknown> = new Map(),
   ) {}
 
   push(event: StreamJsonAssistantEvent): BridgeStreamDecision {
     const text = extractText(event);
     const delta = this.tracker.nextText(text, isPartialStreamDelta(event));
     if (!delta) {
-      return this.state === "passthrough"
-        ? { action: "passthrough" }
-        : { action: "buffer" };
-    }
-    if (this.state === "passthrough") {
-      return { action: "passthrough" };
-    }
-
-    const hadBufferedText = this.buffer.length > 0;
-    this.buffer += delta;
-
-    if (this.state === "undecided") {
-      const meaningful = this.buffer.trimStart();
-      if (!meaningful || /^(`{1,2}|\[\s*)$/.test(meaningful)) {
-        return { action: "buffer" };
-      }
-      // `[` alone is common prose (markdown links); only `[{` starts an envelope array.
-      if (/^(\{|```|\[\s*\{)/.test(meaningful)) {
-        this.state = "candidate";
-        this.fenceInfoPending = meaningful.startsWith("```");
-        this.scan(this.buffer);
-      } else {
-        const withheld = this.buffer;
-        this.buffer = "";
-        this.state = "passthrough";
-        return hadBufferedText
-          ? { action: "passthrough", text: withheld }
-          : { action: "passthrough" };
-      }
-    } else {
-      this.scan(delta);
-    }
-
-    if (this.fenceInfoPending) {
-      const trimmed = this.buffer.trimStart();
-      const infoLineEnd = trimmed.indexOf("\n", 3);
-      if (infoLineEnd < 0) {
-        return { action: "buffer" };
-      }
-      const info = trimmed.slice(3, infoLineEnd).trim();
-      if (info && info.toLowerCase() !== "json") {
-        return this.releaseBuffer();
-      }
-      this.fenceInfoPending = false;
-    }
-
-    if (this.depth !== 0 || this.inString) {
       return { action: "buffer" };
     }
-
-    const toolCalls = extractBridgeToolCallsFromText(
-      this.buffer,
-      this.allowedToolNames,
-      this.writeSchema,
-    );
-    if (toolCalls) {
-      this.buffer = "";
-      this.state = "passthrough";
-      return { action: "tool_call", toolCalls };
+    if (this.state === "candidate") {
+      this.buffer += delta;
+      this.scan(delta);
+      return this.decideCandidate("");
     }
-
-    if (containsCompleteJson(this.buffer)) {
-      return this.releaseBuffer();
-    }
-    return { action: "buffer" };
+    return this.pushProse(delta);
   }
 
   flush(): string {
-    if (this.state === "passthrough" || !this.buffer) {
-      return "";
-    }
     const text = this.buffer;
     this.buffer = "";
-    this.state = "passthrough";
+    this.state = text.endsWith("\n") ? "line-start" : "prose";
     return text;
   }
 
   reset(): void {
-    this.state = "undecided";
+    this.state = "line-start";
     this.buffer = "";
     this.fenceInfoPending = false;
+    this.inCodeFence = false;
     this.tracker.reset();
     this.depth = 0;
     this.inString = false;
     this.escaped = false;
   }
 
-  private releaseBuffer(): BridgeStreamDecision {
-    const text = this.buffer;
+  private pushProse(delta: string): BridgeStreamDecision {
+    let rest = this.buffer + delta;
     this.buffer = "";
-    this.state = "passthrough";
+    let out = "";
+    while (rest) {
+      if (this.state === "line-start") {
+        const meaningful = rest.trimStart();
+        if (!meaningful || /^(`{1,2}|\[\s*)$/.test(meaningful)) {
+          this.buffer = rest;
+          break;
+        }
+        if (this.inCodeFence) {
+          if (meaningful.startsWith("```")) {
+            this.inCodeFence = false;
+          }
+        } else if (/^(\{|```|\[\s*\{)/.test(meaningful)) {
+          // `[` alone is common prose (markdown links); only `[{` starts an envelope array.
+          this.state = "candidate";
+          this.buffer = rest;
+          this.fenceInfoPending = meaningful.startsWith("```");
+          this.depth = 0;
+          this.inString = false;
+          this.escaped = false;
+          this.scan(rest);
+          return this.decideCandidate(out);
+        }
+        this.state = "prose";
+      }
+      const newline = rest.indexOf("\n");
+      if (newline < 0) {
+        out += rest;
+        rest = "";
+      } else {
+        out += rest.slice(0, newline + 1);
+        rest = rest.slice(newline + 1);
+        this.state = "line-start";
+      }
+    }
+    return out ? { action: "passthrough", text: out } : { action: "buffer" };
+  }
+
+  private decideCandidate(prefix: string): BridgeStreamDecision {
+    if (this.fenceInfoPending) {
+      const trimmed = this.buffer.trimStart();
+      const infoLineEnd = trimmed.indexOf("\n", 3);
+      if (infoLineEnd < 0) {
+        return this.holding(prefix);
+      }
+      const info = trimmed.slice(3, infoLineEnd).trim();
+      if (info && info.toLowerCase() !== "json") {
+        this.inCodeFence = true;
+        return this.releaseBuffer(prefix);
+      }
+      this.fenceInfoPending = false;
+    }
+
+    if (this.depth !== 0 || this.inString) {
+      return this.holding(prefix);
+    }
+
+    const toolCalls = extractBridgeToolCallsFromText(
+      this.buffer,
+      this.allowedToolNames,
+      this.toolSchemaMap,
+    );
+    if (toolCalls) {
+      this.buffer = "";
+      this.state = "line-start";
+      return prefix ? { action: "tool_call", toolCalls, text: prefix } : { action: "tool_call", toolCalls };
+    }
+
+    // A balanced unfenced candidate that is not JSON never becomes JSON with more
+    // text, and holding it would stall the stream. A fenced one waits for its fence.
+    const fenced = this.buffer.trimStart().startsWith("```");
+    if (containsCompleteJson(this.buffer) || !fenced) {
+      return this.releaseBuffer(prefix);
+    }
+    return this.holding(prefix);
+  }
+
+  private holding(prefix: string): BridgeStreamDecision {
+    return prefix ? { action: "passthrough", text: prefix } : { action: "buffer" };
+  }
+
+  private releaseBuffer(prefix: string): BridgeStreamDecision {
+    const text = prefix + this.buffer;
+    this.buffer = "";
+    this.state = text.endsWith("\n") ? "line-start" : "prose";
     return { action: "passthrough", text };
   }
 
@@ -213,6 +256,11 @@ export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptio
   ) {
     result = result ? `${BRIDGE_JSON_CONTEXT}\n\n${result}` : BRIDGE_JSON_CONTEXT;
   }
+  const editToolName = resolveAllowedEditToolName(options.allowedToolNames);
+  if (editToolName && !result.includes("OpenCode edit bridge mode is active")) {
+    const context = editBridgeContext(editToolName);
+    result = result ? `${result}\n\n${context}` : context;
+  }
   const taskToolName = resolveTaskToolName(options.allowedToolNames);
   if (taskToolName && !result.includes("OpenCode Task bridge mode is active")) {
     const context = taskBridgeContext(taskToolName);
@@ -224,7 +272,7 @@ export function applyBridgeJsonPrompt(prompt: string, options: BridgePromptOptio
 export function extractBridgeToolCallsFromText(
   text: string,
   allowedToolNames: Set<string>,
-  writeSchema?: unknown,
+  toolSchemaMap: Map<string, unknown> = new Map(),
 ): OpenAiToolCall[] | null {
   const jsonText = extractStrictJsonText(text);
   if (!jsonText) {
@@ -241,11 +289,11 @@ export function extractBridgeToolCallsFromText(
   // Random, not content-derived: a retried identical envelope must not reuse earlier call ids.
   const id = `call_bridge_${randomUUID().replace(/-/g, "").slice(0, 12)}`;
   if (!Array.isArray(parsed)) {
-    const toolCall = buildBridgeToolCall(parsed, id, allowedToolNames, writeSchema);
+    const toolCall = buildBridgeToolCall(parsed, id, allowedToolNames, toolSchemaMap);
     return toolCall ? [toolCall] : null;
   }
   const toolCalls = parsed.map((entry, i) =>
-    buildBridgeToolCall(entry, `${id}_${i}`, allowedToolNames, writeSchema));
+    buildBridgeToolCall(entry, `${id}_${i}`, allowedToolNames, toolSchemaMap));
   if (toolCalls.length > 0 && toolCalls.every((call): call is OpenAiToolCall => call !== null)) {
     return toolCalls;
   }
@@ -262,7 +310,7 @@ function buildBridgeToolCall(
   parsed: unknown,
   id: string,
   allowedToolNames: Set<string>,
-  writeSchema: unknown,
+  toolSchemaMap: Map<string, unknown>,
 ): OpenAiToolCall | null {
   if (!isRecord(parsed) || !isRecord(parsed.arguments)) {
     return null;
@@ -271,6 +319,11 @@ function buildBridgeToolCall(
   if (parsed.name === "task" || parsed.name === "subagent") {
     const taskToolName = resolveTaskToolName(allowedToolNames);
     return taskToolName ? buildTaskToolCall(id, taskToolName, parsed.arguments) : null;
+  }
+
+  if (parsed.name === "edit") {
+    const editToolName = resolveAllowedEditToolName(allowedToolNames);
+    return editToolName ? buildEditToolCall(id, editToolName, parsed.arguments, toolSchemaMap) : null;
   }
 
   const writeToolName = resolveAllowedWriteToolName(allowedToolNames);
@@ -291,9 +344,27 @@ function buildBridgeToolCall(
     type: "function",
     function: {
       name: writeToolName,
-      arguments: JSON.stringify(buildWriteArguments(path, content, writeSchema)),
+      arguments: JSON.stringify(buildWriteArguments(path, content, toolSchemaMap.get(writeToolName))),
     },
   };
+}
+
+/**
+ * Models print `edit` envelopes in any argument dialect (`path`/`filePath`,
+ * `oldString`/`old_string`); the schema compat layer maps them onto the edit
+ * schema OpenCode advertised and rejects envelopes missing a required field.
+ */
+function buildEditToolCall(
+  id: string,
+  toolName: string,
+  rawArgs: Record<string, unknown>,
+  toolSchemaMap: Map<string, unknown>,
+): OpenAiToolCall | null {
+  const compat = applyToolSchemaCompat(
+    { id, type: "function", function: { name: toolName, arguments: JSON.stringify(rawArgs) } },
+    toolSchemaMap,
+  );
+  return compat.validation.ok ? compat.toolCall : null;
 }
 
 function buildTaskToolCall(
@@ -337,13 +408,13 @@ function buildTaskToolCall(
 export function extractBridgeToolCallsFromStreamOutput(
   output: string,
   allowedToolNames: Set<string>,
-  writeSchema?: unknown,
+  toolSchemaMap: Map<string, unknown> = new Map(),
 ): OpenAiToolCall[] | null {
   if (!output) {
     return null;
   }
 
-  const detector = new BridgeJsonStreamDetector(allowedToolNames, writeSchema);
+  const detector = new BridgeJsonStreamDetector(allowedToolNames, toolSchemaMap);
   for (const line of output.split("\n")) {
     const event = parseStreamJsonLine(line);
     if (!event) {
@@ -382,6 +453,16 @@ function resolveAllowedWriteToolName(allowedToolNames: Set<string>): string | nu
   }
   if (allowedToolNames.has("oc_write")) {
     return "oc_write";
+  }
+  return null;
+}
+
+function resolveAllowedEditToolName(allowedToolNames: Set<string>): string | null {
+  if (allowedToolNames.has("edit")) {
+    return "edit";
+  }
+  if (allowedToolNames.has("oc_edit")) {
+    return "oc_edit";
   }
   return null;
 }

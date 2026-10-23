@@ -289,7 +289,8 @@ describe("proxy/bridge-json", () => {
     expect(toolCall?.function.arguments).toBe('{"path":"demo.txt","content":"after read"}');
   });
 
-  it("does not extract trailing bridge JSON after ordinary prose", () => {
+  // #114: models usually write a sentence before the envelope.
+  it("extracts a bridge envelope on its own line after prose", () => {
     const output = JSON.stringify({
       type: "assistant",
       message: {
@@ -307,6 +308,16 @@ describe("proxy/bridge-json", () => {
     });
 
     const toolCall = extractBridgeToolCallFromStreamOutput(output, new Set(["write"]));
+
+    expect(toolCall?.function.name).toBe("write");
+    expect(JSON.parse(toolCall?.function.arguments ?? "{}")).toEqual({ path: "demo.txt", content: "after prose" });
+  });
+
+  it("does not extract an envelope that shares a line with prose", () => {
+    const toolCall = extractBridgeToolCallFromText(
+      'Use {"name":"write","arguments":{"path":"demo.txt","content":"x"}} to write.',
+      new Set(["write"]),
+    );
 
     expect(toolCall).toBeNull();
   });
@@ -343,14 +354,14 @@ describe("proxy/bridge-json", () => {
     const toolCall = extractBridgeToolCallFromText(
       '{"name":"write","arguments":{"path":"demo.txt","content":"hello"}}',
       new Set(["write"]),
-      {
+      new Map([["write", {
         type: "object",
         properties: {
           filePath: { type: "string" },
           content: { type: "string" },
         },
         required: ["filePath", "content"],
-      },
+      }]]),
     );
 
     expect(toolCall?.function.name).toBe("write");
@@ -361,14 +372,14 @@ describe("proxy/bridge-json", () => {
     const toolCall = extractBridgeToolCallFromText(
       '{"name":"write","arguments":{"path":"demo.txt","content":"hello"}}',
       new Set(["oc_write"]),
-      {
+      new Map([["oc_write", {
         type: "object",
         properties: {
           path: { type: "string" },
           content: { type: "string" },
         },
         required: ["path", "content"],
-      },
+      }]]),
     );
 
     expect(toolCall?.function.name).toBe("oc_write");
@@ -476,7 +487,7 @@ describe("proxy/bridge-json", () => {
     it("passes ordinary text through immediately", () => {
       const detector = new BridgeJsonStreamDetector(new Set(["task"]));
 
-      expect(detector.push(delta("Ordinary answer."))).toEqual({ action: "passthrough" });
+      expect(detector.push(delta("Ordinary answer."))).toEqual({ action: "passthrough", text: "Ordinary answer." });
     });
 
     it("deduplicates cumulative snapshots", () => {
@@ -517,7 +528,7 @@ describe("proxy/bridge-json", () => {
 
       expect(detector.push(delta("{incomplete"))).toEqual({ action: "buffer" });
       detector.reset();
-      expect(detector.push(delta("later answer"))).toEqual({ action: "passthrough" });
+      expect(detector.push(delta("later answer"))).toEqual({ action: "passthrough", text: "later answer" });
       expect(detector.flush()).toBe("");
     });
 
@@ -529,7 +540,7 @@ describe("proxy/bridge-json", () => {
         action: "passthrough",
         text: "```python\n",
       });
-      expect(detector.push(delta("print('ok')\n```"))).toEqual({ action: "passthrough" });
+      expect(detector.push(delta("print('ok')\n```"))).toEqual({ action: "passthrough", text: "print('ok')\n```" });
       expect(detector.flush()).toBe("");
     });
 
@@ -543,12 +554,12 @@ describe("proxy/bridge-json", () => {
       expect(detector.flush()).toBe("");
     });
 
-    it("buffers JSON followed by prose and flushes it verbatim", () => {
+    // Holding it would stall the stream: more text cannot turn it into JSON.
+    it("releases balanced non-JSON at once", () => {
       const detector = new BridgeJsonStreamDetector(new Set(["task"]));
       const response = '{"answer":42} followed by prose';
 
-      expect(detector.push(delta(response))).toEqual({ action: "buffer" });
-      expect(detector.flush()).toBe(response);
+      expect(detector.push(delta(response))).toEqual({ action: "passthrough", text: response });
       expect(detector.flush()).toBe("");
     });
 
@@ -602,6 +613,96 @@ describe("proxy/bridge-json", () => {
         });
       }
       expect(detector.push(delta("```")).action).toBe("tool_call");
+    });
+  });
+
+  // #114: the reported failure, an edit envelope printed after a sentence of prose.
+  describe("edit envelopes", () => {
+    const EDIT_SCHEMA = new Map<string, unknown>([["edit", {
+      type: "object",
+      properties: {
+        filePath: { type: "string" },
+        oldString: { type: "string" },
+        newString: { type: "string" },
+        replaceAll: { type: "boolean" },
+      },
+      required: ["filePath", "oldString", "newString"],
+      additionalProperties: false,
+    }]]);
+    const EDIT_JSON = '{"name":"edit","arguments":{"path":"notes.txt","oldString":"beta","newString":"BETA-EDITED"}}';
+
+    it("maps an edit envelope onto the offered edit schema", () => {
+      const toolCall = extractBridgeToolCallFromText(EDIT_JSON, new Set(["edit"]), EDIT_SCHEMA);
+
+      expect(toolCall?.function.name).toBe("edit");
+      expect(JSON.parse(toolCall?.function.arguments ?? "{}")).toEqual({
+        filePath: "notes.txt",
+        oldString: "beta",
+        newString: "BETA-EDITED",
+      });
+    });
+
+    it("rejects an edit envelope missing a required field", () => {
+      const toolCall = extractBridgeToolCallFromText(
+        '{"name":"edit","arguments":{"path":"notes.txt","newString":"BETA-EDITED"}}',
+        new Set(["edit"]),
+        EDIT_SCHEMA,
+      );
+
+      expect(toolCall).toBeNull();
+    });
+
+    it("ignores edit envelopes when no edit tool is offered", () => {
+      expect(extractBridgeToolCallFromText(EDIT_JSON, new Set(["write"]), EDIT_SCHEMA)).toBeNull();
+    });
+
+    it("streams the prose, then turns the envelope into a tool call", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["edit"]), EDIT_SCHEMA);
+
+      expect(detector.push(delta("Need `notes.txt` first. One line change only.\n"))).toEqual({
+        action: "passthrough",
+        text: "Need `notes.txt` first. One line change only.\n",
+      });
+      expect(detector.push(delta(EDIT_JSON.slice(0, 30)))).toEqual({ action: "buffer" });
+      const decision = detector.push(delta(EDIT_JSON.slice(30)));
+      expect(decision.action).toBe("tool_call");
+      expect(decision.action === "tool_call" && decision.text).toBeFalsy();
+    });
+
+    it("returns prose and the tool call together when one delta holds both", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["edit"]), EDIT_SCHEMA);
+      const decision = detector.push(delta(`Replacing the line.\n${EDIT_JSON}`));
+
+      expect(decision.action).toBe("tool_call");
+      expect(decision.action === "tool_call" && decision.text).toBe("Replacing the line.\n");
+    });
+
+    it("works the same from cumulative snapshots", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["edit"]), EDIT_SCHEMA);
+      const full = `Replacing the line.\n${EDIT_JSON}`;
+
+      expect(detector.push(snapshot("Replacing the line.\n"))).toEqual({ action: "passthrough", text: "Replacing the line.\n" });
+      expect(detector.push(snapshot(full)).action).toBe("tool_call");
+    });
+
+    it("leaves lines starting with { inside a code fence as text", () => {
+      const detector = new BridgeJsonStreamDetector(new Set(["edit"]), EDIT_SCHEMA);
+      const code = "```ts\n{\n  const x = 1;\n}\n```\n";
+
+      const emitted: string[] = [];
+      for (const ch of code) {
+        const decision = detector.push(delta(ch));
+        if (decision.action === "passthrough") emitted.push(decision.text);
+        expect(decision.action).not.toBe("tool_call");
+      }
+      expect(emitted.join("") + detector.flush()).toBe(code);
+    });
+
+    it("adds the edit envelope to the bridge prompt only when edit is offered", () => {
+      expect(applyBridgeJsonPrompt("USER: x", { allowedToolNames: new Set(["edit", "write"]), env: {} }))
+        .toContain('{"name":"edit","arguments":{"path"');
+      expect(applyBridgeJsonPrompt("USER: x", { allowedToolNames: new Set(["write"]), env: {} }))
+        .not.toContain('"name":"edit"');
     });
   });
 });

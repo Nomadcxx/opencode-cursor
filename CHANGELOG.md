@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **OpenCode 2 CLI:** `open-cursor install` runs `opencode plugin add @rama_nigg/open-cursor` on OpenCode 2.x instead of writing the 1.x `plugin/cursor-acp.js` file and `provider.cursor-acp` block, which 2.x loaded as a second copy and a stale model list. `open-cursor sync-models` writes nothing on 2.x, where the plugin discovers models on each start. `open-cursor status` reports the `plugins` entry and flags 1.x leftovers, dangling plugin links included. The CLI treats a config as 2.x when it lists the package under `plugins` or when the `opencode` on PATH is 2.x.
+- **Edit envelopes (#114):** a model answering a change with `{"name":"edit","arguments":{...}}` printed it as text and nothing ran, most often after a sentence of prose. Bridge mode now accepts `edit` envelopes, mapping `path`/`oldString`/`newString` onto the edit schema OpenCode offers, and checks every line start, so an envelope after prose still becomes a tool call. Lines starting with `{` inside a non-JSON code fence stay text.
+- **Short files overwritten (#114):** Cursor's native edit sends the changed lines plus context as `streamContent`, and on files under five lines the reroute to `write` replaced the whole file with that fragment. Any line loss on a short file now skips the reroute and leaves Cursor's own edit in place. The legacy provider boundary now runs the same check.
 
 ## [2.5.16] - 2026-10-22
 
