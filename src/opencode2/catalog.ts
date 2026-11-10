@@ -38,7 +38,7 @@ export function discoveredModelToInfo(model: DiscoveredModel): ModelInfo2 {
       output: ["text"],
     },
     limit: {
-      context: DEFAULT_CONTEXT,
+      context: model.contextWindow ?? DEFAULT_CONTEXT,
       output: DEFAULT_OUTPUT,
     },
     variants: [],

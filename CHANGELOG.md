@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Context windows:** OpenCode 2 model entries report the window Cursor's picker catalog gives them (`300k` for Claude Opus 5, `1m` for GLM 5.2, `1048576` for Kimi K3) instead of a flat 200k, so the context gauge and auto-compaction match the model. Ids the catalog does not know keep the 200k default, and the extended Max Mode window is still not requested.
+
 ## [2.5.17] - 2026-10-23
 
 ### Fixed

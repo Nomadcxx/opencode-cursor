@@ -34,6 +34,8 @@ export type IdeCatalogModel = {
   defaultOn?: boolean;
   legacySlugs?: string[];
   variants?: IdeCatalogVariant[];
+  /** Window the model runs with when no `context` parameter is selected. */
+  contextTokenLimit?: number;
 };
 
 export type IdeCatalog = {
@@ -231,12 +233,61 @@ export function readCursorIdeCatalog(deps: ReadIdeCatalogDeps = {}): IdeCatalog 
   }
 }
 
+/**
+ * `1m` / `272k` / `256k` → tokens. Cursor keeps the picker's `context`
+ * parameter in these units; an unparsable value falls back to the model limit.
+ */
+export function parseContextSize(value: string | undefined): number | undefined {
+  const match = /^(\d+(?:\.\d+)?)\s*([km])?$/i.exec((value ?? "").trim());
+  if (!match) return undefined;
+  const unit = match[2]?.toLowerCase();
+  const scale = unit === "m" ? 1_000_000 : unit === "k" ? 1_000 : 1;
+  return Math.round(Number(match[1]) * scale);
+}
+
+function catalogIds(model: IdeCatalogModel): string[] {
+  const ids = new Set<string>(selectableIds(model));
+  if (model.name) ids.add(model.name);
+  if (model.serverModelName) ids.add(model.serverModelName);
+  return [...ids];
+}
+
+/**
+ * Window a model id actually runs with: the variant's selected `context`
+ * parameter when it has one, else the family's limit. `undefined` when the
+ * catalog does not know the id, so the caller keeps its own default.
+ */
+export function contextWindowForId(
+  id: string,
+  catalog: IdeCatalog | null | undefined,
+): number | undefined {
+  for (const model of catalog?.availableDefaultModels2 ?? []) {
+    if (!catalogIds(model).includes(id)) continue;
+    const variant = model.variants?.find((entry) => entry.legacySlug === id);
+    const selected = variant?.parameterValues?.find((parameter) => parameter.id === "context")?.value;
+    return parseContextSize(selected) ?? model.contextTokenLimit;
+  }
+  return undefined;
+}
+
+export function withContextWindows(
+  models: readonly DiscoveredModel[],
+  catalog: IdeCatalog | null | undefined,
+): DiscoveredModel[] {
+  if (!catalog?.availableDefaultModels2?.length) return [...models];
+  return models.map((model) => {
+    const contextWindow = contextWindowForId(model.id, catalog);
+    return contextWindow ? { ...model, contextWindow } : model;
+  });
+}
+
 export function appendIdeEnabledModels(
   models: readonly DiscoveredModel[],
   readCatalog: () => IdeCatalog | null = readCursorIdeCatalog,
 ): DiscoveredModel[] {
   try {
-    return mergeIdeEnabledModels(models, readCatalog());
+    const catalog = readCatalog();
+    return withContextWindows(mergeIdeEnabledModels(models, catalog), catalog);
   } catch {
     return [...models];
   }

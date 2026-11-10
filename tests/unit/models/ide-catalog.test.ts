@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
   appendIdeEnabledModels,
+  contextWindowForId,
   cursorStateDbPath,
   mergeIdeEnabledModels,
+  parseContextSize,
   readCursorIdeCatalog,
+  withContextWindows,
   type IdeCatalog,
 } from "../../../src/models/ide-catalog.js";
 
@@ -160,5 +163,66 @@ describe("models/ide-catalog", () => {
     expect(cursorStateDbPath("win32", "C:\\Users\\ada", { APPDATA: "C:\\Users\\ada\\AppData\\Roaming" })).toBe(
       "C:\\Users\\ada\\AppData\\Roaming\\Cursor\\User\\globalStorage\\state.vscdb",
     );
+  });
+
+  it("parses the picker's context sizes", () => {
+    expect(parseContextSize("1m")).toBe(1_000_000);
+    expect(parseContextSize("500k")).toBe(500_000);
+    expect(parseContextSize("272K")).toBe(272_000);
+    expect(parseContextSize(" 200k ")).toBe(200_000);
+    expect(parseContextSize("200000")).toBe(200_000);
+    expect(parseContextSize("")).toBeUndefined();
+    expect(parseContextSize("huge")).toBeUndefined();
+  });
+
+  it("reads the window a model id runs with", () => {
+    const catalog: IdeCatalog = {
+      availableDefaultModels2: [
+        {
+          name: "grok-4.7",
+          serverModelName: "grok-4.7",
+          contextTokenLimit: 256_000,
+          variants: [
+            { legacySlug: "grok-4.7-low", parameterValues: [{ id: "context", value: "256k" }] },
+            { legacySlug: "grok-4.7-500k", parameterValues: [{ id: "context", value: "500k" }] },
+          ],
+        },
+        {
+          name: "claude-opus-5",
+          serverModelName: "claude-opus-5",
+          contextTokenLimit: 300_000,
+          variants: [{ legacySlug: "claude-opus-5-high" }],
+        },
+      ],
+    };
+
+    expect(contextWindowForId("grok-4.7-low", catalog)).toBe(256_000);
+    expect(contextWindowForId("grok-4.7-500k", catalog)).toBe(500_000);
+    expect(contextWindowForId("claude-opus-5-high", catalog)).toBe(300_000);
+    expect(contextWindowForId("claude-opus-5", catalog)).toBe(300_000);
+    expect(contextWindowForId("auto", catalog)).toBeUndefined();
+    expect(contextWindowForId("auto", null)).toBeUndefined();
+  });
+
+  it("annotates discovered models with the catalog's real windows", () => {
+    const catalog: IdeCatalog = {
+      availableDefaultModels2: [
+        {
+          name: "claude-opus-5",
+          serverModelName: "claude-opus-5",
+          contextTokenLimit: 300_000,
+          legacySlugs: ["claude-opus-5-high"],
+        },
+      ],
+      aiSettings: { modelOverrideEnabled: ["claude-opus-5"], modelOverrideDisabled: [] },
+    };
+
+    expect(withContextWindows([{ id: "claude-opus-5-high", name: "Opus 5" }, { id: "auto", name: "Auto" }], catalog)).toEqual([
+      { id: "claude-opus-5-high", name: "Opus 5", contextWindow: 300_000 },
+      { id: "auto", name: "Auto" },
+    ]);
+
+    const merged = appendIdeEnabledModels([{ id: "auto", name: "Auto" }], () => catalog);
+    expect(merged.find((model) => model.id === "auto")?.contextWindow).toBeUndefined();
   });
 });
