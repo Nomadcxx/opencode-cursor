@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.19] - 2026-11-11
+
 ### Fixed
 
 - **Credit-billed models:** on Cursor's new plans, Claude, GPT, Gemini, GLM, Kimi and other third-party models bill from prepaid credits, and `cursor-agent models` lists them whether or not the account has any. Picking one with no credits printed Cursor's raw `ActionRequiredError`. open-cursor now says the model bills from prepaid credits, links the top-up page, and suggests a Grok or Composer model.
