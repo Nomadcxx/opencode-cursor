@@ -123,6 +123,7 @@ export function checkCursorAgent(): CheckResult {
     const [command, args] = buildCursorAgentSpawnCommand(resolveCursorAgentBinary(), ["--version"]);
     const result = spawn.sync(command, args, {
       encoding: "utf8",
+      windowsHide: true,
     });
     if (result.error || result.status !== 0) throw result.error ?? new Error(String(result.stderr));
     const output = String(result.stdout).trim();
@@ -146,6 +147,7 @@ export function checkCursorAgentLogin(): CheckResult {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 3000,
+      windowsHide: true,
     });
     if (result.error || result.status !== 0) throw result.error ?? new Error(String(result.stderr));
     return { name: "cursor-agent login", passed: true, message: "logged in" };

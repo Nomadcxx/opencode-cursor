@@ -106,7 +106,7 @@ import {
   type CursorRuntimeBackend,
 } from "./provider/backend.js";
 import { resolveCursorAgentBinary } from "./utils/binary.js";
-import { buildCursorAgentSpawnCommand } from "./utils/cursor-agent-command.mjs";
+import { buildCursorAgentSpawnCommand, killCursorAgentTree } from "./utils/cursor-agent-command.mjs";
 
 const log = createLogger("plugin");
 
@@ -251,6 +251,7 @@ function isCursorAgentAvailable(): boolean {
   const result = spawn.sync(command, args, {
     stdio: "ignore",
     timeout: 1000,
+    windowsHide: true,
   });
   const error = result.error as NodeJS.ErrnoException | undefined;
 
@@ -631,6 +632,7 @@ function createCursorAgentBunChild(
     stdout: "pipe",
     stderr: "pipe",
     env: bunAny.Bun.env,
+    windowsHide: true,
   });
 
   child.stdin.write(prompt);
@@ -680,6 +682,7 @@ function createCursorAgentNodeChild(
   const [command, args] = buildCursorAgentSpawnCommand(cmd[0], cmd.slice(1));
   const child = spawn(command, args, {
     stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
   });
 
   child.stdin.write(prompt);
@@ -1648,7 +1651,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
               enqueueSse(formatSseDone());
               streamTerminated = true;
               try {
-                child.kill();
+                killCursorAgentTree(child);
               } catch {
                 // ignore
               }
@@ -1698,7 +1701,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
               enqueueSse(formatSseDone());
               streamTerminated = true;
               try {
-                child.kill();
+                killCursorAgentTree(child);
               } catch {
                 // ignore
               }
@@ -1780,7 +1783,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
                       // Silent termination: just end the stream without an error message
                       enqueueSse(formatSseDone());
                       streamTerminated = true;
-                      try { child.kill(); } catch { /* ignore */ }
+                      try { killCursorAgentTree(child); } catch { /* ignore */ }
                     }
                     break;
                   }
@@ -1868,7 +1871,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
                   } else {
                     enqueueSse(formatSseDone());
                     streamTerminated = true;
-                    try { child.kill(); } catch { /* ignore */ }
+                    try { killCursorAgentTree(child); } catch { /* ignore */ }
                   }
                   break;
                 }
@@ -2331,7 +2334,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
           streamTerminated = true;
           res.end();
           try {
-            child.kill();
+            killCursorAgentTree(child);
           } catch {
             // ignore
           }
@@ -2346,7 +2349,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
           streamTerminated = true;
           res.end();
           try {
-            child.kill();
+            killCursorAgentTree(child);
           } catch {
             // ignore
           }
@@ -2459,7 +2462,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
                   emitTerminalAssistantErrorAndTerminate(result.terminate.message);
                 } else {
                   streamTerminated = true;
-                  try { child.kill(); } catch { /* ignore */ }
+                  try { killCursorAgentTree(child); } catch { /* ignore */ }
                 }
                 break;
               }

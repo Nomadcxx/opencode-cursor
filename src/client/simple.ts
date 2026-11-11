@@ -8,7 +8,7 @@ import {
 } from '../streaming/types.js';
 import { createLogger } from '../utils/logger.js';
 import { resolveCursorAgentBinary } from '../utils/binary.js';
-import { buildCursorAgentSpawnCommand } from '../utils/cursor-agent-command.mjs';
+import { buildCursorAgentSpawnCommand, killCursorAgentTree } from '../utils/cursor-agent-command.mjs';
 
 export interface CursorClientConfig {
   timeout?: number;
@@ -83,6 +83,7 @@ export class SimpleCursorClient {
     const child = spawn(command, spawnArgs, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
 
     if (prompt) {
@@ -102,7 +103,7 @@ export class SimpleCursorClient {
 
     // Add timeout
     const timeoutId = setTimeout(() => {
-      child.kill('SIGTERM');
+      killCursorAgentTree(child, 'SIGTERM');
       processError = new Error(`Timeout after ${this.config.timeout}ms`);
     }, this.config.timeout);
 
@@ -196,6 +197,7 @@ export class SimpleCursorClient {
       const child = spawn(command, spawnArgs, {
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
       });
 
       let stdoutBuffer = '';
@@ -207,7 +209,7 @@ export class SimpleCursorClient {
       }
 
       const timeout = setTimeout(() => {
-        child.kill('SIGTERM');
+        killCursorAgentTree(child, 'SIGTERM');
         reject(new Error(`Timeout after ${this.config.timeout}ms`));
       }, this.config.timeout);
 

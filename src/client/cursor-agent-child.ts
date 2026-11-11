@@ -15,6 +15,7 @@ import { dirname, resolve } from "node:path";
 import { createLogger } from "../utils/logger.js";
 import { resolveCursorAgentBinary, resolveCursorAgentBinaryStrict } from "../utils/binary.js";
 import { BinaryNotFoundError } from "../utils/errors.js";
+import { killCursorAgentTree } from "../utils/cursor-agent-command.mjs";
 import { extractEventJson, createSdkNodeChild, SdkNodeChild } from "./sdk-child.js";
 
 const log = createLogger("cursor-agent-child");
@@ -155,6 +156,7 @@ class CursorAgentPoolRunner {
 
     this.runnerProcess = spawn(nodeBin, [runnerPath], {
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
 
     this.runnerProcess.stdout?.on("data", (chunk) => {
@@ -295,11 +297,8 @@ class CursorAgentPoolRunner {
 
   kill(): void {
     if (this.runnerProcess) {
-      try {
-        this.runnerProcess.kill("SIGKILL");
-      } catch {
-        // ignore
-      }
+      // Takes the runner's active cursor-agent with it on Windows.
+      killCursorAgentTree(this.runnerProcess, "SIGKILL");
       this.runnerProcess = null;
     }
     // Settle in-flight requests so their callers reject instead of hanging;

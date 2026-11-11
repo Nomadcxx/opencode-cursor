@@ -14,7 +14,7 @@
  */
 
 import spawn from "cross-spawn";
-import { buildCursorAgentSpawnCommand } from "../src/utils/cursor-agent-command.mjs";
+import { buildCursorAgentSpawnCommand, killCursorAgentTree } from "../src/utils/cursor-agent-command.mjs";
 import { pathToFileURL } from "node:url";
 
 const RESUME_CHAT_ID_SAFE_RE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
@@ -96,6 +96,7 @@ async function handleRequest(request) {
     const [command, spawnArgs] = buildCursorAgentSpawnCommand(binary, args);
     const child = spawn(command, spawnArgs, {
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
     currentRequest = id;
     currentChild = child;
@@ -197,7 +198,7 @@ async function main() {
   const cancelRequest = (id) => {
     if (id && id === currentRequest && currentChild) {
       try {
-        currentChild.kill("SIGKILL");
+        killCursorAgentTree(currentChild, "SIGKILL");
       } catch (err) {
         console.error(`[cursor-agent-runner] cancel kill failed for ${id}: ${err.message}`);
       }

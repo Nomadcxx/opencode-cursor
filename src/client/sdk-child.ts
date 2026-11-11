@@ -201,6 +201,7 @@ class SdkRunnerSingleton {
     const runner = spawn(nodeBin, [runnerPath], {
       env: { ...process.env, CURSOR_API_KEY: apiKey },
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
     this.runnerProcess = runner;
     this.lineBuffer = "";

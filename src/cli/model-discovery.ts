@@ -51,6 +51,7 @@ export function discoverModelsFromCursorAgent(deps: DiscoverDeps = {}): Discover
   const [command, args] = buildCursorAgentSpawnCommand(resolveBinary(), ["models"], { platform });
   const result = exec(command, args, {
     encoding: "utf8",
+    windowsHide: true,
     ...(platform !== "win32" && { killSignal: "SIGTERM" as const }),
     stdio: ["ignore", "pipe", "pipe"],
     timeout: MODEL_DISCOVERY_TIMEOUT_MS,

@@ -1,6 +1,6 @@
 import spawn from "cross-spawn";
 import { resolveCursorAgentBinary } from "./binary.js";
-import { buildCursorAgentSpawnCommand } from "./cursor-agent-command.mjs";
+import { buildCursorAgentSpawnCommand, killCursorAgentTree } from "./cursor-agent-command.mjs";
 
 export type CursorAgentRunDeps = {
   platform?: NodeJS.Platform;
@@ -25,7 +25,7 @@ export function runCursorAgent(args: string[], deps: CursorAgentRunDeps = {}): P
 
   return new Promise((resolve, reject) => {
     const [command, commandArgs] = buildCursorAgentSpawnCommand(resolveBinary(), args, { platform });
-    const child = run(command, commandArgs, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = run(command, commandArgs, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -37,7 +37,7 @@ export function runCursorAgent(args: string[], deps: CursorAgentRunDeps = {}): P
     };
     const timer = setTimeout(() => {
       settle(() => reject(new Error(`cursor-agent ${args[0]} timed out after ${timeoutMs}ms`)));
-      child.kill("SIGTERM");
+      killCursorAgentTree(child, "SIGTERM", { platform });
     }, timeoutMs);
 
     child.stdout?.setEncoding("utf8");

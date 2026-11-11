@@ -1,6 +1,6 @@
 import spawn from "cross-spawn";
 import { resolveCursorAgentBinary } from "../utils/binary.js";
-import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs";
+import { buildCursorAgentSpawnCommand, killCursorAgentTree } from "../utils/cursor-agent-command.mjs";
 import { runCursorAgent, type CursorAgentRunDeps } from "../utils/cursor-agent-run.js";
 import type { CredentialOAuth, IntegrationOAuthAuthorization } from "./types.js";
 
@@ -28,6 +28,7 @@ const INSTALL_URL = "https://cursor.com/cli";
 export type CursorAgentStatus = { authenticated: boolean; email?: string };
 
 type LoginChild = {
+  pid?: number;
   stdout: NodeJS.ReadableStream | null;
   stderr: NodeJS.ReadableStream | null;
   kill(signal?: NodeJS.Signals): boolean;
@@ -61,6 +62,7 @@ function startCursorAgentLogin(): LoginChild {
   return spawn(command, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, NO_OPEN_BROWSER: "1" },
+    windowsHide: true,
   });
 }
 
@@ -128,7 +130,7 @@ export function createCursorAgentLogin(deps: CursorAgentLoginDeps = {}): CursorA
           resolveDone();
           return;
         }
-        child.kill("SIGTERM");
+        killCursorAgentTree(child, "SIGTERM");
         rejectLink(error); // no-op once the link was handed over
         rejectDone(error);
       };
