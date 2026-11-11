@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Credit-billed models:** on Cursor's new plans, Claude, GPT, Gemini, GLM, Kimi and other third-party models bill from prepaid credits, and `cursor-agent models` lists them whether or not the account has any. Picking one with no credits printed Cursor's raw `ActionRequiredError`. open-cursor now says the model bills from prepaid credits, links the top-up page, and suggests a Grok or Composer model.
+- **Hidden PowerShell prompts (#161):** the Windows launcher now runs PowerShell with `-NonInteractive`. With its window hidden since 2.5.18, a prompt from the launcher would otherwise wait forever where nobody could answer it.
+
+### Added
+
+- **Plan in `doctor`:** `open-cursor doctor` reads the tier from `cursor-agent about` and says which models it covers: Grok and Composer only on Free and Plus, prepaid credits for third-party models on Premium and Super, included usage on legacy Pro and Pro+.
+
+### Documentation
+
+- **Models and Cursor plans:** the README explains what each Cursor plan can run, why the picker lists models a plan cannot use, and the coming removal of OpenAI models. The setup check uses `cursor-acp/composer-2.5`, which every plan has, instead of `auto`, which Plus lacks.
+
 ## [2.5.18] - 2026-11-11
 
 ### Fixed

@@ -5,7 +5,9 @@ import { win32 } from "node:path";
 /**
  * Bypass Cursor's batch launcher: its delayed expansion changes ! in argv.
  * Spawn the result with `windowsHide: true`: a console-less parent (OpenCode
- * run as a service) otherwise opens a visible window per call.
+ * run as a service) otherwise opens a visible window per call. With the window
+ * hidden nobody can answer a prompt, so PowerShell runs `-NonInteractive` and
+ * fails instead of waiting forever.
  * @param {string} command
  * @param {string[]} args
  * @param {{platform?: NodeJS.Platform, env?: Record<string, string | undefined>, existsSync?: (path: string) => boolean}} deps
@@ -19,7 +21,7 @@ export function buildCursorAgentSpawnCommand(command, args, deps = {}) {
     const script = command.replace(/\.cmd$/i, ".ps1");
     if (exists(script)) {
       const powershell = win32.join(env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-      return [powershell, ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script, ...args]];
+      return [powershell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, ...args]];
     }
   }
   return [command, args];

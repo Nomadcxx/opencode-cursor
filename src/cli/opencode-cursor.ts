@@ -22,6 +22,7 @@ import {
 } from "./model-discovery.js";
 import spawn from "cross-spawn";
 import { resolveCursorAgentBinary } from "../utils/binary.js";
+import { stripAnsi } from "../utils/errors.js";
 import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs";
 import { getPossibleAuthPaths, isUsableSdkApiKey } from "../auth.js";
 import { parseCursorBackendPreference } from "../provider/backend.js";
@@ -158,6 +159,44 @@ export function checkCursorAgentLogin(): CheckResult {
       message: "not logged in - run: cursor-agent login",
       warning: true,
     };
+  }
+}
+
+// Tier names `cursor-agent about` prints. "Ultra" names both a legacy and an
+// X Subscription plan, so it gets no note.
+const POOL_ONLY_TIERS = new Set(["free", "plus"]);
+const CREDIT_TIERS = new Set(["premium", "super"]);
+const LEGACY_TIERS = new Set(["hobby", "pro", "pro+", "teams"]);
+
+/** The Cursor plan line for doctor, or null when `cursor-agent about` names no tier. */
+export function describeCursorPlan(aboutOutput: string): CheckResult | null {
+  const tier = aboutOutput.match(/^\s*Subscription Tier\s+(.+?)\s*$/m)?.[1];
+  if (!tier) return null;
+  const key = tier.toLowerCase();
+  let message = tier;
+  if (POOL_ONLY_TIERS.has(key)) {
+    message += " - Grok and Composer only; other models are not on this plan";
+  } else if (CREDIT_TIERS.has(key)) {
+    message += " - Grok and Composer use weekly usage; other models bill from prepaid credits (grok.com/dashboard/billing)";
+  } else if (LEGACY_TIERS.has(key)) {
+    message += " - legacy plan with included third-party usage";
+  }
+  return { name: "Cursor plan", passed: true, message };
+}
+
+export function checkCursorPlan(): CheckResult | null {
+  try {
+    const [command, args] = buildCursorAgentSpawnCommand(resolveCursorAgentBinary(), ["about"]);
+    const result = spawn.sync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 5000,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0) return null;
+    return describeCursorPlan(stripAnsi(String(result.stdout)));
+  } catch {
+    return null;
   }
 }
 
@@ -391,10 +430,12 @@ export function runDoctorChecks(configPath: string, pluginPath: string): CheckRe
   } catch {
     config = undefined;
   }
+  const plan = checkCursorPlan();
   return [
     checkBun(),
     adjustCursorAgentCheckForBackend(checkCursorAgent(), config),
     checkCursorAgentLogin(),
+    ...(plan ? [plan] : []),
     checkSdkApiKey(config),
     checkOpenCode(),
     checkPluginFile(pluginPath, config),

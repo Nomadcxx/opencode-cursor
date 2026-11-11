@@ -77,8 +77,30 @@ OpenCode config, backing up the existing file first. Upgrade with
 
 ```bash
 opencode models | grep cursor-acp
-opencode run -m cursor-acp/auto "Reply with PONG"
+opencode run -m cursor-acp/composer-2.5 "Reply with PONG"
 ```
+
+## Models and Cursor plans
+
+Cursor moved to new plans (Free, Plus, Premium, Super, Ultra) on October 12,
+2026, and what you can run now depends on which plan you have.
+
+| Plan | Composer and Grok | Claude, GPT, Gemini, GLM, Kimi and other third-party models |
+|---|---|---|
+| Free, Plus | Weekly usage | Not available |
+| Premium, Super, new Ultra | Weekly usage | Prepaid credits at API list price, bought at [grok.com/dashboard/billing](https://grok.com/dashboard/billing) |
+| Legacy Pro, Pro+, Ultra | Included | Included, until you switch to a new plan |
+
+`cursor-agent models` lists every model whatever your plan, so the OpenCode
+picker shows models your account may not run. Pick one without credits and
+open-cursor tells you it bills from prepaid credits and suggests a Grok or
+Composer model. `open-cursor doctor` shows your plan; on OpenCode 2.x, where
+the CLI is not on your PATH, run `npx -p @rama_nigg/open-cursor open-cursor doctor`.
+
+OpenAI is ending its partnership with Cursor, so GPT models may drop out of
+`cursor-agent models`. Configs that pin a `gpt-*` model then need a new one.
+On OpenCode 1.x, `open-cursor doctor --deep` lists configured models Cursor no
+longer offers.
 
 ## Authentication
 
@@ -133,8 +155,9 @@ opencode run "Summarise this repository in five bullets." \
   --model cursor-acp/auto
 ```
 
-You can also start `opencode` and choose a `cursor-acp/*` model from its model
-picker.
+The Plus plan has no Auto; use `cursor-acp/composer-2.5` or a
+`cursor-acp/grok-*` model there. You can also start `opencode` and choose a
+`cursor-acp/*` model from its model picker.
 
 ## Documentation
 
