@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import {
   discoverModelsFromCursorAgent,
   discoverModelsFromCursorAgentAsync,
+  fallbackModels,
   parseCursorModelsOutput,
 } from "../../../src/cli/model-discovery.js";
 
@@ -32,6 +33,21 @@ auto - Auto
 
     const models = parseCursorModelsOutput(output);
     expect(models).toEqual([{ id: "auto", name: "Auto" }]);
+  });
+
+  it("strips the zero-width padding and doubled spaces Cursor puts in Grok names", () => {
+    const output = "grok-4.7-low-fast - Grok 4.7  Low Fast\u200b\u200b\ncomposer-2.5 - Composer 2.5\u200b (default)\n";
+
+    expect(parseCursorModelsOutput(output)).toEqual([
+      { id: "grok-4.7-low-fast", name: "Grok 4.7 Low Fast" },
+      { id: "composer-2.5", name: "Composer 2.5" },
+    ]);
+  });
+
+  it("falls back to Cursor's own models, which every paid plan includes", () => {
+    const ids = fallbackModels().map((model) => model.id);
+    expect(ids).toContain("composer-2.5");
+    expect(ids.every((id) => /^(composer-|grok-|cursor-grok-)/.test(id))).toBe(true);
   });
 });
 

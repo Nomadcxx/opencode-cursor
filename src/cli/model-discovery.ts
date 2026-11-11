@@ -5,6 +5,8 @@ import { buildCursorAgentSpawnCommand } from "../utils/cursor-agent-command.mjs"
 import { runCursorAgent, type CursorAgentRunDeps } from "../utils/cursor-agent-run.js";
 
 const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
+// Cursor pads some names (Grok 4.7 "Fast") with zero-width spaces; trim() keeps them.
+const INVISIBLE_CHARS = /[\u200B-\u200D\u2060\uFEFF]/g;
 
 export type DiscoveredModel = {
   id: string;
@@ -19,7 +21,7 @@ export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
   const seen = new Set<string>();
 
   for (const line of clean.split("\n")) {
-    const trimmed = line.trim();
+    const trimmed = line.replace(INVISIBLE_CHARS, "").trim();
     if (!trimmed) continue;
     const match = trimmed.match(
       /^([a-zA-Z0-9._-]+)\s+-\s+(.+?)(?:\s+\((?:current|default)\))*\s*$/,
@@ -29,7 +31,7 @@ export function parseCursorModelsOutput(output: string): DiscoveredModel[] {
     const id = match[1];
     if (seen.has(id)) continue;
     seen.add(id);
-    models.push({ id, name: match[2].trim() });
+    models.push({ id, name: match[2].replace(/\s+/g, " ").trim() });
   }
 
   return models;
@@ -78,27 +80,17 @@ function modelsFromExit(status: number | null, stdout: string, stderr: string): 
   return models;
 }
 
+/**
+ * Used only when `cursor-agent models` fails. Lists Cursor's own models, the
+ * set every paid plan includes: Plus has no Auto and no third-party models.
+ */
 export function fallbackModels(): DiscoveredModel[] {
   return [
-    { id: "auto", name: "Auto" },
-    { id: "composer-1.5", name: "Composer 1.5" },
-    { id: "composer-1", name: "Composer 1" },
-    { id: "opus-4.6-thinking", name: "Claude 4.6 Opus (Thinking)" },
-    { id: "opus-4.6", name: "Claude 4.6 Opus" },
-    { id: "sonnet-4.6", name: "Claude 4.6 Sonnet" },
-    { id: "sonnet-4.6-thinking", name: "Claude 4.6 Sonnet (Thinking)" },
-    { id: "opus-4.5", name: "Claude 4.5 Opus" },
-    { id: "opus-4.5-thinking", name: "Claude 4.5 Opus (Thinking)" },
-    { id: "sonnet-4.5", name: "Claude 4.5 Sonnet" },
-    { id: "sonnet-4.5-thinking", name: "Claude 4.5 Sonnet (Thinking)" },
-    { id: "gpt-5.4-high", name: "GPT-5.4 High" },
-    { id: "gpt-5.4-medium", name: "GPT-5.4" },
-    { id: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
-    { id: "gpt-5.2", name: "GPT-5.2" },
-    { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro" },
-    { id: "gemini-3-pro", name: "Gemini 3 Pro" },
-    { id: "gemini-3-flash", name: "Gemini 3 Flash" },
-    { id: "grok", name: "Grok" },
-    { id: "kimi-k2.5", name: "Kimi K2.5" },
+    { id: "composer-2.5", name: "Composer 2.5" },
+    { id: "composer-2.5-fast", name: "Composer 2.5 Fast" },
+    { id: "grok-4.7-medium", name: "Grok 4.7 Medium" },
+    { id: "grok-4.7-high", name: "Grok 4.7 High" },
+    { id: "cursor-grok-4.6-high", name: "Grok 4.6" },
+    { id: "cursor-grok-4.5-high", name: "Grok 4.5" },
   ];
 }

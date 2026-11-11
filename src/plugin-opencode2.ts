@@ -27,6 +27,7 @@ import {
 } from "./plugin.js";
 import { discoverModelsForRefresh, type DiscoveredModel } from "./models/sync.js";
 import { ModelDiscoveryService } from "./models/discovery.js";
+import { fallbackModels } from "./cli/model-discovery.js";
 import { applyCursorProviderInventory, CURSOR_INTEGRATION_ID } from "./opencode2/catalog.js";
 import { createCursorAgentLogin } from "./opencode2/cursor-agent-login.js";
 import { applyCursorIntegration, resolveCursorApiKey } from "./opencode2/integration.js";
@@ -36,11 +37,7 @@ import type { Cleanup, ConnectionInfo, Plugin2, PluginContext } from "./opencode
 const log = createLogger("plugin-opencode2");
 
 /** Static picker seed when live discovery has not completed yet. */
-const FALLBACK_MODELS: DiscoveredModel[] = [
-  { id: "auto", name: "Auto" },
-  { id: "composer-2", name: "Composer 2" },
-  { id: "composer-1.5", name: "Composer 1.5" },
-];
+const FALLBACK_MODELS: DiscoveredModel[] = fallbackModels();
 
 /**
  * OpenCode's `<mcp_instructions>` tell the model to reach a server through

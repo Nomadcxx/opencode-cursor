@@ -83,6 +83,45 @@ describe("models/pricing", () => {
     });
   });
 
+  it("prices Cursor's own Grok and Composer 2.5 models", () => {
+    expect(getCursorModelCost("composer-2.5")).toEqual({
+      input: 0.5,
+      output: 2.5,
+      cache_read: 0.2,
+      cache_write: 0.5,
+    });
+    expect(getCursorModelCost("grok-4.7-xhigh")).toEqual({
+      input: 2,
+      output: 6,
+      cache_read: 0.5,
+      cache_write: 2,
+    });
+    expect(getCursorModelCost("cursor-grok-4.6-high-fast")?.output).toBe(12);
+    expect(getCursorModelCost("cursor-grok-4.5-low-fast")?.output).toBe(18);
+  });
+
+  it("keeps point releases apart from their base family", () => {
+    expect(getCursorModelCost("claude-opus-5-5-high")?.input).toBe(4);
+    expect(getCursorModelCost("claude-opus-5-high")?.input).toBe(5);
+    expect(getCursorModelCost("claude-sonnet-5-5-max")?.cache_read).toBe(0.1);
+    expect(getCursorModelCost("claude-sonnet-5-thinking-low")?.cache_read).toBe(0.2);
+    expect(getCursorModelCost("claude-fable-5-2-high")?.input).toBe(8);
+    expect(getCursorModelCost("claude-fable-5-1-max")?.cache_read).toBe(0.25);
+    expect(getCursorModelCost("claude-fable-5-thinking-high")?.cache_read).toBe(1);
+  });
+
+  it("uses Cursor's published fast-mode rate, else leaves the fast id unpriced", () => {
+    expect(getCursorModelCost("claude-opus-4-7-high-fast")?.input).toBe(30);
+    expect(getCursorModelCost("claude-opus-4-8-max-fast")?.input).toBe(10);
+    expect(getCursorModelCost("claude-opus-5-high-fast")).toBeUndefined();
+    expect(getCursorModelCost("gpt-5.6-sol-high-fast")).toBeUndefined();
+    expect(getCursorModelCost("gpt-5.6-sol-high")?.input).toBe(4);
+  });
+
+  it("drops the long-context surcharge Cursor no longer charges on Claude 4.6 Sonnet", () => {
+    expect(getCursorModelCost("claude-4.6-sonnet-medium-thinking")?.context_over_200k).toBeUndefined();
+  });
+
   it("leaves unknown models unchanged", () => {
     expect(applyCursorModelCost("unknown-model", { name: "Unknown" })).toEqual({
       name: "Unknown",

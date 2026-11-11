@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Context windows:** OpenCode 2 model entries report the window Cursor's picker catalog gives them (`300k` for Claude Opus 5, `1m` for GLM 5.2, `1048576` for Kimi K3) instead of a flat 200k, so the context gauge and auto-compaction match the model. Ids the catalog does not know keep the 200k default, and the extended Max Mode window is still not requested.
+- **Model pricing:** OpenCode shows costs for Grok 4.5 to 4.7, Composer 2.5, Claude Opus 4.8/5/5.5, Sonnet 5/5.5, Haiku 5.5, Fable 5 to 5.2, GPT-5.6, Gemini 3.5/3.8/4, GLM, Kimi K3, DeepSeek and Muse, from Cursor's current price table. Opus 4.7 fast mode bills at its $30/$150 rate instead of the base Opus rate, and Claude 4.6 Sonnet drops a long-context surcharge Cursor no longer charges. Fast variants without a published rate (Opus 5/5.5, Fable 5.2, GPT-5.6) stay unpriced.
+- **Fallback models:** when `cursor-agent models` fails, the picker now offers Composer 2.5 and Grok, the models every paid plan includes, instead of retired ids (`composer-1`, `opus-4.6`, `gpt-5.4-*`) and `auto`, which Plus does not have. The three copies of that list are now one.
+- **Model names:** Grok 4.7 names no longer carry the zero-width spaces and doubled spaces `cursor-agent models` prints.
 
 ## [2.5.17] - 2026-10-23
 
