@@ -48,6 +48,22 @@ export function parseAgentError(stderr: string | unknown): ParsedError {
   const input = typeof stderr === "string" ? stderr : String(stderr ?? "");
   const clean = stripAnsi(input).trim();
 
+  // Cursor's X Subscription plans bill third-party models (Claude, GPT, Gemini,
+  // GLM, Kimi, ...) from prepaid credits, not the weekly pool, and reject them
+  // when the account has none. `cursor-agent models` still lists them.
+  const creditMatch = clean.match(/(?:ActionRequiredError:\s*)?([^\n]+?) is not included in your weekly usage/i);
+  if (creditMatch) {
+    const modelName = creditMatch[1].trim();
+    return {
+      type: "quota",
+      recoverable: false,
+      message: clean,
+      userMessage: `${modelName} bills from prepaid credits on your Cursor plan, and none are left`,
+      details: { model: modelName },
+      suggestion: "Add credits at https://grok.com/dashboard/billing, or pick a Grok or Composer model such as cursor-acp/composer-2.5",
+    };
+  }
+
   // Quota/usage limit error
   if (clean.includes("usage limit") || clean.includes("hit your usage limit")) {
     const savingsMatch = clean.match(/saved \$(\d+(?:\.\d+)?)/i);

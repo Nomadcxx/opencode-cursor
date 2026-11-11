@@ -16,6 +16,21 @@ describe("parseAgentError", () => {
     expect(parsed.suggestion).toContain("opencode auth logout cursor-acp");
   });
 
+  it("explains a third-party model rejected for missing prepaid credits", () => {
+    // Verbatim stderr from cursor-agent on an X Subscription Premium plan with no credits.
+    const err = parseAgentError(
+      "ActionRequiredError: Claude Haiku 5.5 is not included in your weekly usage Buy credits or switch to a Grok model to continue.\n",
+    );
+    expect(err.type).toBe("quota");
+    expect(err.recoverable).toBe(false);
+    expect(err.details).toEqual({ model: "Claude Haiku 5.5" });
+    expect(formatErrorForUser(err)).toBe(
+      "cursor-acp error: Claude Haiku 5.5 bills from prepaid credits on your Cursor plan, and none are left\n"
+        + "  model: Claude Haiku 5.5\n"
+        + "  Suggestion: Add credits at https://grok.com/dashboard/billing, or pick a Grok or Composer model such as cursor-acp/composer-2.5",
+    );
+  });
+
   it("classifies quota errors as non-recoverable", () => {
     const err = parseAgentError("You've hit your usage limit for claude-3.5-sonnet");
     expect(err.type).toBe("quota");

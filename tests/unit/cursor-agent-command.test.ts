@@ -9,7 +9,7 @@ describe("Cursor Windows launcher", () => {
     expect(buildCursorAgentSpawnCommand(command, args, {
       platform: "win32", env: { SystemRoot: "C:\\Windows" }, existsSync: () => true,
     })).toEqual(["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", [
-      "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", command.replace(/\.cmd$/, ".ps1"), ...args,
+      "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", command.replace(/\.cmd$/, ".ps1"), ...args,
     ]]);
   });
   test("preserves custom executables and does not pick a PowerShell file from cwd", () => {

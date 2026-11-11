@@ -9,6 +9,7 @@ import {
   checkBun,
   checkCursorAgent,
   checkCursorAgentLogin,
+  describeCursorPlan,
   runDoctorChecks,
   getStatusResult,
   explainCursorModels,
@@ -74,6 +75,34 @@ describe("cli/opencode-cursor doctor checks", () => {
     const result = checkCursorAgentLogin();
     expect(result.name).toBe("cursor-agent login");
     expect(typeof result.passed).toBe("boolean");
+  });
+});
+
+describe("cli/opencode-cursor describeCursorPlan", () => {
+  const about = (tier: string) =>
+    `About Cursor CLI\n\nCLI Version         2026.11.05-86047df\nSubscription Tier   ${tier}\nUser Email          a@b.c\n`;
+
+  it("says third-party models bill from credits on Premium and Super", () => {
+    for (const tier of ["Premium", "Super"]) {
+      expect(describeCursorPlan(about(tier))).toEqual({
+        name: "Cursor plan",
+        passed: true,
+        message: `${tier} - Grok and Composer use weekly usage; other models bill from prepaid credits (grok.com/dashboard/billing)`,
+      });
+    }
+  });
+
+  it("says Free and Plus carry Grok and Composer only", () => {
+    expect(describeCursorPlan(about("Plus"))?.message).toBe("Plus - Grok and Composer only; other models are not on this plan");
+  });
+
+  it("marks legacy plans and leaves the ambiguous Ultra bare", () => {
+    expect(describeCursorPlan(about("Pro+"))?.message).toBe("Pro+ - legacy plan with included third-party usage");
+    expect(describeCursorPlan(about("Ultra"))?.message).toBe("Ultra");
+  });
+
+  it("skips the check when about names no tier", () => {
+    expect(describeCursorPlan("About Cursor CLI\nCLI Version 2026.11.05\n")).toBeNull();
   });
 });
 
