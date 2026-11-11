@@ -9,6 +9,8 @@ const MODEL_DISCOVERY_TIMEOUT_MS = 5000;
 export type DiscoveredModel = {
   id: string;
   name: string;
+  /** Real context window when Cursor's picker catalog knows it. */
+  contextWindow?: number;
 };
 
 export function parseCursorModelsOutput(output: string): DiscoveredModel[] {

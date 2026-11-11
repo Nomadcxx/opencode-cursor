@@ -33,6 +33,8 @@ type OpenCodeConfig = {
 export type DiscoveredModel = {
   id: string;
   name: string;
+  /** Real context window when Cursor's picker catalog knows it; 200k otherwise. */
+  contextWindow?: number;
 };
 
 export async function discoverModelsForRefresh(
