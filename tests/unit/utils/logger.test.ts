@@ -13,6 +13,7 @@ vi.mock("node:fs", () => ({
   mkdirSync: vi.fn(),
   statSync: vi.fn(),
   renameSync: vi.fn(),
+  chmodSync: vi.fn(),
   createWriteStream: vi.fn(() => ({
     write: mockWrite,
     end: mockEnd,
@@ -56,7 +57,7 @@ describe("logger", () => {
 
       expect(mockedFs.mkdirSync).toHaveBeenCalledWith(
         expect.stringContaining(".opencode-cursor"),
-        { recursive: true },
+        { recursive: true, mode: 0o700 },
       );
     });
 
@@ -69,8 +70,9 @@ describe("logger", () => {
 
       expect(mockedFs.createWriteStream).toHaveBeenCalledWith(
         expect.stringContaining("plugin.log"),
-        { flags: "a" },
+        { flags: "a", mode: 0o600 },
       );
+      expect(mockedFs.chmodSync).toHaveBeenCalledWith(expect.stringContaining("plugin.log"), 0o600);
       expect(mockWrite).toHaveBeenCalledWith(
         expect.stringMatching(/\[cursor-acp:test\] INFO\s+test message/),
       );
@@ -87,11 +89,11 @@ describe("logger", () => {
 
       expect(mockedFs.mkdirSync).toHaveBeenCalledWith(
         "/tmp/open-cursor-logs",
-        { recursive: true },
+        { recursive: true, mode: 0o700 },
       );
       expect(mockedFs.createWriteStream).toHaveBeenCalledWith(
         "/tmp/open-cursor-logs/plugin.log",
-        { flags: "a" },
+        { flags: "a", mode: 0o600 },
       );
     });
 
