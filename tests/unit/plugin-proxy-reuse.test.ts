@@ -1,9 +1,23 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   fetchProxyHealthWithTimeout,
   isReusableProxyHealthPayload,
   normalizeWorkspaceForCompare,
 } from "../../src/plugin.js";
+import { getProxyToken } from "../../src/proxy/auth.js";
+
+const runtimeDir = mkdtempSync(join(tmpdir(), "open-cursor-reuse-"));
+const previousHomeDir = process.env.CURSOR_ACP_HOME_DIR;
+process.env.CURSOR_ACP_HOME_DIR = runtimeDir;
+
+afterAll(() => {
+  if (previousHomeDir === undefined) delete process.env.CURSOR_ACP_HOME_DIR;
+  else process.env.CURSOR_ACP_HOME_DIR = previousHomeDir;
+  rmSync(runtimeDir, { recursive: true, force: true });
+});
 
 describe("proxy health reuse guard", () => {
   test("rejects payloads without ok=true", () => {
@@ -18,7 +32,12 @@ describe("proxy health reuse guard", () => {
 
   test("accepts matching workspace identity", () => {
     const workspace = "/tmp/project";
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace)).toBe(true);
+    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace)).toBe(true);
+  });
+
+  test("rejects proxies that predate token auth", () => {
+    const workspace = "/tmp/project";
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace)).toBe(false);
   });
 
   test("rejects a different or missing backend preference", () => {
@@ -67,6 +86,7 @@ describe("proxy health reuse guard", () => {
 
     globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe("http://127.0.0.1:32124/health");
+      expect((init?.headers as Record<string, string>)["x-open-cursor-token"]).toBe(getProxyToken());
       const signal = init?.signal;
       expect(signal).toBeDefined();
 

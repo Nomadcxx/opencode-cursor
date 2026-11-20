@@ -500,10 +500,13 @@ function parseJsonChunks(dataLines: string[]): StreamChunk[] {
     .map((line) => JSON.parse(line) as StreamChunk);
 }
 
+// Filled from the plugin's chat.headers hook; carries the proxy token.
+let proxyHeaders: Record<string, string> = {};
+
 async function requestCompletion(baseURL: string, body: any): Promise<Response> {
   const response = await fetch(`${baseURL}/chat/completions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...proxyHeaders },
     body: JSON.stringify(body),
   });
   expect(response.status).toBe(200);
@@ -533,6 +536,7 @@ describe("OpenCode-owned tool loop integration", () => {
   let originalTiming: string | undefined;
   let originalLogDir: string | undefined;
   let originalLogConsole: string | undefined;
+  let originalHomeDir: string | undefined;
   let mockDir = "";
   let promptFile = "";
   let argsFile = "";
@@ -549,7 +553,9 @@ describe("OpenCode-owned tool loop integration", () => {
     originalTiming = process.env.CURSOR_ACP_TIMING;
     originalLogDir = process.env.CURSOR_ACP_LOG_DIR;
     originalLogConsole = process.env.CURSOR_ACP_LOG_CONSOLE;
+    originalHomeDir = process.env.CURSOR_ACP_HOME_DIR;
     mockDir = mkdtempSync(join(tmpdir(), "cursor-agent-mock-"));
+    process.env.CURSOR_ACP_HOME_DIR = mockDir;
     promptFile = join(mockDir, "prompt.txt");
     argsFile = join(mockDir, "args.json");
     logDir = join(mockDir, "logs");
@@ -596,10 +602,20 @@ describe("OpenCode-owned tool loop integration", () => {
       output,
     );
     baseURL = output.options.baseURL;
+
+    const headerOutput = { headers: {} as Record<string, string> };
+    await hooks["chat.headers"]({ model: { providerID: "cursor-acp" } } as any, headerOutput);
+    proxyHeaders = headerOutput.headers;
+    expect(proxyHeaders["x-open-cursor-token"]).toMatch(/^[0-9a-f]{64}$/);
   });
 
   afterAll(async () => {
     process.env.PATH = originalPath;
+    if (originalHomeDir === undefined) {
+      delete process.env.CURSOR_ACP_HOME_DIR;
+    } else {
+      process.env.CURSOR_ACP_HOME_DIR = originalHomeDir;
+    }
     if (originalToolLoopMode === undefined) {
       delete process.env.CURSOR_ACP_TOOL_LOOP_MODE;
     } else {

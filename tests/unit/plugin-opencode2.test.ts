@@ -12,9 +12,11 @@ const previousEnv = {
   CURSOR_ACP_REUSE_EXISTING_PROXY: process.env.CURSOR_ACP_REUSE_EXISTING_PROXY,
   CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY: process.env.CURSOR_ACP_OPENCODE2_SKIP_DISCOVERY,
   CURSOR_API_KEY: process.env.CURSOR_API_KEY,
+  CURSOR_ACP_HOME_DIR: process.env.CURSOR_ACP_HOME_DIR,
 };
 
 process.env.XDG_CONFIG_HOME = configHome;
+process.env.CURSOR_ACP_HOME_DIR = configHome;
 process.env.OPENCODE_CONFIG = join(configHome, "missing.json");
 process.env.CURSOR_ACP_MCP_BRIDGE = "false";
 process.env.CURSOR_ACP_MODEL_AUTO_REFRESH = "false";
@@ -283,6 +285,41 @@ describe("opencode 2.0 stable adapter", () => {
     await fixture.modelRequestHook()!(other);
     expect(other.headers).toEqual({});
     await cleanup?.();
+  });
+
+  test("the proxy admits only requests carrying the model.request token", async () => {
+    const fixture = createContext();
+    const cleanup = await opencode2.default.setup(fixture.context);
+    try {
+      const event = { sessionID: "ses_a", model: { providerID: "cursor-acp" }, headers: {} as Record<string, string> };
+      await fixture.modelRequestHook()!(event);
+      const token = event.headers["x-open-cursor-token"];
+      expect(token).toMatch(/^[0-9a-f]{64}$/);
+
+      const health = new URL("../health", `${fixture.providerAdds.at(-1).info.settings.baseURL}/`).toString();
+      const anonymous = await fetch(health);
+      expect(anonymous.status).toBe(401);
+      expect(await anonymous.text()).not.toContain(process.cwd());
+
+      const wrong = await fetch(health, { headers: { "x-open-cursor-token": "0".repeat(64) } });
+      expect(wrong.status).toBe(401);
+
+      const browser = await fetch(health, { headers: { "x-open-cursor-token": token, origin: "https://evil.example" } });
+      expect(browser.status).toBe(403);
+
+      const completion = await fetch(health.replace("/health", "/v1/chat/completions"), {
+        method: "POST",
+        headers: { "content-type": "text/plain" },
+        body: JSON.stringify({ model: "auto", messages: [{ role: "user", content: "hi" }] }),
+      });
+      expect(completion.status).toBe(401);
+
+      const owner = await fetch(health, { headers: { "x-open-cursor-token": token } });
+      expect(owner.status).toBe(200);
+      expect((await owner.json()).tokenAuth).toBe(true);
+    } finally {
+      await cleanup?.();
+    }
   });
 
   test("model.request falls back to the plugin location without session.get", async () => {

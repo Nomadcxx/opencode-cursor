@@ -38,6 +38,7 @@ import {
   isBridgeJsonEnabled,
 } from "./proxy/bridge-json.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
+import { PROXY_TOKEN_HEADER, authorizeProxyRequest, getProxyToken } from "./proxy/auth.js";
 import {
   buildSessionKey,
   clearResumeChatId,
@@ -873,6 +874,10 @@ export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: s
   if (!payload || payload.ok !== true) {
     return false;
   }
+  if (payload.tokenAuth !== true) {
+    // Proxies that predate token auth accept any local caller; do not reuse them.
+    return false;
+  }
   if (typeof payload.workspaceDirectory !== "string" || payload.workspaceDirectory.length === 0) {
     // Legacy proxies that do not expose workspace cannot be safely reused.
     return false;
@@ -892,7 +897,10 @@ export async function fetchProxyHealthWithTimeout(
   }
 
   try {
-    return await fetch(url, { signal: controller.signal }).catch(() => null);
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: { [PROXY_TOKEN_HEADER]: getProxyToken() },
+    }).catch(() => null);
   } finally {
     clearTimeout(timeout);
   }
@@ -1999,13 +2007,25 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
   // Use Node.js http server (works in both Node and Bun)
   const http = await import("http");
 
+  const proxyToken = getProxyToken();
+
   const requestHandler = async (req: any, res: any) => {
     try{
+      const authResult = authorizeProxyRequest(
+        { origin: req.headers.origin, token: req.headers[PROXY_TOKEN_HEADER] },
+        proxyToken,
+      );
+      if (!authResult.ok) {
+        res.writeHead(authResult.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: authResult.error }));
+        return;
+      }
+
       const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }));
+        res.end(JSON.stringify({ ok: true, tokenAuth: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }));
         return;
       }
 
@@ -3151,6 +3171,16 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           label: "Cursor API Key (cursor.com/settings)",
         },
       ],
+    },
+
+    async "chat.headers"(input: any, output: { headers: Record<string, string> }) {
+      const providerMatch = createBoundaryRuntimeContext("chat.headers").run("matchesProvider", (boundary) =>
+        boundary.matchesProvider(input.model),
+      );
+      if (!providerMatch) {
+        return;
+      }
+      output.headers[PROXY_TOKEN_HEADER] = getProxyToken();
     },
 
     async "chat.params"(input: any, output: any) {
