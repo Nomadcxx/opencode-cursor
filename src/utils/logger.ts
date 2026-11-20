@@ -37,13 +37,18 @@ function shouldLog(level: LogLevel): boolean {
 const REDACTED = "[REDACTED]";
 
 // Bearer credentials first, so a key-value match below cannot leave the token behind.
+const SECRET_KEYS = "authorization|x-open-cursor-token|api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|cursor_api_key|token|password|secret";
+
+// Credentials with a scheme first, so a key-value match below cannot leave the
+// credential behind. Keys need a boundary on the left, so "hasApiKey" or
+// "maxTokens" stay readable.
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
-  [/\bBearer\s+[A-Za-z0-9._~+\/=-]+/gi, `Bearer ${REDACTED}`],
-  [
-    /(["']?(?:authorization|x-open-cursor-token|api[_-]?key|access[_-]?token|refresh[_-]?token|cursor_api_key|password|secret)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi,
-    `$1${REDACTED}`,
-  ],
-  [/\b(?:sk|key|crsr)[-_][A-Za-z0-9_-]{20,}/g, REDACTED],
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, `$1 ${REDACTED}`],
+  [new RegExp(`((?<![A-Za-z0-9_])["']?(?:${SECRET_KEYS})["']?\\s*[:=]\\s*["']?)[^"'\\s,}&]+`, "gi"), `$1${REDACTED}`],
+  [new RegExp(`(--(?:${SECRET_KEYS})[=\\s]+)[^\\s"']+`, "gi"), `$1${REDACTED}`],
+  [/([?&](?:key|token|api_key|apikey|access_token)=)[^&\s"']+/gi, `$1${REDACTED}`],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, REDACTED],
+  [/\b(?:key|crsr)_[A-Za-z0-9]{20,}|\bsk-[A-Za-z0-9_-]{20,}/g, REDACTED],
 ];
 
 export function redactSecrets(text: string): string {
@@ -129,10 +134,12 @@ function openLogStream(): void {
     // Prompts and child stderr land here; keep the file owner-only, including
     // a file an earlier version created with the default umask.
     logStream = fs.createWriteStream(getLogFile(), { flags: "a", mode: 0o600 });
-    try {
-      fs.chmodSync(getLogFile(), 0o600);
-    } catch {
-      // Not yet created or not supported; the open mode applies on creation.
+    for (const file of [getLogFile(), getLogFile() + ".1"]) {
+      try {
+        fs.chmodSync(file, 0o600);
+      } catch {
+        // Not yet created or not supported; the open mode applies on creation.
+      }
     }
     logStream.on("error", () => {
       if (!logFileError) {

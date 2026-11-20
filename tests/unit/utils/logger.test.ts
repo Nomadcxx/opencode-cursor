@@ -41,6 +41,7 @@ describe("logger", () => {
     delete process.env.CURSOR_ACP_LOG_LEVEL;
     delete process.env.CURSOR_ACP_LOG_SILENT;
     delete process.env.CURSOR_ACP_LOG_CONSOLE;
+    delete process.env.CURSOR_ACP_LOG_DIR;
     mockedFs.statSync.mockReturnValue({ size: 1000 } as fs.Stats);
   });
 

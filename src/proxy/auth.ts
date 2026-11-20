@@ -4,14 +4,45 @@
 // the user visits can reach it. Every request must carry a per-user secret that
 // only processes running as the owner can read.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export const PROXY_TOKEN_HEADER = "x-open-cursor-token";
 
+/**
+ * A process deciding whether to reuse the proxy on the shared port must not
+ * send the token there: any local account can bind that port first. It sends
+ * a fresh challenge instead, and only the owner's proxy can answer it.
+ */
+export const PROXY_CHALLENGE_HEADER = "x-open-cursor-challenge";
+
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
+const CHALLENGE_PATTERN = /^[0-9a-f]{32}$/;
+
+export function newProxyChallenge(): string {
+  return randomBytes(16).toString("hex");
+}
+
+export function isProxyChallenge(value: unknown): value is string {
+  return typeof value === "string" && CHALLENGE_PATTERN.test(value);
+}
+
+/**
+ * The proxy's answer to a challenge. It is bound to the workspace and backend
+ * a reusing process checks, so the answer reveals neither to a caller without
+ * the token, and a proxy for another workspace cannot pass.
+ */
+export function proxyHealthProof(token: string, challenge: string, workspace: string, backend: string): string {
+  return createHmac("sha256", token).update(`${challenge}\0${workspace}\0${backend}`).digest("hex");
+}
+
+export function sameSecret(a: string, b: string): boolean {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
 
 /**
  * One location per user, independent of session variables such as
@@ -23,20 +54,21 @@ export function resolveProxyTokenPath(env: NodeJS.ProcessEnv = process.env): str
   return join(home, ".opencode-cursor", "proxy-token");
 }
 
-function readValidToken(path: string): string | null {
+/** The token at path; "absent" when there is no file, "unusable" when there is a bad one. */
+function readToken(path: string): string | "absent" | "unusable" {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(path);
   } catch {
-    return null;
+    return "absent";
   }
-  if (!stat.isFile()) return null;
+  if (!stat.isFile()) return "unusable";
   if (process.platform !== "win32") {
-    if ((stat.mode & 0o077) !== 0) return null;
-    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) return null;
+    if ((stat.mode & 0o077) !== 0) return "unusable";
+    if (typeof process.getuid === "function" && stat.uid !== process.getuid()) return "unusable";
   }
   const token = fs.readFileSync(path, "utf8").trim();
-  return TOKEN_PATTERN.test(token) ? token : null;
+  return TOKEN_PATTERN.test(token) ? token : "unusable";
 }
 
 /**
@@ -46,12 +78,14 @@ function readValidToken(path: string): string | null {
  * starters never observe a partially written token.
  */
 export function loadOrCreateProxyToken(path: string = resolveProxyTokenPath()): string {
-  const existing = readValidToken(path);
-  if (existing) return existing;
+  const existing = readToken(path);
+  if (existing !== "absent" && existing !== "unusable") return existing;
 
   fs.mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  // Drop an unusable file; link() below fails if another process has since created one.
-  fs.rmSync(path, { force: true });
+  if (existing === "unusable") {
+    // Only a bad file is removed, never one a concurrent starter just linked.
+    fs.rmSync(path, { force: true, recursive: false });
+  }
 
   const token = randomBytes(32).toString("hex");
   const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}`;
@@ -62,8 +96,8 @@ export function loadOrCreateProxyToken(path: string = resolveProxyTokenPath()): 
   } catch (err: any) {
     if (err?.code !== "EEXIST") throw err;
     // Another process won the race; use its token.
-    const winner = readValidToken(path);
-    if (!winner) throw new Error(`Proxy token at ${path} is not usable`);
+    const winner = readToken(path);
+    if (winner === "absent" || winner === "unusable") throw new Error(`Proxy token at ${path} is not usable`);
     return winner;
   } finally {
     fs.rmSync(tmp, { force: true });
@@ -83,7 +117,7 @@ export function getProxyToken(): string {
 
 export type ProxyAuthResult = { ok: true } | { ok: false; status: number; error: string };
 
-function headerValue(value: string | string[] | null | undefined): string | undefined {
+export function headerValue(value: string | string[] | null | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value ?? undefined;
 }
@@ -106,9 +140,7 @@ export function authorizeProxyRequest(
   if (!supplied) {
     return { ok: false, status: 401, error: "Missing proxy token" };
   }
-  const a = Buffer.from(supplied);
-  const b = Buffer.from(expectedToken);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
+  if (!sameSecret(supplied, expectedToken)) {
     return { ok: false, status: 401, error: "Invalid proxy token" };
   }
   return { ok: true };

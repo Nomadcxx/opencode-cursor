@@ -317,6 +317,19 @@ describe("opencode 2.0 stable adapter", () => {
       const owner = await fetch(health, { headers: { "x-open-cursor-token": token } });
       expect(owner.status).toBe(200);
       expect((await owner.json()).tokenAuth).toBe(true);
+
+      // A reuse probe gets a proof, not the workspace, and never sends the token.
+      const challenged = await fetch(health, { headers: { "x-open-cursor-challenge": "a".repeat(32) } });
+      expect(challenged.status).toBe(200);
+      const answer = await challenged.text();
+      expect(answer).not.toContain(process.cwd());
+      expect(JSON.parse(answer).proof).toMatch(/^[0-9a-f]{64}$/);
+      const browserProbe = await fetch(health, { headers: { "x-open-cursor-challenge": "a".repeat(32), origin: "https://evil.example" } });
+      expect(browserProbe.status).toBe(403);
+      const badChallenge = await fetch(health, { headers: { "x-open-cursor-challenge": "not-hex" } });
+      expect(badChallenge.status).toBe(401);
+      expect(await pluginModule.probeReusableProxy(health, process.cwd())).toBe(true);
+      expect(await pluginModule.probeReusableProxy(health, "/tmp/another-project")).toBe(false);
     } finally {
       await cleanup?.();
     }
