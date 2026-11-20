@@ -45,6 +45,9 @@ const SECRET_KEYS = "authorization|x-open-cursor-token|api[_-]?key|api[_-]?token
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, `$1 ${REDACTED}`],
   [new RegExp(`((?<![A-Za-z0-9_])["']?(?:${SECRET_KEYS})["']?\\s*[:=]\\s*["']?)[^"'\\s,}&]+`, "gi"), `$1${REDACTED}`],
+  // camelCase names ending in a secret word (cursorApiKey, sessionToken),
+  // skipping flags and counts such as hasApiKey: true.
+  [/(["']?[a-z][A-Za-z0-9]*(?:ApiKey|Token|Secret|Password)["']?\s*[:=]\s*["']?)(?!(?:true|false|null|\d+)\b)[^"'\s,}&]+/g, `$1${REDACTED}`],
   [new RegExp(`(--(?:${SECRET_KEYS})[=\\s]+)[^\\s"']+`, "gi"), `$1${REDACTED}`],
   [/([?&](?:key|token|api_key|apikey|access_token)=)[^&\s"']+/gi, `$1${REDACTED}`],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, REDACTED],

@@ -21,8 +21,10 @@ afterAll(() => {
   rmSync(homeDir, { recursive: true, force: true });
 });
 
-function proofFor(challenge: string, workspace: string, backend = "auto"): string {
-  return proxyHealthProof(getProxyToken(), challenge, normalizeWorkspaceForCompare(workspace), backend);
+const PORT = 32124;
+
+function proofFor(challenge: string, workspace: string, backend = "auto", port = PORT): string {
+  return proxyHealthProof(getProxyToken(), challenge, port, normalizeWorkspaceForCompare(workspace), backend);
 }
 
 describe("proxy health reuse guard", () => {
@@ -30,27 +32,30 @@ describe("proxy health reuse guard", () => {
 
   test("rejects payloads without ok=true", () => {
     const challenge = newProxyChallenge();
-    expect(isReusableProxyHealthPayload(null, workspace, challenge)).toBe(false);
-    expect(isReusableProxyHealthPayload({ ok: false }, workspace, challenge)).toBe(false);
+    expect(isReusableProxyHealthPayload(null, workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: false }, workspace, challenge, PORT)).toBe(false);
   });
 
   test("rejects proxies that predate token auth", () => {
     const challenge = newProxyChallenge();
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace, challenge)).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace, challenge, PORT)).toBe(false);
   });
 
   test("accepts a proof of the owner's token for this workspace and backend", () => {
     const challenge = newProxyChallenge();
-    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true, proof: proofFor(challenge, workspace) }, workspace, challenge)).toBe(true);
+    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true, proof: proofFor(challenge, workspace) }, workspace, challenge, PORT)).toBe(true);
   });
 
   test("rejects a proof for another challenge, workspace or backend", () => {
     const challenge = newProxyChallenge();
     const payload = (proof: string) => ({ ok: true, tokenAuth: true, proof });
-    expect(isReusableProxyHealthPayload(payload(proofFor(newProxyChallenge(), workspace)), workspace, challenge)).toBe(false);
-    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, "/tmp/other-project")), workspace, challenge)).toBe(false);
-    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, workspace, "sdk")), workspace, challenge)).toBe(false);
-    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true }, workspace, challenge)).toBe(false);
+    expect(isReusableProxyHealthPayload(payload(proofFor(newProxyChallenge(), workspace)), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, "/tmp/other-project")), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, workspace, "sdk")), workspace, challenge, PORT)).toBe(false);
+    // A proof another of the owner's proxies gave on its own port, relayed by
+    // whatever holds the shared port, does not pass for the shared port.
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, workspace, "auto", 40825)), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true }, workspace, challenge, PORT)).toBe(false);
   });
 
   test("normalizeWorkspaceForCompare produces consistent results for the same input", () => {

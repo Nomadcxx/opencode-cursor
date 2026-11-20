@@ -30,12 +30,20 @@ export function isProxyChallenge(value: unknown): value is string {
 }
 
 /**
- * The proxy's answer to a challenge. It is bound to the workspace and backend
- * a reusing process checks, so the answer reveals neither to a caller without
- * the token, and a proxy for another workspace cannot pass.
+ * The proxy's answer to a challenge. It is bound to the port the proxy reads
+ * the request on, so a squatter on the shared port cannot relay the challenge
+ * to one of the owner's proxies elsewhere and pass its answer off as its own;
+ * and to the workspace and backend a reusing process checks, so the answer
+ * reveals neither to a caller without the token.
  */
-export function proxyHealthProof(token: string, challenge: string, workspace: string, backend: string): string {
-  return createHmac("sha256", token).update(`${challenge}\0${workspace}\0${backend}`).digest("hex");
+export function proxyHealthProof(
+  token: string,
+  challenge: string,
+  port: number,
+  workspace: string,
+  backend: string,
+): string {
+  return createHmac("sha256", token).update(`${challenge}\0${port}\0${workspace}\0${backend}`).digest("hex");
 }
 
 export function sameSecret(a: string, b: string): boolean {

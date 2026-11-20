@@ -886,7 +886,7 @@ export function normalizeWorkspaceForCompare(pathValue: string): string {
  * process squatting the shared port cannot produce it, and the token itself is
  * never sent to whatever answers there.
  */
-export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string, challenge: string): boolean {
+export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string, challenge: string, port: number): boolean {
   if (!payload || payload.ok !== true || payload.tokenAuth !== true) {
     // Proxies that predate token auth accept any local caller; do not reuse them.
     return false;
@@ -897,6 +897,7 @@ export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: s
   const expected = proxyHealthProof(
     getProxyToken(),
     challenge,
+    port,
     normalizeWorkspaceForCompare(workspaceDirectory),
     parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference,
   );
@@ -921,15 +922,17 @@ export async function fetchProxyHealthWithTimeout(
   }
 }
 
-/** Ask the proxy on the shared port to prove it is the owner's, for this workspace. */
+/** Ask the proxy at url to prove it is the owner's, listening there, for this workspace. */
 export async function probeReusableProxy(url: string, workspaceDirectory: string): Promise<boolean> {
+  const port = Number(new URL(url).port);
+  if (!Number.isInteger(port) || port <= 0) return false;
   const challenge = newProxyChallenge();
   const res = await fetchProxyHealthWithTimeout(url, CURSOR_PROXY_HEALTH_TIMEOUT_MS, {
     [PROXY_CHALLENGE_HEADER]: challenge,
   });
   if (!res || !res.ok) return false;
   const payload = await res.json().catch(() => null);
-  return isReusableProxyHealthPayload(payload, workspaceDirectory, challenge);
+  return isReusableProxyHealthPayload(payload, workspaceDirectory, challenge, port);
 }
 
 const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
@@ -2044,6 +2047,7 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
         const proof = proxyHealthProof(
           proxyToken,
           challenge,
+          req.socket.localPort,
           normalizeWorkspaceForCompare(workspaceDirectory),
           parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference,
         );

@@ -330,6 +330,24 @@ describe("opencode 2.0 stable adapter", () => {
       expect(badChallenge.status).toBe(401);
       expect(await pluginModule.probeReusableProxy(health, process.cwd())).toBe(true);
       expect(await pluginModule.probeReusableProxy(health, "/tmp/another-project")).toBe(false);
+
+      // Something on another port that relays the challenge to the real proxy
+      // and returns its answer must not pass for a proxy on its own port.
+      const { createServer } = await import("node:http");
+      const relay = createServer(async (req, res) => {
+        const upstream = await fetch(health, {
+          headers: { "x-open-cursor-challenge": String(req.headers["x-open-cursor-challenge"] ?? "") },
+        });
+        res.writeHead(upstream.status, { "content-type": "application/json" });
+        res.end(await upstream.text());
+      });
+      await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+      try {
+        const { port } = relay.address() as { port: number };
+        expect(await pluginModule.probeReusableProxy(`http://127.0.0.1:${port}/health`, process.cwd())).toBe(false);
+      } finally {
+        relay.close();
+      }
     } finally {
       await cleanup?.();
     }

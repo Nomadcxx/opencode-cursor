@@ -15,6 +15,8 @@ describe("redactSecrets", () => {
     { name: "jwt", input: "access token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcDEF123", secret: "eyJhbGciOiJIUzI1NiJ9" },
     { name: "query parameter", input: "GET https://api.example/v1?model=x&key=plainsecretvalue", secret: "plainsecretvalue" },
     { name: "command-line flag", input: "spawn cursor-agent --api-key plainsecretvalue", secret: "plainsecretvalue" },
+    { name: "camelCase key", input: '{"cursorApiKey":"plainsecretvalue"}', secret: "plainsecretvalue" },
+    { name: "camelCase token assignment", input: "sessionToken=plainsecretvalue", secret: "plainsecretvalue" },
   ];
 
   for (const c of cases) {
@@ -28,7 +30,7 @@ describe("redactSecrets", () => {
   test("leaves ordinary diagnostics intact", () => {
     for (const input of [
       '{"model":"auto","promptLength":1200,"toolCount":3}',
-      '{"hasApiKey":true,"maxTokens":4096,"tokenCount":12}',
+      '{"hasApiKey":true,"maxTokens":4096,"tokenCount":12,"promptTokens":7,"apiKeySource":"env"}',
       "using key-value-store-0123456789abcdefghij for sessions",
     ]) {
       expect(redactSecrets(input)).toBe(input);
