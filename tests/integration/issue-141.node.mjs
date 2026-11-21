@@ -202,10 +202,13 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
   for (const pooled of [false, true]) {
     run(`
       import assert from 'node:assert/strict';
+      import { readFileSync } from 'node:fs';
+      import { join } from 'node:path';
       const {ensureCursorProxyServer,buildCursorAgentCommand}=await import(${JSON.stringify(pluginURL)});
       assert.equal(buildCursorAgentCommand('auto',${JSON.stringify(workspace)})[0],${JSON.stringify(cmd)},'logical argv must retain the selected binary');
       const url=await ensureCursorProxyServer(${JSON.stringify(workspace)});
-      const response=await fetch(url+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'auto',messages:[{role:'user',content:'test'}]})});
+      const token=readFileSync(join(process.env.CURSOR_ACP_HOME_DIR,'.opencode-cursor','proxy-token'),'utf8').trim();
+      const response=await fetch(url+'/chat/completions',{method:'POST',headers:{'content-type':'application/json','x-open-cursor-token':token},body:JSON.stringify({model:'auto',messages:[{role:'user',content:'test'}]})});
       assert.equal(response.status,200);
       const body=await response.json();
       const args=JSON.parse(body.choices[0].message.content);
@@ -217,6 +220,7 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
       CURSOR_ACP_AGENT_POOL: pooled ? "true" : "false",
       CURSOR_ACP_TRUST_WORKSPACE: "true", CURSOR_ACP_REUSE_EXISTING_PROXY: "false",
       CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH: join(sourceRoot, "scripts/cursor-agent-runner.mjs"),
+      CURSOR_ACP_HOME_DIR: dir,
     });
   }
 });
