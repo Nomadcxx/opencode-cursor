@@ -1,64 +1,91 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   fetchProxyHealthWithTimeout,
   isReusableProxyHealthPayload,
   normalizeWorkspaceForCompare,
+  probeReusableProxy,
 } from "../../src/plugin.js";
+import { getProxyToken, newProxyChallenge, proxyHealthProof } from "../../src/proxy/auth.js";
+
+const homeDir = mkdtempSync(join(tmpdir(), "open-cursor-reuse-"));
+const previousHomeDir = process.env.CURSOR_ACP_HOME_DIR;
+process.env.CURSOR_ACP_HOME_DIR = homeDir;
+
+afterAll(() => {
+  if (previousHomeDir === undefined) delete process.env.CURSOR_ACP_HOME_DIR;
+  else process.env.CURSOR_ACP_HOME_DIR = previousHomeDir;
+  rmSync(homeDir, { recursive: true, force: true });
+});
+
+const PORT = 32124;
+
+function proofFor(challenge: string, workspace: string, backend = "auto", port = PORT): string {
+  return proxyHealthProof(getProxyToken(), challenge, port, normalizeWorkspaceForCompare(workspace), backend);
+}
 
 describe("proxy health reuse guard", () => {
+  const workspace = "/tmp/project";
+
   test("rejects payloads without ok=true", () => {
-    expect(isReusableProxyHealthPayload(null, "/tmp/project")).toBe(false);
-    expect(isReusableProxyHealthPayload({ ok: false }, "/tmp/project")).toBe(false);
+    const challenge = newProxyChallenge();
+    expect(isReusableProxyHealthPayload(null, workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: false }, workspace, challenge, PORT)).toBe(false);
   });
 
-  test("rejects payloads without workspace identity", () => {
-    expect(isReusableProxyHealthPayload({ ok: true }, "/tmp/project")).toBe(false);
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: "" }, "/tmp/project")).toBe(false);
+  test("rejects proxies that predate token auth", () => {
+    const challenge = newProxyChallenge();
+    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace, challenge, PORT)).toBe(false);
   });
 
-  test("accepts matching workspace identity", () => {
-    const workspace = "/tmp/project";
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: workspace, backendPreference: "auto" }, workspace)).toBe(true);
+  test("accepts a proof of the owner's token for this workspace and backend", () => {
+    const challenge = newProxyChallenge();
+    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true, proof: proofFor(challenge, workspace) }, workspace, challenge, PORT)).toBe(true);
   });
 
-  test("rejects a different or missing backend preference", () => {
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: "/tmp/project", backendPreference: "sdk" }, "/tmp/project")).toBe(false);
-    expect(isReusableProxyHealthPayload({ ok: true, workspaceDirectory: "/tmp/project" }, "/tmp/project")).toBe(false);
-  });
-
-  test("rejects mismatched workspace identity", () => {
-    expect(
-      isReusableProxyHealthPayload(
-        { ok: true, workspaceDirectory: "/tmp/other-project" },
-        "/tmp/project",
-      ),
-    ).toBe(false);
-  });
-
-  test("normalizes paths deterministically for comparisons", () => {
-    const normalized = normalizeWorkspaceForCompare("./tests/../tests");
-    expect(typeof normalized).toBe("string");
-    expect(normalized.length).toBeGreaterThan(0);
+  test("rejects a proof for another challenge, workspace or backend", () => {
+    const challenge = newProxyChallenge();
+    const payload = (proof: string) => ({ ok: true, tokenAuth: true, proof });
+    expect(isReusableProxyHealthPayload(payload(proofFor(newProxyChallenge(), workspace)), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, "/tmp/other-project")), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, workspace, "sdk")), workspace, challenge, PORT)).toBe(false);
+    // A proof another of the owner's proxies gave on its own port, relayed by
+    // whatever holds the shared port, does not pass for the shared port.
+    expect(isReusableProxyHealthPayload(payload(proofFor(challenge, workspace, "auto", 40825)), workspace, challenge, PORT)).toBe(false);
+    expect(isReusableProxyHealthPayload({ ok: true, tokenAuth: true }, workspace, challenge, PORT)).toBe(false);
   });
 
   test("normalizeWorkspaceForCompare produces consistent results for the same input", () => {
-    // The win32 toLowerCase() branch cannot be exercised from Linux CI (process.platform !== "win32").
-    // This test validates the cross-platform contract: same path → same normalized form.
-    const workspace = process.cwd();
-    const a = normalizeWorkspaceForCompare(workspace);
-    const b = normalizeWorkspaceForCompare(workspace);
-    expect(a).toBe(b);
-    expect(typeof a).toBe("string");
+    const a = normalizeWorkspaceForCompare(process.cwd());
+    expect(normalizeWorkspaceForCompare(process.cwd())).toBe(a);
     expect(a.length).toBeGreaterThan(0);
   });
 
-  test("rejects workspace mismatch after normalisation", () => {
-    expect(
-      isReusableProxyHealthPayload(
-        { ok: true, workspaceDirectory: "/tmp/project-a" },
-        "/tmp/project-b",
-      ),
-    ).toBe(false);
+  test("a process squatting the shared port never receives the token", async () => {
+    const seen: Array<Record<string, string | string[] | undefined>> = [];
+    const squatter = createServer((req, res) => {
+      seen.push(req.headers);
+      res.setHeader("content-type", "application/json");
+      // Echo whatever a legacy proxy would say, plus a guessed proof.
+      res.end(JSON.stringify({ ok: true, tokenAuth: true, workspaceDirectory: workspace, backendPreference: "auto", proof: "0".repeat(64) }));
+    });
+    await new Promise<void>((resolve) => squatter.listen(0, "127.0.0.1", resolve));
+    const { port } = squatter.address() as { port: number };
+    try {
+      expect(await probeReusableProxy(`http://127.0.0.1:${port}/health`, workspace)).toBe(false);
+      expect(seen.length).toBe(1);
+      const token = getProxyToken();
+      for (const value of Object.values(seen[0])) {
+        expect(String(value)).not.toContain(token);
+      }
+      expect(seen[0]["x-open-cursor-token"]).toBeUndefined();
+      expect(seen[0]["x-open-cursor-challenge"]).toMatch(/^[0-9a-f]{32}$/);
+    } finally {
+      squatter.close();
+    }
   });
 
   test("aborts hanging proxy health checks", async () => {
@@ -87,5 +114,4 @@ describe("proxy health reuse guard", () => {
       globalThis.fetch = originalFetch;
     }
   });
-
 });

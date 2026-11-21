@@ -39,6 +39,17 @@ import {
 } from "./proxy/bridge-json.js";
 import { buildIncrementalPrompt, type ProxyMessage } from "./proxy/incremental-prompt.js";
 import {
+  PROXY_CHALLENGE_HEADER,
+  PROXY_TOKEN_HEADER,
+  authorizeProxyRequest,
+  getProxyToken,
+  headerValue,
+  isProxyChallenge,
+  newProxyChallenge,
+  proxyHealthProof,
+  sameSecret,
+} from "./proxy/auth.js";
+import {
   buildSessionKey,
   clearResumeChatId,
   deriveConversationAnchor,
@@ -869,21 +880,34 @@ export function normalizeWorkspaceForCompare(pathValue: string): string {
   return resolved;
 }
 
-export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string): boolean {
-  if (!payload || payload.ok !== true) {
+/**
+ * Whether a /health answer to `challenge` comes from the owner's proxy for this
+ * workspace and backend. The proof is an HMAC under the owner's token, so a
+ * process squatting the shared port cannot produce it, and the token itself is
+ * never sent to whatever answers there.
+ */
+export function isReusableProxyHealthPayload(payload: any, workspaceDirectory: string, challenge: string, port: number): boolean {
+  if (!payload || payload.ok !== true || payload.tokenAuth !== true) {
+    // Proxies that predate token auth accept any local caller; do not reuse them.
     return false;
   }
-  if (typeof payload.workspaceDirectory !== "string" || payload.workspaceDirectory.length === 0) {
-    // Legacy proxies that do not expose workspace cannot be safely reused.
+  if (typeof payload.proof !== "string") {
     return false;
   }
-  return payload.backendPreference === parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference
-    && normalizeWorkspaceForCompare(payload.workspaceDirectory) === normalizeWorkspaceForCompare(workspaceDirectory);
+  const expected = proxyHealthProof(
+    getProxyToken(),
+    challenge,
+    port,
+    normalizeWorkspaceForCompare(workspaceDirectory),
+    parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference,
+  );
+  return sameSecret(payload.proof, expected);
 }
 
 export async function fetchProxyHealthWithTimeout(
   url: string,
   timeoutMs: number = CURSOR_PROXY_HEALTH_TIMEOUT_MS,
+  headers: Record<string, string> = {},
 ): Promise<Response | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -892,10 +916,23 @@ export async function fetchProxyHealthWithTimeout(
   }
 
   try {
-    return await fetch(url, { signal: controller.signal }).catch(() => null);
+    return await fetch(url, { signal: controller.signal, headers }).catch(() => null);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Ask the proxy at url to prove it is the owner's, listening there, for this workspace. */
+export async function probeReusableProxy(url: string, workspaceDirectory: string): Promise<boolean> {
+  const port = Number(new URL(url).port);
+  if (!Number.isInteger(port) || port <= 0) return false;
+  const challenge = newProxyChallenge();
+  const res = await fetchProxyHealthWithTimeout(url, CURSOR_PROXY_HEALTH_TIMEOUT_MS, {
+    [PROXY_CHALLENGE_HEADER]: challenge,
+  });
+  if (!res || !res.ok) return false;
+  const payload = await res.json().catch(() => null);
+  return isReusableProxyHealthPayload(payload, workspaceDirectory, challenge, port);
 }
 
 const FORCE_TOOL_MODE = process.env.CURSOR_ACP_FORCE !== "false";
@@ -1982,14 +2019,10 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
   if (!privateProxy && REUSE_EXISTING_PROXY) {
     // Check if another process already started a proxy on the default port
     try {
-      const res = await fetchProxyHealthWithTimeout(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`);
-      if (res && res.ok) {
-        const payload = await res.json().catch(() => null);
-        if (isReusableProxyHealthPayload(payload, workspaceDirectory)) {
-          state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
-          state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
-          return CURSOR_PROXY_DEFAULT_BASE_URL;
-        }
+      if (await probeReusableProxy(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`, workspaceDirectory)) {
+        state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
+        state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
+        return CURSOR_PROXY_DEFAULT_BASE_URL;
       }
     } catch {
       // ignore
@@ -1999,13 +2032,45 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
   // Use Node.js http server (works in both Node and Bun)
   const http = await import("http");
 
+  const proxyToken = getProxyToken();
+
   const requestHandler = async (req: any, res: any) => {
     try{
+      // A reuse probe proves it reached the owner's proxy without sending the
+      // token; the answer carries no workspace or backend in the clear.
+      const challenge = headerValue(req.headers[PROXY_CHALLENGE_HEADER]);
+      if (
+        req.headers.origin === undefined
+        && isProxyChallenge(challenge)
+        && new URL(req.url || "/", "http://127.0.0.1").pathname === "/health"
+      ) {
+        const proof = proxyHealthProof(
+          proxyToken,
+          challenge,
+          req.socket.localPort,
+          normalizeWorkspaceForCompare(workspaceDirectory),
+          parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference,
+        );
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, tokenAuth: true, proof }));
+        return;
+      }
+
+      const authResult = authorizeProxyRequest(
+        { origin: req.headers.origin, token: req.headers[PROXY_TOKEN_HEADER] },
+        proxyToken,
+      );
+      if (!authResult.ok) {
+        res.writeHead(authResult.status, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: authResult.error }));
+        return;
+      }
+
       const url = new URL(req.url || "/", `http://${req.headers.host}`);
 
       if (url.pathname === "/health") {
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }));
+        res.end(JSON.stringify({ ok: true, tokenAuth: true, workspaceDirectory, backendPreference: parseCursorBackendPreference(process.env.CURSOR_ACP_BACKEND).preference }));
         return;
       }
 
@@ -2618,14 +2683,10 @@ async function startCursorProxyServer(workspaceDirectory: string, toolRouter: To
     if (REUSE_EXISTING_PROXY) {
       // Port in use - check if it's our proxy
       try {
-        const res = await fetchProxyHealthWithTimeout(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`);
-        if (res && res.ok) {
-          const payload = await res.json().catch(() => null);
-          if (isReusableProxyHealthPayload(payload, workspaceDirectory)) {
-            state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
-            state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
-            return CURSOR_PROXY_DEFAULT_BASE_URL;
-          }
+        if (await probeReusableProxy(`http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/health`, workspaceDirectory)) {
+          state.baseURL = CURSOR_PROXY_DEFAULT_BASE_URL;
+          state.baseURLByWorkspace![normalizedWorkspace] = CURSOR_PROXY_DEFAULT_BASE_URL;
+          return CURSOR_PROXY_DEFAULT_BASE_URL;
         }
       } catch {
         // ignore
@@ -3151,6 +3212,16 @@ export const CursorPlugin: Plugin = async ({ $, directory, worktree, client, ser
           label: "Cursor API Key (cursor.com/settings)",
         },
       ],
+    },
+
+    async "chat.headers"(input: any, output: { headers: Record<string, string> }) {
+      const providerMatch = createBoundaryRuntimeContext("chat.headers").run("matchesProvider", (boundary) =>
+        boundary.matchesProvider(input.model),
+      );
+      if (!providerMatch) {
+        return;
+      }
+      output.headers[PROXY_TOKEN_HEADER] = getProxyToken();
     },
 
     async "chat.params"(input: any, output: any) {

@@ -34,6 +34,34 @@ function shouldLog(level: LogLevel): boolean {
   return LEVEL_PRIORITY[level] >= LEVEL_PRIORITY[configured];
 }
 
+const REDACTED = "[REDACTED]";
+
+// Bearer credentials first, so a key-value match below cannot leave the token behind.
+const SECRET_KEYS = "authorization|x-open-cursor-token|api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token|client[_-]?secret|cursor_api_key|token|password|secret";
+
+// Credentials with a scheme first, so a key-value match below cannot leave the
+// credential behind. Keys need a boundary on the left, so "hasApiKey" or
+// "maxTokens" stay readable.
+const SECRET_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, `$1 ${REDACTED}`],
+  [new RegExp(`((?<![A-Za-z0-9_])["']?(?:${SECRET_KEYS})["']?\\s*[:=]\\s*["']?)[^"'\\s,}&]+`, "gi"), `$1${REDACTED}`],
+  // camelCase names ending in a secret word (cursorApiKey, sessionToken),
+  // skipping flags and counts such as hasApiKey: true.
+  [/(["']?[a-z][A-Za-z0-9]*(?:ApiKey|Token|Secret|Password)["']?\s*[:=]\s*["']?)(?!(?:true|false|null|\d+)\b)[^"'\s,}&]+/g, `$1${REDACTED}`],
+  [new RegExp(`(--(?:${SECRET_KEYS})[=\\s]+)[^\\s"']+`, "gi"), `$1${REDACTED}`],
+  [/([?&](?:key|token|api_key|apikey|access_token)=)[^&\s"']+/gi, `$1${REDACTED}`],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+/g, REDACTED],
+  [/\b(?:key|crsr)_[A-Za-z0-9]{20,}|\bsk-[A-Za-z0-9_-]{20,}/g, REDACTED],
+];
+
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of SECRET_PATTERNS) {
+    out = out.replace(pattern, replacement);
+  }
+  return out;
+}
+
 function formatMessage(level: LogLevel, component: string, message: string, data?: unknown): string {
   const prefix = `[cursor-acp:${component}]`;
   const levelTag = level.toUpperCase().padEnd(5);
@@ -48,7 +76,7 @@ function formatMessage(level: LogLevel, component: string, message: string, data
     }
   }
 
-  return formatted;
+  return redactSecrets(formatted);
 }
 
 function isConsoleEnabled(): boolean {
@@ -86,7 +114,7 @@ function ensureLogDir(): void {
   try {
     const logDir = getLogDir();
     if (!fs.existsSync(logDir)) {
-      fs.mkdirSync(logDir, { recursive: true });
+      fs.mkdirSync(logDir, { recursive: true, mode: 0o700 });
     }
     logDirEnsured = true;
   } catch {
@@ -106,7 +134,16 @@ function openLogStream(): void {
     } catch {
       logBytesWritten = 0;
     }
-    logStream = fs.createWriteStream(getLogFile(), { flags: "a" });
+    // Prompts and child stderr land here; keep the file owner-only, including
+    // a file an earlier version created with the default umask.
+    logStream = fs.createWriteStream(getLogFile(), { flags: "a", mode: 0o600 });
+    for (const file of [getLogFile(), getLogFile() + ".1"]) {
+      try {
+        fs.chmodSync(file, 0o600);
+      } catch {
+        // Not yet created or not supported; the open mode applies on creation.
+      }
+    }
     logStream.on("error", () => {
       if (!logFileError) {
         logFileError = true;

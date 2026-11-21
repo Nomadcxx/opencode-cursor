@@ -20,6 +20,7 @@
  */
 import { resolveSdkApiKey } from "./auth.js";
 import { createLogger } from "./utils/logger.js";
+import { PROXY_TOKEN_HEADER, getProxyToken } from "./proxy/auth.js";
 import {
   CURSOR_PROVIDER_ID,
   OPENCODE_DIRECTORY_HEADER,
@@ -235,6 +236,7 @@ const plugin: Plugin2 = {
           const directory = await sessionDirectory(ctx, event.sessionID, workspaceDirectory);
           event.baseURL = proxyBaseURL;
           event.headers[OPENCODE_DIRECTORY_HEADER] = encodeURIComponent(directory);
+          event.headers[PROXY_TOKEN_HEADER] = getProxyToken();
           const key = resolveSdkApiKey({ env: process.env, storedApiKey: await resolveCursorApiKey(ctx.integration) });
           event.headers.authorization = `Bearer ${key ?? "cursor-agent"}`;
         },

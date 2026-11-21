@@ -144,18 +144,18 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>)
         toolCallIds: Array.isArray(m?.tool_calls) ? m.tool_calls.map((tc: any) => tc?.id).join(",") : "",
         toolCallNames: Array.isArray(m?.tool_calls) ? m.tool_calls.map((tc: any) => tc?.function?.name).join(",") : "",
         contentType: typeof m?.content,
-        contentPreview: typeof m?.content === "string" ? m.content.slice(0, 50) : typeof m?.content,
+        contentLength: typeof m?.content === "string" ? m.content.length : typeof m?.content,
       })) : [],
       emptyAssistantDetails: assistantEmpty.length > 0 ? assistantEmpty.map((m: any, i: number) => ({
         index: i,
         contentType: typeof m?.content,
-        contentPreview: typeof m?.content === "string" ? m.content.slice(0, 50) : typeof m?.content,
+        contentLength: typeof m?.content === "string" ? m.content.length : typeof m?.content,
       })) : [],
       toolResultDetails: toolResults.length > 0 ? toolResults.map((m: any, i: number) => ({
         index: i,
         toolCallId: m?.tool_call_id,
         name: m?.name,
-        contentPreview: typeof m?.content === "string" ? m.content.slice(0, 100) : typeof m?.content,
+        contentLength: typeof m?.content === "string" ? m.content.length : typeof m?.content,
       })) : [],
     });
   }
@@ -237,7 +237,6 @@ export function buildPromptFromMessages(messages: Array<any>, tools: Array<any>)
   log.debug("buildPromptFromMessages: final prompt", {
     lineCount: lines.length,
     promptLength: finalPrompt.length,
-    promptPreview: finalPrompt.slice(0, 500),
     hasToolResultFormat: finalPrompt.includes("TOOL_RESULT"),
     hasAssistantToolCallFormat: finalPrompt.includes("tool_call(id:"),
     hasCompletionSignal: finalPrompt.includes("The above tool calls have been executed"),

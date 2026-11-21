@@ -40,7 +40,8 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
   run(`
     import assert from 'node:assert/strict';
     import { createServer } from 'node:http';
-    import { resolve } from 'node:path';
+    import { readFileSync } from 'node:fs';
+    import { join, resolve } from 'node:path';
     const { ensureCursorProxyServer, setStoredApiKey } = await import(${JSON.stringify(pluginURL)});
     const projectA=resolve('issue-141-project-a');
     const projectB=resolve('issue-141-project-b');
@@ -62,11 +63,14 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
     assert.equal(a,b,'concurrent 2.0 locations must share their private proxy');
     assert.notEqual(a,'http://127.0.0.1:32124/v1');
     assert.equal(legacyRequests,0,'private startup must not even probe the legacy proxy');
-    const missingWorkspace=await fetch(a+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'auto',messages:[]})});
+    const token=readFileSync(join(process.env.CURSOR_ACP_HOME_DIR,'.opencode-cursor','proxy-token'),'utf8').trim();
+    const anonymous=await fetch(a+'/chat/completions',{method:'POST',headers:{'content-type':'text/plain'},body:JSON.stringify({model:'auto',messages:[]})});
+    assert.equal(anonymous.status,401,'requests without the proxy token must be refused');
+    const missingWorkspace=await fetch(a+'/chat/completions',{method:'POST',headers:{'content-type':'application/json','x-open-cursor-token':token},body:JSON.stringify({model:'auto',messages:[]})});
     assert.equal(missingWorkspace.status,400,'private requests must not silently use another project fallback');
     setStoredApiKey('another-host-key');
     const request=async(key,directory,stream=false)=>{
-      const headers={'content-type':'application/json','x-opencode-directory':encodeURIComponent(directory)};
+      const headers={'content-type':'application/json','x-opencode-directory':encodeURIComponent(directory),'x-open-cursor-token':token};
       if(key)headers.authorization='Bearer '+key;
       return fetch(a+'/chat/completions',{method:'POST',headers,body:JSON.stringify({model:'auto',messages:[{role:'user',content:'ping'}],stream})});
     };
@@ -102,9 +106,9 @@ test("private proxy bypasses the legacy port and uses request credentials and wo
     const c=await ensureCursorProxyServer(resolve('issue-141-project-c'));
     const d=await ensureCursorProxyServer(resolve('issue-141-project-d'));
     assert.notEqual(c,d,'1.x workspace fallback must belong to its own proxy');
-    assert.equal((await (await fetch(d.replace('/v1','/health'))).json()).workspaceDirectory,resolve('issue-141-project-d'));
+    assert.equal((await (await fetch(d.replace('/v1','/health'),{headers:{'x-open-cursor-token':token}})).json()).workspaceDirectory,resolve('issue-141-project-d'));
     process.exit(0);
-  `, { CURSOR_ACP_SDK_RUNNER_PATH: runner, CURSOR_ACP_REUSE_EXISTING_PROXY: "true" });
+  `, { CURSOR_ACP_SDK_RUNNER_PATH: runner, CURSOR_ACP_REUSE_EXISTING_PROXY: "true", CURSOR_ACP_HOME_DIR: dir });
 });
 
 test("SDK done waits for agent cleanup before idle retirement", () => {
@@ -198,10 +202,13 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
   for (const pooled of [false, true]) {
     run(`
       import assert from 'node:assert/strict';
+      import { readFileSync } from 'node:fs';
+      import { join } from 'node:path';
       const {ensureCursorProxyServer,buildCursorAgentCommand}=await import(${JSON.stringify(pluginURL)});
       assert.equal(buildCursorAgentCommand('auto',${JSON.stringify(workspace)})[0],${JSON.stringify(cmd)},'logical argv must retain the selected binary');
       const url=await ensureCursorProxyServer(${JSON.stringify(workspace)});
-      const response=await fetch(url+'/chat/completions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({model:'auto',messages:[{role:'user',content:'test'}]})});
+      const token=readFileSync(join(process.env.CURSOR_ACP_HOME_DIR,'.opencode-cursor','proxy-token'),'utf8').trim();
+      const response=await fetch(url+'/chat/completions',{method:'POST',headers:{'content-type':'application/json','x-open-cursor-token':token},body:JSON.stringify({model:'auto',messages:[{role:'user',content:'test'}]})});
       assert.equal(response.status,200);
       const body=await response.json();
       const args=JSON.parse(body.choices[0].message.content);
@@ -213,6 +220,7 @@ test("Windows .cmd to PowerShell arguments survive the direct and pooled CLI pat
       CURSOR_ACP_AGENT_POOL: pooled ? "true" : "false",
       CURSOR_ACP_TRUST_WORKSPACE: "true", CURSOR_ACP_REUSE_EXISTING_PROXY: "false",
       CURSOR_ACP_CURSOR_AGENT_RUNNER_PATH: join(sourceRoot, "scripts/cursor-agent-runner.mjs"),
+      CURSOR_ACP_HOME_DIR: dir,
     });
   }
 });
